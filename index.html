@@ -1,10 +1,41 @@
-Arthur's Projects<br><br>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple WebXR Page</title>
+    <!-- Include A-Frame library -->
+    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+</head>
+<body>
+    <!-- A-Frame scene -->
+    <a-scene>
+        <!-- A-Frame assets -->
+        <a-assets>
+            <!-- Add any assets (e.g., models, images) you need -->
+        </a-assets>
+        
+        <!-- A-Frame entities -->
+        <a-sky color="#6EBAA7"></a-sky> <!-- Example sky entity -->
+        
+        <!-- Add other A-Frame entities (e.g., models, objects) -->
+    </a-scene>
+</body>
+</html>
 
-| <a title = "A tool for syncing files between folders and merging conflicting changes in files.">Better Git</a> 
-| <a title = "A tool for designing user interface for software">MELT Interface Maker </a>
-| <a title = "An engaging real time strategy simulation involving technologic advancement, resource management, diplomacy, and the survival of the Human race.">Arthur Baney's Humanity </a>
-| <a title = "A useful tool for automatically generating the majority of your essay for a class, pursuasive paper, or other essay.">Auto Essay Generator </a>
-| <a title = "A tool for creating 3D models">3D Modeler </a>
-| <a title = "An image viewer that allows you to step inside of 360 degree photographs and look around as if you were actually there.">Surround Shot Photo Viewer </a>
-| <a title = "A simulation where you build and battle rocket propelled robots.">RocketBots</a>
-| 
+<!-- After the A-Frame library inclusion -->
+<script>
+    // Check if WebXR is supported
+    if (navigator.xr) {
+        navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+            if (supported) {
+                // Enable the Enter VR button
+                document.querySelector('a-scene').setAttribute('vr-mode-ui', 'enabled: true');
+            } else {
+                console.log('WebXR is not supported on this device.');
+            }
+        });
+    } else {
+        console.log('WebXR is not supported on this browser.');
+    }
+</script>
