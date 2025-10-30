@@ -95,6 +95,14 @@
         let controller1, controller2;
         let controllerGrip1, controllerGrip2;
 
+        // First-person controls state
+        const keys = {};
+        const moveSpeed = 2.0; // meters per second
+        const rotationSpeed = 0.002;
+        let isPointerLocked = false;
+        let euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        let moveVector = new THREE.Vector3();
+
         // Update status
         const statusEl = document.getElementById('status');
         function updateStatus(text)
@@ -118,6 +126,9 @@
                 1000
             );
             camera.position.set(0, 1.6, 3);
+
+            // Initialize euler angles from camera rotation
+            euler.setFromQuaternion(camera.quaternion);
 
             // Create renderer with alpha for AR passthrough
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -208,17 +219,122 @@
                 metalness: 0.3
             });
             const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
-            cube.position.set(0, 1, 0); // 1 meter above ground at origin
+            cube.position.set(0, 1, 1); // 1 meter above ground at origin
             cube.castShadow = true;
             cube.receiveShadow = true;
             scene.add(cube);
 
+            // Create flat cylinder platform on the ground
+            const platformGeometry = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 32);
+            const platformMaterial = new THREE.MeshStandardMaterial({
+                color: 0x888888,
+                roughness: 0.9,
+                metalness: 0.1
+            });
+            const platform = new THREE.Mesh(platformGeometry, platformMaterial);
+            platform.position.set(0, 0.05, 0); // Positioned slightly above ground to avoid z-fighting
+            platform.rotation.x = 0; // Already flat (cylinder defaults to vertical)
+            platform.castShadow = true;
+            platform.receiveShadow = true;
+            scene.add(platform);
+
+            // First-person controls - keyboard events
+            document.addEventListener('keydown', (event) =>
+            {
+                keys[event.code] = true;
+            });
+
+            document.addEventListener('keyup', (event) =>
+            {
+                keys[event.code] = false;
+            });
+
+            // First-person controls - mouse movement (pointer lock)
+            document.addEventListener('click', () =>
+            {
+                if (!renderer.xr.isPresenting && !isPointerLocked)
+                {
+                    renderer.domElement.requestPointerLock();
+                }
+            });
+
+            document.addEventListener('pointerlockchange', () =>
+            {
+                isPointerLocked = document.pointerLockElement === renderer.domElement;
+                if (!isPointerLocked)
+                {
+                    updateStatus('Click to enable mouse look');
+                }
+            });
+
+            document.addEventListener('mousemove', (event) =>
+            {
+                if (isPointerLocked && !renderer.xr.isPresenting)
+                {
+                    euler.setFromQuaternion(camera.quaternion);
+                    euler.y -= event.movementX * rotationSpeed;
+                    euler.x -= event.movementY * rotationSpeed;
+                    euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x)); // Limit pitch
+                    camera.quaternion.setFromEuler(euler);
+                }
+            });
+
             // Animation loop using setAnimationLoop - works for both normal and XR rendering
             // Three.js automatically handles XR rendering when in XR mode
+            let lastTime = null;
             renderer.setAnimationLoop((time, frame) =>
             {
                 // Update cube rotation
                 cube.rotation.y += 0.005;
+
+                // Handle first-person movement (only when not in XR)
+                if (!renderer.xr.isPresenting)
+                {
+                    const deltaTime = lastTime !== null ? (time - lastTime) / 1000 : 0.016; // Convert ms to seconds
+                    lastTime = time;
+
+                    // Calculate movement direction based on camera orientation
+                    moveVector.set(0, 0, 0);
+
+                    if (keys['KeyW'] || keys['ArrowUp'])
+                    {
+                        moveVector.z -= 1;
+                    }
+                    if (keys['KeyS'] || keys['ArrowDown'])
+                    {
+                        moveVector.z += 1;
+                    }
+                    if (keys['KeyA'] || keys['ArrowLeft'])
+                    {
+                        moveVector.x -= 1;
+                    }
+                    if (keys['KeyD'] || keys['ArrowRight'])
+                    {
+                        moveVector.x += 1;
+                    }
+
+                    // Normalize movement vector and apply camera direction
+                    if (moveVector.length() > 0)
+                    {
+                        moveVector.normalize();
+                        moveVector.multiplyScalar(moveSpeed * deltaTime);
+
+                        // Apply camera rotation to movement (move forward/back/left/right relative to camera)
+                        const forward = new THREE.Vector3();
+                        camera.getWorldDirection(forward);
+                        forward.y = 0; // Keep movement horizontal
+                        forward.normalize();
+
+                        const right = new THREE.Vector3();
+                        right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+                        const movement = new THREE.Vector3();
+                        movement.addScaledVector(forward, -moveVector.z);
+                        movement.addScaledVector(right, moveVector.x);
+
+                        camera.position.add(movement);
+                    }
+                }
 
                 // Render the scene
                 // When in XR, Three.js automatically uses the XR camera
@@ -229,6 +345,12 @@
             // Handle XR session start/end
             renderer.xr.addEventListener('sessionstart', () =>
             {
+                // Exit pointer lock when entering XR
+                if (isPointerLocked)
+                {
+                    document.exitPointerLock();
+                }
+
                 const session = renderer.xr.getSession();
                 const mode = session.mode;
                 if (mode === 'immersive-ar')
@@ -260,7 +382,7 @@
             });
 
             // Update status
-            updateStatus('Scene ready. Click "Enter AR" or "Enter VR" to start.');
+            updateStatus('Scene ready. Click to enable mouse look, then use WASD/Arrow keys to move.');
         }
 
         // Start the app - check for both VR and AR support
