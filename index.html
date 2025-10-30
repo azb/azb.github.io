@@ -29,6 +29,7 @@
   <button id="enterar" value="Enter AR" disabled>AR</button>
 
   <script>
+    let unityInstance; // ADDED: make unityInstance available to click handlers
     let enterARButton = document.getElementById('enterar');
     let enterVRButton = document.getElementById('entervr');
 
@@ -138,8 +139,9 @@
       createUnityInstance(canvas, config, (progress) =>
       {
         progressBarFull.style.width = 100 * progress + "%";
-      }).then((unityInstance) =>
+      }).then((instance) =>
       {
+        unityInstance = instance; // ADDED: assign the instance globally
         loadingBar.style.display = "none";
         fullscreenButton.onclick = () =>
         {
