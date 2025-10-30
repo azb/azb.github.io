@@ -47,6 +47,16 @@
             background: #cccccc;
             cursor: not-allowed;
         }
+
+        .xr-button-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
     </style>
 </head>
 
@@ -55,7 +65,7 @@
         <div>WebXR App</div>
         <div id="status">Loading...</div>
     </div>
-    <button id="enterVR" disabled>Enter VR</button>
+    <div class="xr-button-container" id="xrButtons"></div>
 
     <script type="importmap">
     {
@@ -69,6 +79,7 @@
     <script type="module">
         import * as THREE from 'three';
         import { VRButton } from 'three/addons/webxr/VRButton.js';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
         import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
         let scene, camera, renderer;
@@ -87,7 +98,8 @@
         {
             // Create scene
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x505050);
+            // Transparent background for AR passthrough (will show camera feed)
+            scene.background = null;
 
             // Create camera
             camera = new THREE.PerspectiveCamera(
@@ -98,8 +110,8 @@
             );
             camera.position.set(0, 1.6, 3);
 
-            // Create renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            // Create renderer with alpha for AR passthrough
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.shadowMap.enabled = true;
@@ -107,8 +119,19 @@
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // Add WebXR button
-            document.body.appendChild(VRButton.createButton(renderer));
+            // Add WebXR buttons (VR and AR)
+            const xrButtonsContainer = document.getElementById('xrButtons');
+
+            // Add AR button (passthrough enabled by default)
+            const arButton = ARButton.createButton(renderer, {
+                optionalFeatures: ['dom-overlay', 'dom-overlay-handling'],
+                domOverlay: { root: document.body }
+            });
+            xrButtonsContainer.appendChild(arButton);
+
+            // Add VR button
+            const vrButton = VRButton.createButton(renderer);
+            xrButtonsContainer.appendChild(vrButton);
 
             // Lighting
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -197,12 +220,26 @@
             // Handle XR session start/end
             renderer.xr.addEventListener('sessionstart', () =>
             {
-                updateStatus('VR session started');
+                const session = renderer.xr.getSession();
+                const mode = session.mode;
+                if (mode === 'immersive-ar')
+                {
+                    updateStatus('AR session started (Passthrough enabled)');
+                    // Ensure transparency for AR
+                    scene.background = null;
+                } else
+                {
+                    updateStatus('VR session started');
+                    // Solid background for VR
+                    scene.background = new THREE.Color(0x505050);
+                }
             });
 
             renderer.xr.addEventListener('sessionend', () =>
             {
-                updateStatus('VR session ended');
+                updateStatus('XR session ended');
+                // Reset to transparent for next session
+                scene.background = null;
             });
 
             // Handle window resize
@@ -214,23 +251,29 @@
             });
 
             // Update status
-            updateStatus('Scene ready. Click "Enter VR" to start.');
-            document.getElementById('enterVR').disabled = false;
+            updateStatus('Scene ready. Click "Enter AR" or "Enter VR" to start.');
         }
 
-        // Start the app
+        // Start the app - check for both VR and AR support
         if (navigator.xr)
         {
-            navigator.xr.isSessionSupported('immersive-vr').then((supported) =>
+            Promise.all([
+                navigator.xr.isSessionSupported('immersive-vr'),
+                navigator.xr.isSessionSupported('immersive-ar')
+            ]).then(([vrSupported, arSupported]) =>
             {
-                if (supported)
+                let status = [];
+                if (arSupported) status.push('AR');
+                if (vrSupported) status.push('VR');
+
+                if (status.length > 0)
                 {
-                    updateStatus('WebXR VR supported');
-                    init();
+                    updateStatus(`WebXR ${status.join(' and ')} supported`);
                 } else
                 {
-                    updateStatus('WebXR VR not supported');
+                    updateStatus('WebXR not supported');
                 }
+                init();
             });
         } else
         {
