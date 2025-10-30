@@ -7,6 +7,41 @@
   <title>Unity WebGL Player | Unity WebXR Export</title>
   <link rel="shortcut icon" href="TemplateData/favicon.ico">
   <link rel="stylesheet" href="TemplateData/style.css">
+  <style>
+    .xr-buttons {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin: 24px auto;
+      width: 100%;
+      max-width: 800px;
+    }
+
+    .xr-buttons button {
+      font-size: 18px;
+      line-height: 1.2;
+      padding: 14px 24px;
+      min-width: 120px;
+      border-radius: 10px;
+      border: 1px solid #999;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    .xr-buttons button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    @media (pointer: coarse) {
+      .xr-buttons button {
+        font-size: 20px;
+        padding: 18px 28px;
+        min-width: 140px;
+      }
+    }
+  </style>
 </head>
 
 <body>
@@ -25,8 +60,10 @@
       <div id="unity-build-title">Unity WebXR Export</div>
     </div>
   </div>
-  <button id="entervr" value="Enter VR" disabled>VR</button>
-  <button id="enterar" value="Enter AR" disabled>AR</button>
+  <div class="xr-buttons">
+    <button id="entervr" value="Enter VR" disabled>VR</button>
+    <button id="enterar" value="Enter AR" disabled>AR</button>
+  </div>
 
   <script>
     let unityInstance; // ADDED: make unityInstance available to click handlers
