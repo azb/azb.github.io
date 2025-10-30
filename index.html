@@ -103,6 +103,16 @@
         let euler = new THREE.Euler(0, 0, 0, 'YXZ');
         let moveVector = new THREE.Vector3();
 
+        // XR controller state
+        let xrControllers = [];
+        let controllerModelFactory;
+        let lastRightThumbstickY = 0;
+        let lastRightThumbstickPressed = false;
+        const snapRotationAngle = Math.PI / 4; // 45 degrees in radians
+        let xrReferenceSpace = null;
+        let accumulatedPosition = new THREE.Vector3(0, 0, 0);
+        let accumulatedRotation = 0;
+
         // Update status
         const statusEl = document.getElementById('status');
         function updateStatus(text)
@@ -152,6 +162,35 @@
             // Add VR button
             const vrButton = VRButton.createButton(renderer);
             xrButtonsContainer.appendChild(vrButton);
+
+            // Set up XR controllers
+            controllerModelFactory = new XRControllerModelFactory();
+
+            // Create controller representations (we'll use gamepad API directly)
+            const onControllerConnected = (event) =>
+            {
+                const controller = event.data;
+                xrControllers.push(controller);
+
+                // Add controller model (optional visual representation)
+                const controllerModel = controllerModelFactory.createControllerModel(controller);
+                controller.add(controllerModel);
+                scene.add(controller);
+
+                updateStatus(`Controller ${xrControllers.length} connected`);
+            };
+
+            renderer.xr.addEventListener('controllerconnected', onControllerConnected);
+            renderer.xr.addEventListener('controllerdisconnected', (event) =>
+            {
+                const index = xrControllers.indexOf(event.data);
+                if (index > -1)
+                {
+                    xrControllers.splice(index, 1);
+                    scene.remove(event.data);
+                }
+                updateStatus(`Controller ${index + 1} disconnected`);
+            });
 
             // Lighting
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -283,10 +322,151 @@
             // Animation loop using setAnimationLoop - works for both normal and XR rendering
             // Three.js automatically handles XR rendering when in XR mode
             let lastTime = null;
+            const xrMoveSpeed = 2.0; // meters per second for XR movement
+
             renderer.setAnimationLoop((time, frame) =>
             {
                 // Update cube rotation
                 cube.rotation.y += 0.005;
+
+                // Handle XR controller input
+                if (renderer.xr.isPresenting && frame && renderer.xr.getSession())
+                {
+                    const session = renderer.xr.getSession();
+
+                    // Get or update reference space
+                    if (!xrReferenceSpace)
+                    {
+                        xrReferenceSpace = renderer.xr.getReferenceSpace();
+                    }
+
+                    const deltaTime = lastTime !== null ? (time - lastTime) / 1000 : 0.016;
+                    lastTime = time;
+
+                    // Process input sources
+                    for (let i = 0; i < session.inputSources.length; i++)
+                    {
+                        const inputSource = session.inputSources[i];
+                        if (inputSource && inputSource.gamepad)
+                        {
+                            const gamepad = inputSource.gamepad;
+
+                            // Left controller (typically index 0) - Movement with thumbstick
+                            // Check for left controller by handedness or use first controller
+                            const isLeftController = inputSource.handedness === 'left' || i === 0;
+
+                            if (isLeftController && gamepad.axes.length >= 2)
+                            {
+                                const leftX = gamepad.axes[0]; // Left thumbstick X
+                                const leftY = gamepad.axes[1]; // Left thumbstick Y
+
+                                // Dead zone
+                                const deadZone = 0.1;
+                                if (Math.abs(leftX) > deadZone || Math.abs(leftY) > deadZone)
+                                {
+                                    // Get viewer pose to determine forward direction
+                                    if (xrReferenceSpace && frame.getViewerPose)
+                                    {
+                                        const viewerPose = frame.getViewerPose(xrReferenceSpace);
+                                        if (viewerPose)
+                                        {
+                                            const transform = viewerPose.transform;
+                                            const quaternion = new THREE.Quaternion(
+                                                transform.orientation.x,
+                                                transform.orientation.y,
+                                                transform.orientation.z,
+                                                transform.orientation.w
+                                            );
+
+                                            // Calculate forward and right vectors
+                                            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
+                                            forward.y = 0; // Keep horizontal
+                                            forward.normalize();
+
+                                            const right = new THREE.Vector3();
+                                            right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+                                            // Calculate movement
+                                            const movement = new THREE.Vector3();
+                                            movement.addScaledVector(forward, -leftY * xrMoveSpeed * deltaTime);
+                                            movement.addScaledVector(right, leftX * xrMoveSpeed * deltaTime);
+
+                                            // Accumulate position
+                                            accumulatedPosition.add(movement);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Right controller - Snap rotation with thumbstick
+                            const isRightController = inputSource.handedness === 'right' || i === 1;
+
+                            if (isRightController && gamepad.axes.length >= 2)
+                            {
+                                const rightY = gamepad.axes[1]; // Right thumbstick Y
+                                const threshold = 0.7;
+                                const isPressed = Math.abs(rightY) > threshold;
+
+                                // Detect when thumbstick crosses threshold (snap rotation)
+                                if (isPressed && !lastRightThumbstickPressed)
+                                {
+                                    // Apply 45-degree snap rotation
+                                    const rotationDirection = rightY > 0 ? -1 : 1;
+                                    accumulatedRotation += rotationDirection * snapRotationAngle;
+
+                                    // Update reference space with new rotation
+                                    if (xrReferenceSpace)
+                                    {
+                                        const rotationQuat = new THREE.Quaternion().setFromAxisAngle(
+                                            new THREE.Vector3(0, 1, 0),
+                                            accumulatedRotation
+                                        );
+
+                                        // Reset accumulated rotation after applying
+                                        accumulatedRotation = 0;
+
+                                        const xrTransform = new XRRigidTransform(
+                                            { x: 0, y: 0, z: 0 },
+                                            {
+                                                x: rotationQuat.x,
+                                                y: rotationQuat.y,
+                                                z: rotationQuat.z,
+                                                w: rotationQuat.w
+                                            }
+                                        );
+
+                                        xrReferenceSpace = xrReferenceSpace.getOffsetReferenceSpace(xrTransform);
+                                        renderer.xr.setReferenceSpace(xrReferenceSpace);
+                                    }
+                                }
+
+                                lastRightThumbstickPressed = isPressed;
+                            }
+                        }
+                    }
+
+                    // Apply accumulated movement
+                    if (accumulatedPosition.length() > 0.001 && xrReferenceSpace)
+                    {
+                        const moveTransform = new XRRigidTransform(
+                            {
+                                x: accumulatedPosition.x,
+                                y: 0, // Keep Y at 0 for ground-level movement
+                                z: accumulatedPosition.z
+                            },
+                            { x: 0, y: 0, z: 0, w: 1 }
+                        );
+
+                        xrReferenceSpace = xrReferenceSpace.getOffsetReferenceSpace(moveTransform);
+                        renderer.xr.setReferenceSpace(xrReferenceSpace);
+
+                        // Reset accumulated position
+                        accumulatedPosition.set(0, 0, 0);
+                    }
+                } else
+                {
+                    lastTime = time;
+                }
 
                 // Handle first-person movement (only when not in XR)
                 if (!renderer.xr.isPresenting)
@@ -352,6 +532,12 @@
                     document.exitPointerLock();
                 }
 
+                // Reset XR state
+                xrReferenceSpace = null;
+                accumulatedPosition.set(0, 0, 0);
+                accumulatedRotation = 0;
+                lastRightThumbstickPressed = false;
+
                 const session = renderer.xr.getSession();
                 const mode = session.mode;
                 if (mode === 'immersive-ar')
@@ -361,7 +547,7 @@
                     scene.background = null;
                 } else
                 {
-                    updateStatus('VR session started');
+                    updateStatus('VR session started - Use left thumbstick to move, right thumbstick to rotate');
                     // Solid background for VR
                     scene.background = new THREE.Color(0x505050);
                 }
@@ -372,6 +558,11 @@
                 updateStatus('XR session ended');
                 // Reset to transparent for next session
                 scene.background = null;
+                // Reset XR state
+                xrReferenceSpace = null;
+                accumulatedPosition.set(0, 0, 0);
+                accumulatedRotation = 0;
+                lastRightThumbstickPressed = false;
             });
 
             // Handle window resize
