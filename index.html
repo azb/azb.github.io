@@ -54,8 +54,17 @@
             left: 50%;
             transform: translateX(-50%);
             display: flex;
-            gap: 10px;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
             z-index: 100;
+        }
+
+        .xr-button-container button {
+            position: relative !important;
+            margin: 0 !important;
+            flex-shrink: 0;
         }
     </style>
 </head>
