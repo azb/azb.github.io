@@ -33,6 +33,40 @@
     let enterARButton = document.getElementById('enterar');
     let enterVRButton = document.getElementById('entervr');
 
+    // ADDED: Warn if not on HTTPS (WebXR requires secure context)
+    if (!window.isSecureContext)
+    {
+      // This will not block, but informs why buttons may not work
+      setTimeout(function () { unityShowBanner('This page is not running over HTTPS. WebXR requires a secure context (HTTPS).', 'warning'); }, 0);
+    }
+
+    // ADDED: Fallback support checks using the WebXR API directly
+    async function checkXRSupport()
+    {
+      try
+      {
+        if (!('xr' in navigator))
+        {
+          enterVRButton.disabled = true;
+          enterARButton.disabled = true;
+          unityShowBanner('WebXR not available in this browser.', 'warning');
+          return;
+        }
+        const [vrSupported, arSupported] = await Promise.all([
+          navigator.xr.isSessionSupported('immersive-vr').catch(() => false),
+          navigator.xr.isSessionSupported('immersive-ar').catch(() => false)
+        ]);
+        enterVRButton.disabled = !vrSupported;
+        enterARButton.disabled = !arSupported;
+      } catch (e)
+      {
+        console.warn('WebXR support check failed:', e);
+      }
+    }
+
+    // Run support check early
+    checkXRSupport();
+
     document.addEventListener('onARSupportedCheck', function (event)
     {
       enterARButton.disabled = !event.detail.supported;
@@ -44,10 +78,20 @@
 
     enterARButton.addEventListener('click', function (event)
     {
+      if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR)
+      {
+        unityShowBanner('WebXR module is not ready yet.', 'warning');
+        return;
+      }
       unityInstance.Module.WebXR.toggleAR();
     }, false);
     enterVRButton.addEventListener('click', function (event)
     {
+      if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR)
+      {
+        unityShowBanner('WebXR module is not ready yet.', 'warning');
+        return;
+      }
       unityInstance.Module.WebXR.toggleVR();
     }, false);
 
@@ -147,6 +191,8 @@
         {
           unityInstance.SetFullscreen(1);
         };
+        // ADDED: re-check XR support after Unity loads
+        checkXRSupport();
       }).catch((message) =>
       {
         alert(message);
