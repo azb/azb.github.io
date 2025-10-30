@@ -1,166 +1,243 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- These tags are needed for enabling experimental Chrome APIs via Chrome's Origin-Trial program (Android, Windows): https://github.com/GoogleChrome/OriginTrials/blob/gh-pages/available-trials.md#current-experimental-features -->
-  <!-- Origin Trial Token, feature = Generic Sensors, origin = https://github.io, expires = 2018-04-10 -->
-  <meta http-equiv="origin-trial" data-feature="Generic Sensors" data-expires="2018-04-10"
-    content="Aokv0ODVMUPIswIBi6DnpAIjhWefEd8gD8GpVgdYgETj0C5+/3kKMzZE/FOrBwHcpBO6LHuVRrIw3yOT8EMmJAYAAABQeyJvcmlnaW4iOiJodHRwczovL2dpdGh1Yi5pbzo0NDMiLCJmZWF0dXJlIjoiR2VuZXJpY1NlbnNvciIsImV4cGlyeSI6MTUyMzMxODQwMH0=">
-  <!-- Origin Trial Token, feature = WebVR (For Chrome M62+), origin = https://github.io, expires = 2018-05-07 -->
-  <meta http-equiv="origin-trial" data-feature="WebXR (For Chrome M62+)" data-expires="2018-05-07"
-    content="AgINztgDnjFV8da2D9SSzIITBRlHX8mduCR7DXfENxjr9ALduKOxBDdn2n66auQSlljVyhnRWWerxC0BWbE8pAoAAABOeyJvcmlnaW4iOiJodHRwczovL2dpdGh1Yi5pbzo0NDMiLCJmZWF0dXJlIjoiV2ViVlIxLjFNNjIiLCJleHBpcnkiOjE1MjU3MjU4MDh9">
-  <title>%UNITY_CUSTOM_NAME% | %UNITY_WEB_NAME%</title>
-  <meta name="description" content="%UNITY_CUSTOM_DESCRIPTION%">
-  %UNITY_CUSTOM_META_TAGS%
-  <link rel="icon" href="favicon.ico">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" type="text/css" href="styles/webxr.css">
-
-  <script src="lib/telemetry.js"></script>
-  <script>
-    MozillaResearch.telemetry.start({
-      analytics: true,
-      errorLogging: true,
-      performance: true
-    });
-    MozillaResearch.telemetry.performance.mark('LoaderParsingStart');
-  </script>
-
-  <script src="Build/FreshBuild.loader.js"></script>
-  <script>
-    function unityProgress(progress)
-    {
-      if (!unityProgress.initialized)
-      {
-        unityProgress.loader = document.getElementById('loader');
-        unityProgress.progressElement = document.getElementById('progress');
-        unityProgress.loading = document.getElementById('loading');
-        unityProgress.initialized = true;
-        document.dispatchEvent(new CustomEvent('UnityProgressStart'));
-      }
-      if (unityProgress.progressElement)
-      {
-        unityProgress.progressElement.style.width = (100 * progress) + '%';
-      }
-    }
-
-    document.addEventListener('DOMContentLoaded', function ()
-    {
-      var canvas = document.getElementById('unity-canvas');
-      if (!canvas)
-      {
-        console.error('Canvas element not found!');
-        return;
-      }
-
-      // Set canvas attributes before Unity initialization
-      canvas.setAttribute('tabindex', '0');
-      canvas.style.outline = 'none';
-      canvas.style.position = 'absolute';
-      canvas.style.top = '0';
-      canvas.style.left = '0';
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.display = 'block';
-
-      // Set explicit dimensions for VR/WebXR (Quest requires proper sizing)
-      var setCanvasSize = function ()
-      {
-        canvas.width = window.innerWidth || document.documentElement.clientWidth || 1920;
-        canvas.height = window.innerHeight || document.documentElement.clientHeight || 1080;
-      };
-      setCanvasSize();
-      window.addEventListener('resize', setCanvasSize);
-
-      // Workaround: Patch querySelector to handle Unity's invalid '#' selector
-      var originalQuerySelector = Document.prototype.querySelector;
-      Document.prototype.querySelector = function (selector)
-      {
-        if (selector === '#' || (selector && selector.trim() === '#'))
-        {
-          // Return the canvas element when Unity tries to query with '#'
-          return canvas;
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebXR App</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
         }
-        try
-        {
-          return originalQuerySelector.call(this, selector);
-        } catch (e)
-        {
-          // If selector is invalid and not '#', still try to handle it gracefully
-          if (selector && selector.trim() === '')
-          {
-            return null;
-          }
-          throw e;
-        }
-      };
 
-      var config = {
-        dataUrl: 'Build/FreshBuild.data',
-        frameworkUrl: 'Build/FreshBuild.framework.js',
-        codeUrl: 'Build/FreshBuild.wasm',
-        streamingAssetsUrl: 'StreamingAssets',
-        companyName: 'DefaultCompany',
-        productName: 'FreshBuild',
-        productVersion: '1.0',
-        // `preserveDrawingBuffer` is needed for WebVR content to be mirrored to the `<canvas>`.
-        webglContextAttributes: {
-          preserveDrawingBuffer: true
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
         }
-      };
 
-      createUnityInstance(canvas, config, function (progress)
-      {
-        unityProgress(progress);
-      }).then(function (instance)
-      {
-        window.gameInstance = instance;
-        // Restore original querySelector after Unity initialization
-        Document.prototype.querySelector = originalQuerySelector;
-        document.dispatchEvent(new CustomEvent('UnityLoaded'));
-      }).catch(function (error)
-      {
-        console.error('Failed to create Unity instance:', error);
-        // Restore original querySelector even on error
-        Document.prototype.querySelector = originalQuerySelector;
-      });
-    });
-  </script>
+        #enterVR {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 30px;
+            font-size: 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 100;
+        }
+
+        #enterVR:hover {
+            background: #45a049;
+        }
+
+        #enterVR:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
 
 <body>
-  <div id="loader">
-    <div id="loading" class="loading">Loading</div>
-    <div id="progress" class="progress"></div>
-  </div>
-
-  <div id="game" style="position: absolute; width: 100%; height: 100%; top: 0; left: 0;">
-    <div id="gameContainer" style="position: absolute; width: 100%; height: 100%; top: 0; left: 0;">
-      <canvas id="unity-canvas" tabindex="0"
-        style="position: absolute; width: 100%; height: 100%; top: 0; left: 0; display: block;"></canvas>
+    <div id="info">
+        <div>WebXR App</div>
+        <div id="status">Loading...</div>
     </div>
-  </div>
+    <button id="enterVR" disabled>Enter VR</button>
 
-  <div id="instruction">
-    <div id="novr" class="panel center">
-      <h3>You&rsquo;ll need a <a href="https://developer.mozilla.com/topics/mixed-reality/">WebXR-enabled browser</a>
-        and VR headset to fully enjoy this experience.</h3>
-      <p><img src="mousedrag.png" width="70" alt="Click-and-drag your mouse"></p>
-      <p>In the meantime, <strong><em>click and drag</em></strong> to have a look around!</p>
-      <p>
-        <button class="confirm">Continue</button>
-      </p>
-    </div>
-  </div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
 
-  <button id="enterxr" value="Enter VR"></button>
+    <script type="module">
+        import * as THREE from 'three';
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+        import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
-  <div id="performance" data-enabled="false"></div>
+        let scene, camera, renderer;
+        let controller1, controller2;
+        let controllerGrip1, controllerGrip2;
 
-  <script src="vendor/gl-matrix-min.js"></script>
-  <script src="webxr.js"></script>
+        // Update status
+        const statusEl = document.getElementById('status');
+        function updateStatus(text)
+        {
+            statusEl.textContent = text;
+        }
+
+        // Initialize scene
+        function init()
+        {
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x505050);
+
+            // Create camera
+            camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
+            );
+            camera.position.set(0, 1.6, 3);
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // Add WebXR button
+            document.body.appendChild(VRButton.createButton(renderer));
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 10, 5);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            directionalLight.shadow.camera.near = 0.5;
+            directionalLight.shadow.camera.far = 50;
+            directionalLight.shadow.camera.left = -10;
+            directionalLight.shadow.camera.right = 10;
+            directionalLight.shadow.camera.top = 10;
+            directionalLight.shadow.camera.bottom = -10;
+            scene.add(directionalLight);
+
+            // Load textures
+            const textureLoader = new THREE.TextureLoader();
+
+            // Create ground plane
+            const groundTexture = textureLoader.load('ground.png',
+                () => updateStatus('Ground texture loaded'),
+                undefined,
+                (err) =>
+                {
+                    console.error('Error loading ground texture:', err);
+                    updateStatus('Error loading ground texture');
+                }
+            );
+            groundTexture.wrapS = THREE.RepeatWrapping;
+            groundTexture.wrapT = THREE.RepeatWrapping;
+            groundTexture.repeat.set(4, 4);
+
+            const groundGeometry = new THREE.PlaneGeometry(10, 10);
+            const groundMaterial = new THREE.MeshStandardMaterial({
+                map: groundTexture,
+                roughness: 0.8,
+                metalness: 0.2
+            });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = 0;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Create cube (25cm = 0.25m, 1 meter above ground)
+            const cubeTexture = textureLoader.load('cubetexture.png',
+                () => updateStatus('Cube texture loaded'),
+                undefined,
+                (err) =>
+                {
+                    console.error('Error loading cube texture:', err);
+                    updateStatus('Error loading cube texture');
+                }
+            );
+            cubeTexture.wrapS = THREE.RepeatWrapping;
+            cubeTexture.wrapT = THREE.RepeatWrapping;
+
+            const cubeGeometry = new THREE.BoxGeometry(0.25, 0.25, 0.25);
+            const cubeMaterial = new THREE.MeshStandardMaterial({
+                map: cubeTexture,
+                roughness: 0.7,
+                metalness: 0.3
+            });
+            const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+            cube.position.set(0, 1, 0); // 1 meter above ground at origin
+            cube.castShadow = true;
+            cube.receiveShadow = true;
+            scene.add(cube);
+
+            // Animation loop using setAnimationLoop - works for both normal and XR rendering
+            // Three.js automatically handles XR rendering when in XR mode
+            renderer.setAnimationLoop((time, frame) =>
+            {
+                // Update cube rotation
+                cube.rotation.y += 0.005;
+
+                // Render the scene
+                // When in XR, Three.js automatically uses the XR camera
+                // When not in XR, it uses the regular camera
+                renderer.render(scene, camera);
+            });
+
+            // Handle XR session start/end
+            renderer.xr.addEventListener('sessionstart', () =>
+            {
+                updateStatus('VR session started');
+            });
+
+            renderer.xr.addEventListener('sessionend', () =>
+            {
+                updateStatus('VR session ended');
+            });
+
+            // Handle window resize
+            window.addEventListener('resize', () =>
+            {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Update status
+            updateStatus('Scene ready. Click "Enter VR" to start.');
+            document.getElementById('enterVR').disabled = false;
+        }
+
+        // Start the app
+        if (navigator.xr)
+        {
+            navigator.xr.isSessionSupported('immersive-vr').then((supported) =>
+            {
+                if (supported)
+                {
+                    updateStatus('WebXR VR supported');
+                    init();
+                } else
+                {
+                    updateStatus('WebXR VR not supported');
+                }
+            });
+        } else
+        {
+            updateStatus('WebXR not available. Trying to initialize anyway...');
+            init();
+        }
+    </script>
 </body>
 
 </html>
