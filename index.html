@@ -125,7 +125,10 @@
                 0.1,
                 1000
             );
+            // Position camera at eye level (1.6m) above ground (y=0)
             camera.position.set(0, 1.6, 3);
+            // Look slightly down so ground appears at ground level
+            camera.rotation.x = -0.2;
 
             // Initialize euler angles from camera rotation
             euler.setFromQuaternion(camera.quaternion);
