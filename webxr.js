@@ -55,8 +55,18 @@
   XRManager.prototype.resize = function () {
     if (!this.canvas) return;
 
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
+    // Ensure canvas fills viewport properly
+    this.canvas.width = window.innerWidth || document.documentElement.clientWidth || 1920;
+    this.canvas.height = window.innerHeight || document.documentElement.clientHeight || 1080;
+    
+    // Ensure proper CSS styling for full viewport coverage
+    this.canvas.style.position = 'absolute';
+    this.canvas.style.top = '0';
+    this.canvas.style.left = '0';
+    this.canvas.style.width = '100%';
+    this.canvas.style.height = '100%';
+    this.canvas.style.display = 'block';
+    
     this.gameContainer.style.transform = '';
   }
 
@@ -106,8 +116,14 @@
     this.gameInstance.SendMessage(this.unityObjectName, 'OnEndXR');
     this.isInVRSession = false;
     this.notifiedStartToUnity = false;
-    this.canvas.width = this.originalWidth;
-    this.canvas.height = this.originalHeight;
+    
+    if (this.originalWidth && this.originalHeight) {
+      this.canvas.width = this.originalWidth;
+      this.canvas.height = this.originalHeight;
+    }
+    
+    // Restore canvas styling after VR
+    this.resize();
   }
 
   XRManager.prototype.toggleVR = function () {
@@ -294,6 +310,23 @@
       this.originalHeight = this.canvas.height;
       this.canvas.width = glLayer.framebufferWidth;
       this.canvas.height = glLayer.framebufferHeight;
+      
+      // Ensure canvas and container fill viewport in VR
+      this.canvas.style.position = 'fixed';
+      this.canvas.style.top = '0';
+      this.canvas.style.left = '0';
+      this.canvas.style.width = '100vw';
+      this.canvas.style.height = '100vh';
+      this.canvas.style.display = 'block';
+      this.canvas.style.zIndex = '9999';
+      
+      if (this.gameContainer) {
+        this.gameContainer.style.position = 'fixed';
+        this.gameContainer.style.top = '0';
+        this.gameContainer.style.left = '0';
+        this.gameContainer.style.width = '100vw';
+        this.gameContainer.style.height = '100vh';
+      }
     }
 
     session.requestReferenceSpace(refSpaceType).then((refSpace) => {
@@ -325,6 +358,14 @@
     let glLayer = session.renderState.baseLayer;
     this.canvas.width = glLayer.framebufferWidth;
     this.canvas.height = glLayer.framebufferHeight;
+
+    // Ensure canvas CSS fills viewport in VR mode
+    this.canvas.style.position = 'absolute';
+    this.canvas.style.top = '0';
+    this.canvas.style.left = '0';
+    this.canvas.style.width = '100%';
+    this.canvas.style.height = '100%';
+    this.canvas.style.display = 'block';
 
     this.ctx.bindFramebuffer(this.ctx.FRAMEBUFFER, glLayer.framebuffer);
     this.ctx.clear(this.ctx.COLOR_BUFFER_BIT | this.ctx.DEPTH_BUFFER_BIT);
