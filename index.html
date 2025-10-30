@@ -48,11 +48,43 @@
 
     document.addEventListener('DOMContentLoaded', function ()
     {
-      var gameContainer = document.getElementById('gameContainer');
-      var canvas = document.createElement('canvas');
-      gameContainer.appendChild(canvas);
+      var canvas = document.getElementById('unity-canvas');
+      if (!canvas)
+      {
+        console.error('Canvas element not found!');
+        return;
+      }
 
-      createUnityInstance(canvas, {
+      // Set canvas attributes before Unity initialization
+      canvas.setAttribute('tabindex', '0');
+      canvas.style.outline = 'none';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+
+      // Workaround: Patch querySelector to handle Unity's invalid '#' selector
+      var originalQuerySelector = Document.prototype.querySelector;
+      Document.prototype.querySelector = function (selector)
+      {
+        if (selector === '#' || (selector && selector.trim() === '#'))
+        {
+          // Return the canvas element when Unity tries to query with '#'
+          return canvas;
+        }
+        try
+        {
+          return originalQuerySelector.call(this, selector);
+        } catch (e)
+        {
+          // If selector is invalid and not '#', still try to handle it gracefully
+          if (selector && selector.trim() === '')
+          {
+            return null;
+          }
+          throw e;
+        }
+      };
+
+      var config = {
         dataUrl: 'Build/FreshBuild.data',
         frameworkUrl: 'Build/FreshBuild.framework.js',
         codeUrl: 'Build/FreshBuild.wasm',
@@ -64,16 +96,22 @@
         webglContextAttributes: {
           preserveDrawingBuffer: true
         }
-      }, function (progress)
+      };
+
+      createUnityInstance(canvas, config, function (progress)
       {
         unityProgress(progress);
       }).then(function (instance)
       {
         window.gameInstance = instance;
+        // Restore original querySelector after Unity initialization
+        Document.prototype.querySelector = originalQuerySelector;
         document.dispatchEvent(new CustomEvent('UnityLoaded'));
       }).catch(function (error)
       {
         console.error('Failed to create Unity instance:', error);
+        // Restore original querySelector even on error
+        Document.prototype.querySelector = originalQuerySelector;
       });
     });
   </script>
@@ -86,7 +124,9 @@
   </div>
 
   <div id="game">
-    <div id="gameContainer"></div>
+    <div id="gameContainer">
+      <canvas id="unity-canvas" tabindex="0"></canvas>
+    </div>
   </div>
 
   <div id="instruction">
