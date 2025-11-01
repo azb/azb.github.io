@@ -66,6 +66,106 @@
             margin: 0 !important;
             flex-shrink: 0;
         }
+
+        #debugPanel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 400px;
+            max-height: 90vh;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.85);
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            z-index: 1000;
+            display: block;
+            border: 2px solid #00ff00;
+        }
+
+        #debugPanel.hidden {
+            display: none;
+        }
+
+        #debugPanel h3 {
+            margin: 0 0 10px 0;
+            color: #00ff00;
+            border-bottom: 1px solid #00ff00;
+            padding-bottom: 5px;
+        }
+
+        .controller-section {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(0, 255, 0, 0.1);
+            border-left: 3px solid #00ff00;
+            border-radius: 4px;
+        }
+
+        .controller-section h4 {
+            margin: 0 0 8px 0;
+            color: #00ff00;
+        }
+
+        .axis-item,
+        .button-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 3px 0;
+            padding: 2px 5px;
+        }
+
+        .axis-item {
+            background: rgba(0, 255, 0, 0.05);
+        }
+
+        .button-item {
+            background: rgba(255, 255, 0, 0.1);
+        }
+
+        .button-item.pressed {
+            background: rgba(255, 0, 0, 0.3);
+            font-weight: bold;
+        }
+
+        .axis-label {
+            color: #00ffff;
+        }
+
+        .axis-value {
+            color: #ffffff;
+            font-weight: bold;
+        }
+
+        .button-label {
+            color: #ffff00;
+        }
+
+        .no-controllers {
+            color: #ff6666;
+            font-style: italic;
+        }
+
+        #toggleDebug {
+            position: absolute;
+            top: 10px;
+            right: 420px;
+            padding: 8px 15px;
+            background: #333;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            z-index: 1001;
+        }
+
+        #toggleDebug:hover {
+            background: #555;
+        }
     </style>
 </head>
 
@@ -73,6 +173,13 @@
     <div id="info">
         <div>WebXR App</div>
         <div id="status">Loading...</div>
+    </div>
+    <button id="toggleDebug" onclick="toggleDebugPanel()">Toggle Debug</button>
+    <div id="debugPanel">
+        <h3>Controller Debug Panel</h3>
+        <div id="debugContent">
+            <div class="no-controllers">No controllers detected</div>
+        </div>
     </div>
     <div class="xr-button-container" id="xrButtons"></div>
 
@@ -85,13 +192,21 @@
     }
     </script>
 
+    <!-- Hidden element for VR debug panel -->
+    <div id="vrDebugPanel" style="display: none;">
+        <div id="vrDebugContent"></div>
+    </div>
+
     <script type="module">
         import * as THREE from 'three';
         import { VRButton } from 'three/addons/webxr/VRButton.js';
         import { ARButton } from 'three/addons/webxr/ARButton.js';
         import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
         let scene, camera, renderer;
+        let labelRenderer; // CSS2D renderer for VR debug panel
+        let debugPanel3D; // 3D object for debug panel in VR
         let controller1, controller2;
         let controllerGrip1, controllerGrip2;
 
@@ -113,12 +228,124 @@
         let accumulatedPosition = new THREE.Vector3(0, 0, 0);
         let accumulatedRotation = 0;
 
+        // Debug state
+        let debugFrameCount = 0;
+        const debugLogInterval = 60; // Log every 60 frames (about once per second at 60fps)
+
         // Update status
         const statusEl = document.getElementById('status');
         function updateStatus(text)
         {
             statusEl.textContent = text;
         }
+
+        // Debug panel functions
+        function toggleDebugPanel()
+        {
+            const panel = document.getElementById('debugPanel');
+            panel.classList.toggle('hidden');
+        }
+
+        function updateDebugPanel(inputSources, session)
+        {
+            const debugContent = document.getElementById('debugContent');
+            const vrDebugContent = document.getElementById('vrDebugContent');
+
+            if (!inputSources || inputSources.length === 0)
+            {
+                const noControllersMsg = '<div class="no-controllers">No XR input sources (controllers) detected.<br/>Make sure controllers are turned on and tracking.</div>';
+                debugContent.innerHTML = noControllersMsg;
+                if (vrDebugContent)
+                {
+                    vrDebugContent.innerHTML = noControllersMsg;
+                }
+                return;
+            }
+
+            let html = '';
+
+            inputSources.forEach((inputSource, idx) =>
+            {
+                // XRInputSource properties (per MDN: https://developer.mozilla.org/en-US/docs/Web/API/XRInputSource)
+                const handedness = inputSource.handedness || 'none'; // "left", "right", or "none"
+                const targetRayMode = inputSource.targetRayMode || 'unknown'; // "gaze", "tracked-pointer", or "screen"
+                const profiles = inputSource.profiles || []; // Array of profile names
+                const gamepad = inputSource.gamepad; // Gamepad object or null
+
+                // According to MDN: "If the device isn't a gamepad-like device, this property's value is null"
+                if (!gamepad)
+                {
+                    html += `<div class="controller-section">
+                        <h4>XR Controller ${idx} - No Gamepad</h4>
+                        <div><strong>Handedness:</strong> ${handedness}</div>
+                        <div><strong>Target Ray Mode:</strong> ${targetRayMode}</div>
+                        <div><strong>Profiles:</strong> ${profiles.length > 0 ? profiles.join(', ') : 'none'}</div>
+                        <div style="color: #ff6666; margin-top: 5px;">
+                            Gamepad is null - This device may not be gamepad-like according to WebXR spec
+                        </div>
+                    </div>`;
+                    return;
+                }
+
+                const controllerType = handedness === 'left' ? 'LEFT' : handedness === 'right' ? 'RIGHT' : 'UNKNOWN';
+
+                html += `<div class="controller-section">
+                    <h4>XR Controller ${idx} - ${controllerType}</h4>
+                    <div style="font-size: 10px; color: #888; margin-bottom: 8px;">
+                        <strong>XRInputSource Properties:</strong><br/>
+                        Handedness: ${handedness} | Ray Mode: ${targetRayMode}<br/>
+                        Profiles: ${profiles.length > 0 ? profiles.join(', ') : 'none'}
+                    </div>
+                    <div style="font-size: 10px; color: #888; margin-bottom: 8px;">
+                        <strong>Gamepad Object:</strong><br/>
+                        ID: ${gamepad.id || 'Unknown'} | Connected: ${gamepad.connected ? 'Yes' : 'No'}
+                    </div>
+                    <div style="margin-bottom: 8px;">
+                        <strong>Axes (${gamepad.axes.length}):</strong>
+                    </div>`;
+
+                // Display all axes
+                gamepad.axes.forEach((axis, axisIdx) =>
+                {
+                    const value = axis.toFixed(3);
+                    const absValue = Math.abs(axis);
+                    const activeColor = absValue > 0.1 ? '#ff6666' : '#ffffff';
+                    html += `<div class="axis-item">
+                        <span class="axis-label">Axis ${axisIdx}:</span>
+                        <span class="axis-value" style="color: ${activeColor}">${value}</span>
+                    </div>`;
+                });
+
+                html += `<div style="margin-top: 8px; margin-bottom: 8px;">
+                    <strong>Buttons (${gamepad.buttons.length}):</strong>
+                </div>`;
+
+                // Display all buttons
+                gamepad.buttons.forEach((button, btnIdx) =>
+                {
+                    const isPressed = button.pressed;
+                    const pressedClass = isPressed ? 'pressed' : '';
+                    const value = typeof button.value === 'number' ? button.value.toFixed(3) : (isPressed ? '1.000' : '0.000');
+                    html += `<div class="button-item ${pressedClass}">
+                        <span class="button-label">Button ${btnIdx}:</span>
+                        <span class="axis-value">${isPressed ? 'PRESSED' : 'released'} ${value}</span>
+                    </div>`;
+                });
+
+                html += `</div>`;
+            });
+
+            debugContent.innerHTML = html;
+
+            // Also update VR debug panel
+            if (vrDebugContent)
+            {
+                vrDebugContent.innerHTML = html;
+            }
+        }
+
+        // Make toggle function globally available
+        window.toggleDebugPanel = toggleDebugPanel;
 
         // Initialize scene
         function init()
@@ -135,7 +362,7 @@
                 0.1,
                 1000
             );
-            camera.position.set(0, 1.6, 3);
+            camera.position.set(0, 1.6, -3);
 
             // Initialize euler angles from camera rotation
             euler.setFromQuaternion(camera.quaternion);
@@ -149,18 +376,68 @@
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
+            // Create CSS2D renderer for 3D labels/panels in VR
+            labelRenderer = new CSS2DRenderer();
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.domElement.style.position = 'absolute';
+            labelRenderer.domElement.style.top = '0';
+            labelRenderer.domElement.style.pointerEvents = 'none';
+            document.body.appendChild(labelRenderer.domElement);
+
+            // Create 3D debug panel for VR
+            const vrDebugElement = document.getElementById('vrDebugPanel');
+            vrDebugElement.style.width = '600px';
+            vrDebugElement.style.maxHeight = '800px';
+            vrDebugElement.style.overflow = 'auto';
+            vrDebugElement.style.backgroundColor = 'rgba(0, 0, 0, 0.95)';
+            vrDebugElement.style.color = '#00ff00';
+            vrDebugElement.style.padding = '15px';
+            vrDebugElement.style.fontFamily = 'Courier New, monospace';
+            vrDebugElement.style.fontSize = '12px';
+            vrDebugElement.style.border = '3px solid #00ff00';
+            vrDebugElement.style.borderRadius = '8px';
+            vrDebugElement.style.boxShadow = '0 0 20px rgba(0, 255, 0, 0.5)';
+
+            // Add title
+            const title = document.createElement('div');
+            title.textContent = 'XR Controller Debug';
+            title.style.fontSize = '16px';
+            title.style.fontWeight = 'bold';
+            title.style.marginBottom = '10px';
+            title.style.borderBottom = '2px solid #00ff00';
+            title.style.paddingBottom = '5px';
+            vrDebugElement.insertBefore(title, vrDebugElement.firstChild);
+
+            const debugLabel = new CSS2DObject(vrDebugElement);
+            debugPanel3D = debugLabel;
+            // Position in front-left of user, at eye level
+            debugPanel3D.position.set(-1.5, 1.6, -1.5);
+            scene.add(debugPanel3D);
+
             // Add WebXR buttons (VR and AR)
             const xrButtonsContainer = document.getElementById('xrButtons');
 
             // Add AR button (passthrough enabled by default)
             const arButton = ARButton.createButton(renderer, {
-                optionalFeatures: ['dom-overlay', 'dom-overlay-handling'],
+                optionalFeatures: [
+                    'gamepad',
+                    'hand-tracking',
+                    'dom-overlay',
+                    'dom-overlay-handling'
+                ],
                 domOverlay: { root: document.body }
             });
             xrButtonsContainer.appendChild(arButton);
 
-            // Add VR button
-            const vrButton = VRButton.createButton(renderer);
+            // Add VR button with explicit controller request
+            const vrButton = VRButton.createButton(renderer, {
+                optionalFeatures: [
+                    'gamepad',
+                    'hand-tracking',
+                    'dom-overlay',
+                    'dom-overlay-handling'
+                ]
+            });
             xrButtonsContainer.appendChild(vrButton);
 
             // Set up XR controllers
@@ -343,27 +620,160 @@
                     const deltaTime = lastTime !== null ? (time - lastTime) / 1000 : 0.016;
                     lastTime = time;
 
-                    // Process input sources
-                    for (let i = 0; i < session.inputSources.length; i++)
+                    // Debug logging (every N frames)
+                    debugFrameCount++;
+                    const shouldLogDebug = debugFrameCount % debugLogInterval === 0;
+
+                    if (shouldLogDebug)
                     {
-                        const inputSource = session.inputSources[i];
-                        if (inputSource && inputSource.gamepad)
+                        console.log('=== XR Input Sources Status ===');
+                        console.log(`Session exists: ${!!session}`);
+                        console.log(`Input sources count: ${session.inputSources ? session.inputSources.length : 'N/A'}`);
+
+                        if (session.inputSources && session.inputSources.length > 0)
                         {
-                            const gamepad = inputSource.gamepad;
-
-                            // Left controller (typically index 0) - Movement with thumbstick
-                            // Check for left controller by handedness or use first controller
-                            const isLeftController = inputSource.handedness === 'left' || i === 0;
-
-                            if (isLeftController && gamepad.axes.length >= 2)
+                            console.log('✓ Controllers detected:');
+                            session.inputSources.forEach((source, idx) =>
                             {
-                                const leftX = gamepad.axes[0]; // Left thumbstick X
-                                const leftY = gamepad.axes[1]; // Left thumbstick Y
+                                const hasGamepad = !!source.gamepad;
+                                console.log(`  Controller ${idx}: ${source.handedness || 'unknown'} - Gamepad: ${hasGamepad ? 'YES' : 'NO'}`);
+                                if (hasGamepad)
+                                {
+                                    console.log(`    ID: ${source.gamepad.id}`);
+                                    console.log(`    Connected: ${source.gamepad.connected}`);
+                                    console.log(`    Axes: ${source.gamepad.axes.length}, Buttons: ${source.gamepad.buttons.length}`);
+                                }
+                            });
+                        } else
+                        {
+                            console.log('⚠ No controllers detected');
+                            console.log('  Troubleshooting:');
+                            console.log('    1. Check controllers are powered on');
+                            console.log('    2. Move controllers to wake them from sleep');
+                            console.log('    3. Check if platform requires controller pairing');
+                            console.log('    4. Wait for inputsourceschange event (controllers may connect asynchronously)');
+                        }
+                    }
+
+                    // Get XR input sources (controllers) from the session
+                    // According to MDN: XRInputSource represents a single source of control input
+                    // https://developer.mozilla.org/en-US/docs/Web/API/XRInputSource
+                    let inputSources = [];
+
+                    // session.inputSources is an XRInputSourceArray
+                    if (session.inputSources && session.inputSources.length > 0)
+                    {
+                        // Convert XRInputSourceArray to regular array
+                        inputSources = Array.from(session.inputSources);
+                    }
+
+                    // Note: Each XRInputSource has a gamepad property that can be null
+                    // According to MDN: "If the device isn't a gamepad-like device, this property's value is null"
+
+                    // Update debug panel with controller data (both 2D and 3D versions)
+                    updateDebugPanel(inputSources, session);
+
+                    // Update 3D debug panel position to follow camera in VR
+                    if (renderer.xr.isPresenting && debugPanel3D && frame && frame.getViewerPose)
+                    {
+                        const viewerPose = frame.getViewerPose(xrReferenceSpace || renderer.xr.getReferenceSpace());
+                        if (viewerPose)
+                        {
+                            // Position panel relative to camera in VR
+                            const transform = viewerPose.transform;
+                            const position = transform.position;
+                            const quaternion = new THREE.Quaternion(
+                                transform.orientation.x,
+                                transform.orientation.y,
+                                transform.orientation.z,
+                                transform.orientation.w
+                            );
+
+                            // Position panel slightly forward-left and at eye level
+                            const panelOffset = new THREE.Vector3(-1.5, 0, -1.5);
+                            panelOffset.applyQuaternion(quaternion);
+
+                            debugPanel3D.position.set(
+                                position.x + panelOffset.x,
+                                position.y + 0.1, // Slightly above eye level
+                                position.z + panelOffset.z
+                            );
+
+                            // Make panel face the camera
+                            debugPanel3D.lookAt(
+                                position.x,
+                                position.y,
+                                position.z
+                            );
+                        }
+                    }
+
+                    // Process XR input sources
+                    // According to MDN: gamepad property is read-only and can be null
+                    for (let i = 0; i < inputSources.length; i++)
+                    {
+                        const inputSource = inputSources[i];
+
+                        // XRInputSource properties (per MDN docs):
+                        // - gamepad: Gamepad object or null if not gamepad-like
+                        // - handedness: "left", "right", or "none"
+                        // - targetRayMode: "gaze", "tracked-pointer", or "screen"
+                        // - profiles: array of profile names
+
+                        // Get gamepad from XRInputSource
+                        // According to MDN: "A Gamepad object describing the state of the buttons and axes 
+                        // on the XR input source, if it is a gamepad or comparable device. 
+                        // If the device isn't a gamepad-like device, this property's value is null."
+                        const gamepad = inputSource.gamepad;
+
+                        // Debug: Log gamepad info
+                        if (shouldLogDebug && gamepad)
+                        {
+                            console.log(`\nController ${i}:`);
+                            console.log(`  Handedness: ${inputSource.handedness || 'none'}`);
+                            console.log(`  Gamepad ID: ${gamepad.id}`);
+                            console.log(`  Axes count: ${gamepad.axes.length}`);
+                            console.log(`  Buttons count: ${gamepad.buttons.length}`);
+                            console.log(`  Axes values: [${gamepad.axes.map(v => v.toFixed(3)).join(', ')}]`);
+                            console.log(`  Button states: [${gamepad.buttons.map((b, idx) => b.pressed ? idx : null).filter(v => v !== null).join(', ')}]`);
+                        }
+
+                        // Check if gamepad exists and has required properties
+                        // According to MDN, gamepad can be null for non-gamepad devices
+                        if (gamepad && gamepad.axes && gamepad.axes.length >= 2)
+                        {
+                            // Left controller (typically index 0) - Movement with thumbstick
+                            const isLeftController = inputSource.handedness === 'left' ||
+                                (inputSource.handedness !== 'right' && i === 0);
+
+                            // Debug: Controller detection
+                            if (shouldLogDebug)
+                            {
+                                console.log(`  Detected as: ${isLeftController ? 'LEFT' : 'RIGHT'} controller`);
+                            }
+                            if (isLeftController)
+                            {
+                                const leftX = -gamepad.axes[0]; // Left thumbstick X
+                                const leftY = -gamepad.axes[1]; // Left thumbstick Y
+
+                                // Debug: Movement input
+                                if (shouldLogDebug)
+                                {
+                                    console.log(`  Left thumbstick [2,3]: X=${leftX.toFixed(3)}, Y=${leftY.toFixed(3)}`);
+                                }
 
                                 // Dead zone
                                 const deadZone = 0.1;
-                                if (Math.abs(leftX) > deadZone || Math.abs(leftY) > deadZone)
+                                const isInDeadZone = Math.abs(leftX) <= deadZone && Math.abs(leftY) <= deadZone;
+
+                                if (!isInDeadZone)
                                 {
+                                    // Debug: Active movement
+                                    if (shouldLogDebug)
+                                    {
+                                        console.log(`  ✓ Movement active (deadZone=${deadZone})`);
+                                    }
+
                                     // Get viewer pose to determine forward direction
                                     if (xrReferenceSpace && frame.getViewerPose)
                                     {
@@ -391,39 +801,66 @@
                                             movement.addScaledVector(forward, -leftY * xrMoveSpeed * deltaTime);
                                             movement.addScaledVector(right, leftX * xrMoveSpeed * deltaTime);
 
+                                            // Debug: Movement calculation
+                                            if (shouldLogDebug)
+                                            {
+                                                console.log(`  Movement vector: [${movement.x.toFixed(3)}, ${movement.y.toFixed(3)}, ${movement.z.toFixed(3)}]`);
+                                            }
+
                                             // Accumulate position
                                             accumulatedPosition.add(movement);
+                                        } else
+                                        {
+                                            if (shouldLogDebug)
+                                            {
+                                                console.log(`  ✗ No viewer pose available`);
+                                            }
+                                        }
+                                    } else
+                                    {
+                                        if (shouldLogDebug)
+                                        {
+                                            console.log(`  ✗ No reference space or getViewerPose`);
                                         }
                                     }
                                 }
                             }
 
                             // Right controller - Snap rotation with thumbstick
-                            const isRightController = inputSource.handedness === 'right' || i === 1;
+                            const isRightController = inputSource.handedness === 'right' ||
+                                (inputSource.handedness !== 'left' && i === 1);
 
-                            if (isRightController && gamepad.axes.length >= 2)
+                            if (isRightController)
                             {
-                                const rightY = gamepad.axes[1]; // Right thumbstick Y
+                                const rightY = gamepad.axes[2]; // Right thumbstick Y
                                 const threshold = 0.7;
                                 const isPressed = Math.abs(rightY) > threshold;
+
+                                // Debug: Rotation input
+                                if (shouldLogDebug || isPressed !== lastRightThumbstickPressed)
+                                {
+                                    console.log(`  Right thumbstick [2]: Y=${rightY.toFixed(3)}, threshold=${threshold}, pressed=${isPressed}, wasPressed=${lastRightThumbstickPressed}`);
+                                }
 
                                 // Detect when thumbstick crosses threshold (snap rotation)
                                 if (isPressed && !lastRightThumbstickPressed)
                                 {
-                                    // Apply 45-degree snap rotation
+                                    console.log(`  🎯 SNAP ROTATION TRIGGERED! Direction: ${rightY > 0 ? 'UP' : 'DOWN'}`);
+
+                                    // Apply 45-degree snap rotation immediately
                                     const rotationDirection = rightY > 0 ? -1 : 1;
-                                    accumulatedRotation += rotationDirection * snapRotationAngle;
+                                    const rotationAmount = rotationDirection * snapRotationAngle;
+
+                                    console.log(`  Rotation amount: ${(rotationAmount * 180 / Math.PI).toFixed(1)} degrees`);
 
                                     // Update reference space with new rotation
                                     if (xrReferenceSpace)
                                     {
+                                        // Create rotation quaternion for the snap amount
                                         const rotationQuat = new THREE.Quaternion().setFromAxisAngle(
                                             new THREE.Vector3(0, 1, 0),
-                                            accumulatedRotation
+                                            rotationAmount
                                         );
-
-                                        // Reset accumulated rotation after applying
-                                        accumulatedRotation = 0;
 
                                         const xrTransform = new XRRigidTransform(
                                             { x: 0, y: 0, z: 0 },
@@ -437,6 +874,10 @@
 
                                         xrReferenceSpace = xrReferenceSpace.getOffsetReferenceSpace(xrTransform);
                                         renderer.xr.setReferenceSpace(xrReferenceSpace);
+                                        console.log(`  ✓ Reference space updated`);
+                                    } else
+                                    {
+                                        console.log(`  ✗ No reference space for rotation`);
                                     }
                                 }
 
@@ -445,9 +886,14 @@
                         }
                     }
 
-                    // Apply accumulated movement
-                    if (accumulatedPosition.length() > 0.001 && xrReferenceSpace)
+                    // Apply accumulated movement every frame
+                    if (xrReferenceSpace && accumulatedPosition.length() > 0.0001)
                     {
+                        if (shouldLogDebug)
+                        {
+                            console.log(`\nApplying movement: [${accumulatedPosition.x.toFixed(3)}, ${accumulatedPosition.y.toFixed(3)}, ${accumulatedPosition.z.toFixed(3)}]`);
+                        }
+
                         const moveTransform = new XRRigidTransform(
                             {
                                 x: accumulatedPosition.x,
@@ -462,10 +908,15 @@
 
                         // Reset accumulated position
                         accumulatedPosition.set(0, 0, 0);
+                    } else if (shouldLogDebug && accumulatedPosition.length() <= 0.0001)
+                    {
+                        console.log(`\nNo movement to apply (length: ${accumulatedPosition.length().toFixed(6)})`);
                     }
                 } else
                 {
                     lastTime = time;
+                    // Update debug panel even when not in XR (show no controllers)
+                    updateDebugPanel([], null);
                 }
 
                 // Handle first-person movement (only when not in XR)
@@ -521,6 +972,12 @@
                 // When in XR, Three.js automatically uses the XR camera
                 // When not in XR, it uses the regular camera
                 renderer.render(scene, camera);
+
+                // Render CSS2D labels (for VR debug panel)
+                if (labelRenderer)
+                {
+                    labelRenderer.render(scene, camera);
+                }
             });
 
             // Handle XR session start/end
@@ -540,6 +997,86 @@
 
                 const session = renderer.xr.getSession();
                 const mode = session.mode;
+
+                console.log('=== XR Session Started ===');
+                console.log('Session mode:', session.mode);
+                console.log('Initial input sources:', session.inputSources ? session.inputSources.length : 'N/A');
+                console.log('Session.inputSources type:', session.inputSources);
+                console.log('Session.inputSources:', session.inputSources);
+
+                // Try to explicitly request controller support
+                console.log('Requested features:', session.enabledFeatures || 'none');
+
+                // Check if controllers are available immediately
+                if (session.inputSources && session.inputSources.length > 0)
+                {
+                    console.log('✓ Controllers detected immediately!');
+                    session.inputSources.forEach((source, idx) =>
+                    {
+                        console.log(`  Controller ${idx}:`, {
+                            handedness: source.handedness,
+                            targetRayMode: source.targetRayMode,
+                            hasGamepad: !!source.gamepad,
+                            profiles: source.profiles
+                        });
+                    });
+                } else
+                {
+                    console.log('⚠ No controllers detected at session start');
+                    console.log('  This is normal - controllers may connect later via inputsourceschange event');
+                    console.log('  Make sure:');
+                    console.log('    1. Controllers are turned on');
+                    console.log('    2. Controllers are tracking (not in sleep mode)');
+                    console.log('    3. You have moved the controllers to wake them');
+                }
+
+                // Listen for input source changes
+                // According to MDN: Controllers are added/removed via inputsourceschange event
+                // IMPORTANT: Controllers often don't appear until they're moved/tracked
+                session.addEventListener('inputsourceschange', (event) =>
+                {
+                    console.log('=== XR Input Sources Changed ===');
+                    console.log(`Added: ${event.added.length}, Removed: ${event.removed.length}`);
+                    console.log(`Total input sources now: ${session.inputSources.length}`);
+
+                    // Log details about added XRInputSource objects
+                    event.added.forEach((source, idx) =>
+                    {
+                        console.log(`  ✓ Added XRInputSource ${idx}:`, {
+                            handedness: source.handedness, // "left", "right", or "none"
+                            targetRayMode: source.targetRayMode, // "gaze", "tracked-pointer", or "screen"
+                            profiles: source.profiles || [], // Array of profile names
+                            hasGamepad: !!source.gamepad, // Gamepad object or null
+                            gamepadId: source.gamepad ? source.gamepad.id : 'N/A',
+                            gamepadConnected: source.gamepad ? source.gamepad.connected : false,
+                            axesCount: source.gamepad ? source.gamepad.axes.length : 0,
+                            buttonsCount: source.gamepad ? source.gamepad.buttons.length : 0
+                        });
+
+                        if (!source.gamepad)
+                        {
+                            console.log(`    ⚠ WARNING: Controller has no gamepad property!`);
+                            console.log(`    This means it's not recognized as a gamepad-like device.`);
+                            console.log(`    It may be a gaze or screen-based input instead.`);
+                        } else
+                        {
+                            console.log(`    ✓ Gamepad available: ${source.gamepad.id}`);
+                            console.log(`    ✓ Axes: ${source.gamepad.axes.length}, Buttons: ${source.gamepad.buttons.length}`);
+                        }
+                    });
+
+                    event.removed.forEach((source, idx) =>
+                    {
+                        console.log(`  ✗ Removed XRInputSource ${idx} (handedness: ${source.handedness})`);
+                    });
+
+                    // Update status
+                    if (event.added.length > 0)
+                    {
+                        updateStatus(`${event.added.length} controller(s) connected`);
+                    }
+                });
+
                 if (mode === 'immersive-ar')
                 {
                     updateStatus('AR session started (Passthrough enabled)');
@@ -571,6 +1108,10 @@
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
+                if (labelRenderer)
+                {
+                    labelRenderer.setSize(window.innerWidth, window.innerHeight);
+                }
             });
 
             // Update status
