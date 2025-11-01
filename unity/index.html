@@ -189,9 +189,22 @@
           var canvas = document.createElement('canvas');
           canvas.id = 'unity-canvas'; // Give it an ID so Unity can find it
           canvas.setAttribute('tabindex', '0'); // Make it focusable for keyboard events
-          canvas.style.width = '100%';
-          canvas.style.height = '100%';
+          
+          // Set initial canvas size to match viewport
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+          
+          // Full viewport styling
+          canvas.style.position = 'fixed';
+          canvas.style.top = '0';
+          canvas.style.left = '0';
+          canvas.style.width = '100vw';
+          canvas.style.height = '100vh';
           canvas.style.display = 'block';
+          canvas.style.margin = '0';
+          canvas.style.padding = '0';
+          canvas.style.border = 'none';
+          
           container.appendChild(canvas);
           
           // Store reference on container in case Unity looks for it
@@ -361,11 +374,63 @@
               loader.style.display = 'none';
             }
             
+            // Find the actual canvas Unity is using (it might have replaced ours)
+            var unityCanvas = instance.Module && instance.Module.canvas;
+            if (unityCanvas) {
+              console.log('Unity canvas found:', unityCanvas);
+              console.log('Canvas dimensions:', unityCanvas.width, 'x', unityCanvas.height);
+              
+              // Ensure canvas is properly sized for WebXR
+              // WebXR will resize it, but we need proper initial size
+              if (!unityCanvas.width || !unityCanvas.height) {
+                unityCanvas.width = window.innerWidth;
+                unityCanvas.height = window.innerHeight;
+                console.log('Set canvas initial size to:', unityCanvas.width, 'x', unityCanvas.height);
+              }
+              
+              // Ensure canvas has proper styling for full viewport
+              unityCanvas.style.position = 'fixed'; // Use fixed instead of absolute for WebXR
+              unityCanvas.style.top = '0';
+              unityCanvas.style.left = '0';
+              unityCanvas.style.width = '100%';
+              unityCanvas.style.height = '100%';
+              unityCanvas.style.display = 'block';
+              unityCanvas.style.margin = '0';
+              unityCanvas.style.padding = '0';
+              
+              // Ensure the game container also has proper styling
+              var gameContainer = document.getElementById('game');
+              if (gameContainer) {
+                gameContainer.style.position = 'fixed';
+                gameContainer.style.top = '0';
+                gameContainer.style.left = '0';
+                gameContainer.style.width = '100%';
+                gameContainer.style.height = '100%';
+                gameContainer.style.margin = '0';
+                gameContainer.style.padding = '0';
+              }
+            } else {
+              console.warn('Could not find Unity canvas in instance.Module.canvas');
+            }
+            
             // Set data attribute so CSS can show the Enter VR button
             document.body.setAttribute('data-unity-loaded', 'true');
             
             // Also dispatch UnityLoaded event in case webxr.js is waiting for it
             document.dispatchEvent(new CustomEvent('UnityLoaded'));
+            
+            // Listen for WebXR session start to ensure proper canvas setup
+            if (navigator.xr && navigator.xr.addEventListener) {
+              // Monitor when VR session starts to fix viewport issues
+              document.addEventListener('UnityLoaded', function() {
+                // Small delay to ensure webxr.js is initialized
+                setTimeout(function() {
+                  if (window.xrManager && window.xrManager.vrSession) {
+                    console.log('VR session detected, ensuring canvas is properly configured');
+                  }
+                }, 1000);
+              });
+            }
             
             console.log('Unity fully initialized, Enter VR button should appear if WebXR is supported');
           }).catch(function(error) {
