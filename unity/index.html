@@ -25,30 +25,94 @@
       MozillaResearch.telemetry.performance.mark('LoaderParsingStart');
     </script>
 
-    <script src="%UNITY_WEBGL_LOADER_URL%"></script>
+    <script src="Build/unity.loader.js"></script>
     <script>
-        UnityLoader.SystemInfo.mobile = false;  // Workaround to force `UnityLoader` to actually load on mobile.
-        window.gameInstance = UnityLoader.instantiate('gameContainer', '%UNITY_WEBGL_BUILD_URL%', {
-          Module: {
+        // Wait for loader to be available before initializing
+        function initializeUnity() {
+          if (typeof createUnityInstance === 'undefined') {
+            setTimeout(initializeUnity, 50);
+            return;
+          }
+          
+          var container = document.querySelector("#gameContainer");
+          
+          function unityProgress(instance, progress) {
+            if (!instance.progress) {
+              instance.loader = document.getElementById('loader');
+              instance.progress = document.getElementById('progress');
+              instance.loading = document.getElementById('loading');
+              document.dispatchEvent(new CustomEvent('UnityProgressStart'));
+            }
+            if (instance.progress) {
+              instance.progress.style.width = (100 * progress) + '%';
+            }
+            if (progress === 1) {
+              document.dispatchEvent(new CustomEvent('UnityLoaded'));
+            }
+          }
+
+          var buildUrl = '%UNITY_WEBGL_BUILD_URL%';
+          if (buildUrl.indexOf('%') === 0) {
+            // Placeholder not replaced, use default
+            buildUrl = 'Build';
+          }
+          
+          // Unity may generate files with different names based on project settings
+          // Try common naming patterns (Unity often uses "unity" or project name)
+          var projectName = '%UNITY_WEB_NAME%';
+          if (projectName.indexOf('%') === 0) {
+            // Placeholder not replaced, try to detect from loader filename or use default
+            // Check if we can find any .loader.js file name
+            var scripts = document.getElementsByTagName('script');
+            for (var i = 0; i < scripts.length; i++) {
+              var src = scripts[i].src;
+              if (src && src.indexOf('.loader.js') !== -1) {
+                var match = src.match(/([^\/]+)\.loader\.js/);
+                if (match && match[1]) {
+                  projectName = match[1];
+                  break;
+                }
+              }
+            }
+            // Final fallback - Unity commonly uses "unity" or project-based names
+            if (projectName.indexOf('%') === 0) {
+              projectName = 'unity'; // Common default
+            }
+          }
+          
+          // Remove any path separators and ensure clean filename
+          projectName = projectName.replace(/[\/\\]/g, '');
+
+          createUnityInstance(container, {
+            dataUrl: buildUrl + "/" + projectName + ".data",
+            frameworkUrl: buildUrl + "/" + projectName + ".framework.js",
+            codeUrl: buildUrl + "/" + projectName + ".wasm",
+            streamingAssetsUrl: "StreamingAssets",
+            companyName: "%UNITY_COMPANY_NAME%",
+            productName: "%UNITY_PRODUCT_NAME%",
+            productVersion: "%UNITY_PRODUCT_VERSION%",
             // `preserveDrawingBuffer` is needed for WebVR content to be mirrored to the `<canvas>`.
             webglContextAttributes: {
               preserveDrawingBuffer: true
             }
-          },
-          onProgress: unityProgress
-        });
-
-        function unityProgress (gameInstance, progress) {
-          if (!gameInstance.progress) {
-            gameInstance.loader = document.getElementById('loader');
-            gameInstance.progress = document.getElementById('progress');
-            gameInstance.loading = document.getElementById('loading');
-            document.dispatchEvent(new CustomEvent('UnityProgressStart'));
-          }
-          gameInstance.progress.style.width = (100 * progress) + '%';
-          if (progress === 1) {
-            document.dispatchEvent(new CustomEvent('UnityLoaded'));
-          }
+          }, unityProgress).then(function(instance) {
+            window.gameInstance = instance;
+          }).catch(function(error) {
+            console.error('Unity initialization failed:', error);
+            console.log('Attempted to load files from:', buildUrl);
+            console.log('Expected files:', [
+              buildUrl + "/" + projectName + ".data",
+              buildUrl + "/" + projectName + ".framework.js",
+              buildUrl + "/" + projectName + ".wasm"
+            ]);
+          });
+        }
+        
+        // Start initialization once DOM is ready
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', initializeUnity);
+        } else {
+          initializeUnity();
         }
     </script>
   </head>
