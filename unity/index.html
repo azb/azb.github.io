@@ -25,6 +25,143 @@
       MozillaResearch.telemetry.performance.mark('LoaderParsingStart');
     </script>
 
+    <script>
+        // Polyfill for Safari WebGL2 compatibility that Unity expects
+        // Unity framework may try to call getContextSafariWebGL2Fixed on canvas elements
+        // This MUST run before Unity loader/framework scripts load
+        (function() {
+          if (typeof HTMLCanvasElement !== 'undefined') {
+            var originalGetContext = HTMLCanvasElement.prototype.getContext;
+            
+            // Define the polyfill function
+            var polyfillFunction = function(contextType, contextAttributes) {
+              // Try to get WebGL2 context, fall back to WebGL if needed
+              if (contextType === 'webgl2') {
+                try {
+                  return originalGetContext.call(this, 'webgl2', contextAttributes);
+                } catch (e) {
+                  // Fallback to webgl if webgl2 not available
+                  return originalGetContext.call(this, 'webgl', contextAttributes);
+                }
+              }
+              return originalGetContext.call(this, contextType, contextAttributes);
+            };
+            
+            // Add the method Unity expects to the prototype
+            HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed = polyfillFunction;
+            
+            // Don't patch HTMLElement - only canvas elements should have this method
+            // Unity will only call it on actual canvas elements
+            
+            // Patch any existing canvas elements (don't intercept createElement to avoid interfering with Unity)
+            var canvases = document.getElementsByTagName('canvas');
+            for (var i = 0; i < canvases.length; i++) {
+              canvases[i].getContextSafariWebGL2Fixed = polyfillFunction;
+            }
+            
+            // Watch for new canvases but don't intercept createElement
+            // Unity needs to create canvases normally
+            
+            // Unity's framework calls getContextSafariWebGL2Fixed on HTMLDivElement (via fixedGetContext)
+            // We need to provide it, but make it delegate to the canvas inside the div
+            if (typeof HTMLDivElement !== 'undefined' && HTMLDivElement.prototype) {
+              HTMLDivElement.prototype.getContextSafariWebGL2Fixed = function(contextType, contextAttributes) {
+                // Try to find canvas multiple ways
+                var canvas = null;
+                
+                // Method 1: querySelector (most reliable)
+                if (this.querySelector) {
+                  canvas = this.querySelector('canvas');
+                }
+                
+                // Method 2: Check direct children
+                if (!canvas && this.children) {
+                  for (var i = 0; i < this.children.length; i++) {
+                    if (this.children[i].tagName === 'CANVAS') {
+                      canvas = this.children[i];
+                      break;
+                    }
+                  }
+                }
+                
+                // Method 3: Check if Unity stored canvas reference (some versions do this)
+                if (!canvas && this._unityCanvas) {
+                  canvas = this._unityCanvas;
+                }
+                
+                // Method 4: Check all canvases in document and see if any are descendants
+                if (!canvas) {
+                  var allCanvases = document.querySelectorAll('canvas');
+                  for (var j = 0; j < allCanvases.length; j++) {
+                    if (this.contains && this.contains(allCanvases[j])) {
+                      canvas = allCanvases[j];
+                      break;
+                    }
+                  }
+                }
+                
+                // If we found a canvas, delegate to it
+                if (canvas) {
+                  // Verify it's actually a canvas element with getContext
+                  if (!canvas.getContext || typeof canvas.getContext !== 'function') {
+                    console.error('Canvas element missing getContext method!', canvas);
+                    return null;
+                  }
+                  
+                  // Use the Safari polyfill if available, otherwise use regular getContext
+                  if (canvas.getContextSafariWebGL2Fixed && typeof canvas.getContextSafariWebGL2Fixed === 'function') {
+                    try {
+                      return canvas.getContextSafariWebGL2Fixed(contextType, contextAttributes);
+                    } catch (e) {
+                      console.warn('getContextSafariWebGL2Fixed failed, falling back to getContext:', e);
+                      // Fall through to regular getContext
+                    }
+                  }
+                  
+                  // Direct getContext fallback with WebGL2->WebGL fallback
+                  if (contextType === 'webgl2') {
+                    try {
+                      return canvas.getContext('webgl2', contextAttributes);
+                    } catch (e) {
+                      return canvas.getContext('webgl', contextAttributes);
+                    }
+                  }
+                  return canvas.getContext(contextType, contextAttributes);
+                }
+                
+                // If still no canvas, Unity hasn't created it yet
+                // This shouldn't happen, but if it does, try to create/get context directly
+                // Some Unity versions might allow this
+                console.warn('getContextSafariWebGL2Fixed called on div before canvas exists. Waiting...');
+                
+                // Return null - Unity should retry or handle this
+                return null;
+              };
+            }
+            
+            // Also make it non-configurable/non-enumerable to ensure Unity can find it
+            try {
+              Object.defineProperty(HTMLCanvasElement.prototype, 'getContextSafariWebGL2Fixed', {
+                value: HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed,
+                writable: true,
+                enumerable: true,
+                configurable: true
+              });
+            } catch (e) {
+              // If defineProperty fails, the method should still work
+            }
+            
+            // Ensure getContext is never broken - verify it still exists
+            if (typeof HTMLCanvasElement.prototype.getContext !== 'function') {
+              console.error('ERROR: getContext was removed or corrupted!');
+              HTMLCanvasElement.prototype.getContext = originalGetContext;
+            }
+            
+            console.log('WebGL2 Safari polyfill installed');
+          }
+        })();
+    </script>
+    
     <script src="Build/unity.loader.js"></script>
     <script>
         // Wait for loader to be available before initializing
@@ -36,6 +173,83 @@
           
           var container = document.querySelector("#gameContainer");
           
+          if (!container) {
+            console.error('Container element #gameContainer not found!');
+            var loading = document.getElementById('loading');
+            if (loading) {
+              loading.textContent = 'Error: gameContainer element not found';
+            }
+            return;
+          }
+          
+          console.log('Container found:', container);
+          
+          // Create a canvas element inside the container and pass it to Unity
+          // Some Unity versions work better with a canvas element than a container div
+          var canvas = document.createElement('canvas');
+          canvas.id = 'unity-canvas'; // Give it an ID so Unity can find it
+          canvas.setAttribute('tabindex', '0'); // Make it focusable for keyboard events
+          canvas.style.width = '100%';
+          canvas.style.height = '100%';
+          canvas.style.display = 'block';
+          container.appendChild(canvas);
+          
+          // Store reference on container in case Unity looks for it
+          container._unityCanvas = canvas;
+          
+          // Ensure canvas has all required methods
+          console.log('Canvas created:', canvas);
+          console.log('Canvas has getContext?', typeof canvas.getContext === 'function');
+          console.log('Canvas has getContextSafariWebGL2Fixed?', typeof canvas.getContextSafariWebGL2Fixed === 'function');
+          
+          // Apply polyfill immediately to the canvas we just created
+          if (canvas.getContextSafariWebGL2Fixed) {
+            console.log('Polyfill already on canvas');
+          } else if (HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed) {
+            canvas.getContextSafariWebGL2Fixed = HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed;
+            console.log('Applied polyfill to new canvas');
+          }
+          
+          // Ensure polyfill is applied even after Unity creates canvas
+          // Set up a MutationObserver to catch when Unity creates the canvas
+          var observer = new MutationObserver(function(mutations) {
+            var canvases = document.querySelectorAll('canvas');
+            canvases.forEach(function(canvas) {
+              // CRITICAL: Verify canvas is actually a proper HTMLCanvasElement with getContext
+              if (!(canvas instanceof HTMLCanvasElement)) {
+                console.error('Found canvas-like element that is not HTMLCanvasElement!', canvas);
+                return;
+              }
+              
+              if (!canvas.getContext || typeof canvas.getContext !== 'function') {
+                console.error('Canvas missing getContext method! This is a serious error.', canvas);
+                // Try to restore it from prototype
+                canvas.getContext = HTMLCanvasElement.prototype.getContext;
+              }
+              
+              // Add Safari polyfill if missing
+              if (!canvas.getContextSafariWebGL2Fixed) {
+                var polyfill = HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed;
+                if (polyfill) {
+                  canvas.getContextSafariWebGL2Fixed = polyfill;
+                  console.log('Applied polyfill to canvas:', canvas);
+                } else {
+                  console.warn('Could not find polyfill function for canvas:', canvas);
+                }
+              }
+            });
+          });
+          
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true
+          });
+          
+          // Also verify container
+          console.log('Container element:', container);
+          console.log('Container has getContext?', container.getContext);
+          console.log('Canvas elements in DOM:', document.querySelectorAll('canvas').length);
+          
           function unityProgress(instance, progress) {
             if (!instance.progress) {
               instance.loader = document.getElementById('loader');
@@ -46,7 +260,16 @@
             if (instance.progress) {
               instance.progress.style.width = (100 * progress) + '%';
             }
-            if (progress === 1) {
+            // Debug: log progress to help diagnose issues
+            if (progress > 0 && progress < 1) {
+              console.log('Unity loading progress: ' + Math.round(progress * 100) + '%');
+            }
+            if (progress >= 1) {
+              console.log('Unity loading complete!');
+              // Hide the loader when Unity is fully loaded
+              if (instance.loader) {
+                instance.loader.style.display = 'none';
+              }
               document.dispatchEvent(new CustomEvent('UnityLoaded'));
             }
           }
@@ -61,29 +284,60 @@
           // Try common naming patterns (Unity often uses "unity" or project name)
           var projectName = '%UNITY_WEB_NAME%';
           if (projectName.indexOf('%') === 0) {
-            // Placeholder not replaced, try to detect from loader filename or use default
-            // Check if we can find any .loader.js file name
-            var scripts = document.getElementsByTagName('script');
-            for (var i = 0; i < scripts.length; i++) {
-              var src = scripts[i].src;
-              if (src && src.indexOf('.loader.js') !== -1) {
-                var match = src.match(/([^\/]+)\.loader\.js/);
-                if (match && match[1]) {
-                  projectName = match[1];
-                  break;
-                }
+            // Placeholder not replaced, try to detect from loader filename
+            var loaderScript = document.querySelector('script[src*=".loader.js"]');
+            if (loaderScript && loaderScript.src) {
+              var match = loaderScript.src.match(/([^\/]+)\.loader\.js/);
+              if (match && match[1]) {
+                projectName = match[1];
+                console.log('Detected project name from loader:', projectName);
               }
             }
             // Final fallback - Unity commonly uses "unity" or project-based names
             if (projectName.indexOf('%') === 0) {
               projectName = 'unity'; // Common default
+              console.log('Using default project name:', projectName);
             }
           }
           
           // Remove any path separators and ensure clean filename
           projectName = projectName.replace(/[\/\\]/g, '');
+          
+          console.log('Initializing Unity with:', {
+            buildUrl: buildUrl,
+            projectName: projectName,
+            dataUrl: buildUrl + "/" + projectName + ".data",
+            frameworkUrl: buildUrl + "/" + projectName + ".framework.js",
+            codeUrl: buildUrl + "/" + projectName + ".wasm"
+          });
 
-          createUnityInstance(container, {
+          if (typeof createUnityInstance !== 'function') {
+            console.error('createUnityInstance is not a function!', typeof createUnityInstance);
+            var loading = document.getElementById('loading');
+            if (loading) {
+              loading.textContent = 'Error: Unity loader not loaded properly';
+            }
+            return;
+          }
+
+          console.log('Calling createUnityInstance...');
+          console.log('Container type:', container.tagName);
+          console.log('Container is canvas?', container.tagName === 'CANVAS');
+          
+          // Verify container is valid
+          if (!container || (container.tagName !== 'DIV' && container.tagName !== 'CANVAS')) {
+            console.error('Invalid container! Expected DIV or CANVAS, got:', container);
+          }
+          
+          // Alternative: Create canvas first and pass it directly (some Unity versions prefer this)
+          // But for now, let's try with container div as Unity should handle it
+          
+          console.log('Creating Unity instance with canvas:', canvas.id);
+          console.log('Canvas element:', canvas);
+          
+          // Try passing the canvas directly instead of container
+          // Unity should use this canvas instead of creating its own
+          createUnityInstance(canvas, {
             dataUrl: buildUrl + "/" + projectName + ".data",
             frameworkUrl: buildUrl + "/" + projectName + ".framework.js",
             codeUrl: buildUrl + "/" + projectName + ".wasm",
@@ -97,14 +351,51 @@
             }
           }, unityProgress).then(function(instance) {
             window.gameInstance = instance;
+            console.log('Unity instance created successfully');
+            // Ensure loader is hidden after successful initialization
+            var loader = document.getElementById('loader');
+            if (loader) {
+              loader.style.display = 'none';
+            }
           }).catch(function(error) {
             console.error('Unity initialization failed:', error);
-            console.log('Attempted to load files from:', buildUrl);
+            console.error('Error type:', typeof error);
+            console.error('Error toString:', String(error));
+            console.error('Error details:', {
+              message: error ? error.message : 'No message property',
+              stack: error ? error.stack : 'No stack property',
+              name: error ? error.name : 'No name property',
+              fullError: JSON.stringify(error, Object.getOwnPropertyNames(error))
+            });
+            console.log('Configuration used:', {
+              buildUrl: buildUrl,
+              projectName: projectName,
+              container: container ? container.id : 'not found',
+              containerExists: !!container
+            });
             console.log('Expected files:', [
               buildUrl + "/" + projectName + ".data",
               buildUrl + "/" + projectName + ".framework.js",
               buildUrl + "/" + projectName + ".wasm"
             ]);
+            
+            // Try to extract a meaningful error message
+            var errorMsg = 'Unknown error';
+            if (error) {
+              if (error.message) {
+                errorMsg = error.message;
+              } else if (typeof error === 'string') {
+                errorMsg = error;
+              } else if (error.toString && error.toString() !== '[object Object]') {
+                errorMsg = error.toString();
+              }
+            }
+            
+            // Show error message to user
+            var loading = document.getElementById('loading');
+            if (loading) {
+              loading.textContent = 'Failed to load. Check console for details. Error: ' + errorMsg;
+            }
           });
         }
         
