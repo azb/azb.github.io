@@ -270,6 +270,8 @@
               if (instance.loader) {
                 instance.loader.style.display = 'none';
               }
+              // Set data attribute so CSS can show the Enter VR button
+              document.body.setAttribute('data-unity-loaded', 'true');
               document.dispatchEvent(new CustomEvent('UnityLoaded'));
             }
           }
@@ -352,11 +354,20 @@
           }, unityProgress).then(function(instance) {
             window.gameInstance = instance;
             console.log('Unity instance created successfully');
+            
             // Ensure loader is hidden after successful initialization
             var loader = document.getElementById('loader');
             if (loader) {
               loader.style.display = 'none';
             }
+            
+            // Set data attribute so CSS can show the Enter VR button
+            document.body.setAttribute('data-unity-loaded', 'true');
+            
+            // Also dispatch UnityLoaded event in case webxr.js is waiting for it
+            document.dispatchEvent(new CustomEvent('UnityLoaded'));
+            
+            console.log('Unity fully initialized, Enter VR button should appear if WebXR is supported');
           }).catch(function(error) {
             console.error('Unity initialization failed:', error);
             console.error('Error type:', typeof error);
