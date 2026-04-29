@@ -8,6 +8,9 @@
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
+    <div id="unity-start-overlay" style="display:none;position:fixed;inset:0;background:#000d;color:#fff;z-index:9999;align-items:center;justify-content:center;font-family:Arial,sans-serif;">
+      <button id="unity-start-button" style="padding:14px 22px;font-size:18px;cursor:pointer;">Tap to Start Audio</button>
+    </div>
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=1920 height=1080 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
@@ -31,6 +34,8 @@
       var progressBarFull = document.querySelector("#unity-progress-bar-full");
       var fullscreenButton = document.querySelector("#unity-fullscreen-button");
       var warningBanner = document.querySelector("#unity-warning");
+      var startOverlay = document.querySelector("#unity-start-overlay");
+      var startButton = document.querySelector("#unity-start-button");
 
       // Shows a temporary message banner/ribbon for a few seconds, or
       // a permanent error message on top of the canvas if type=='error'.
@@ -103,17 +108,35 @@
       var script = document.createElement("script");
       script.src = loaderUrl;
       script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
+        const startUnity = () => {
+          createUnityInstance(canvas, config, (progress) => {
           progressBarFull.style.width = 100 * progress + "%";
               }).then((unityInstance) => {
                 loadingBar.style.display = "none";
+                startOverlay.style.display = "none";
                 fullscreenButton.onclick = () => {
                   unityInstance.SetFullscreen(1);
                 };
               }).catch((message) => {
                 alert(message);
               });
-            };
+        };
+
+        if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+          startOverlay.style.display = "flex";
+          startButton.addEventListener("click", () => {
+            // iOS requires a user gesture before WebAudio can play.
+            var AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+              var ctx = new AudioCtx();
+              if (ctx.state === "suspended") ctx.resume();
+            }
+            startUnity();
+          }, { once: true });
+        } else {
+          startUnity();
+        }
+      };
 
       document.body.appendChild(script);
 
