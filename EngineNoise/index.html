@@ -36,6 +36,8 @@
       var warningBanner = document.querySelector("#unity-warning");
       var startOverlay = document.querySelector("#unity-start-overlay");
       var startButton = document.querySelector("#unity-start-button");
+      var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
       // Shows a temporary message banner/ribbon for a few seconds, or
       // a permanent error message on top of the canvas if type=='error'.
@@ -81,7 +83,8 @@
       // the canvas DOM size and WebGL render target sizes yourself.
       // config.matchWebGLToCanvasSize = false;
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) {
         // Mobile device style: fill the whole browser client area with the game canvas:
 
         var meta = document.createElement('meta');
@@ -122,14 +125,21 @@
               });
         };
 
-        if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        if (isIOS) {
           startOverlay.style.display = "flex";
           startButton.addEventListener("click", () => {
-            // iOS requires a user gesture before WebAudio can play.
+            // iOS requires a user gesture plus a tiny playback to unlock WebAudio.
             var AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (AudioCtx) {
               var ctx = new AudioCtx();
-              if (ctx.state === "suspended") ctx.resume();
+              if (ctx.state === "suspended") {
+                ctx.resume();
+              }
+              var buffer = ctx.createBuffer(1, 1, 22050);
+              var source = ctx.createBufferSource();
+              source.buffer = buffer;
+              source.connect(ctx.destination);
+              source.start(0);
             }
             startUnity();
           }, { once: true });
