@@ -1,515 +1,642 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- These tags are needed for enabling experimental Chrome APIs via Chrome's Origin-Trial program (Android, Windows): https://github.com/GoogleChrome/OriginTrials/blob/gh-pages/available-trials.md#current-experimental-features -->
-    <!-- Origin Trial Token, feature = Generic Sensors, origin = https://github.io, expires = 2018-04-10 -->
-    <meta http-equiv="origin-trial" data-feature="Generic Sensors" data-expires="2018-04-10" content="Aokv0ODVMUPIswIBi6DnpAIjhWefEd8gD8GpVgdYgETj0C5+/3kKMzZE/FOrBwHcpBO6LHuVRrIw3yOT8EMmJAYAAABQeyJvcmlnaW4iOiJodHRwczovL2dpdGh1Yi5pbzo0NDMiLCJmZWF0dXJlIjoiR2VuZXJpY1NlbnNvciIsImV4cGlyeSI6MTUyMzMxODQwMH0=">
-    <!-- Origin Trial Token, feature = WebVR (For Chrome M62+), origin = https://github.io, expires = 2018-05-07 -->
-    <meta http-equiv="origin-trial" data-feature="WebXR (For Chrome M62+)" data-expires="2018-05-07" content="AgINztgDnjFV8da2D9SSzIITBRlHX8mduCR7DXfENxjr9ALduKOxBDdn2n66auQSlljVyhnRWWerxC0BWbE8pAoAAABOeyJvcmlnaW4iOiJodHRwczovL2dpdGh1Yi5pbzo0NDMiLCJmZWF0dXJlIjoiV2ViVlIxLjFNNjIiLCJleHBpcnkiOjE1MjU3MjU4MDh9">
-    <title>%UNITY_CUSTOM_NAME% | %UNITY_WEB_NAME%</title>
-    <meta name="description" content="%UNITY_CUSTOM_DESCRIPTION%">
-    %UNITY_CUSTOM_META_TAGS%
-    <link rel="icon" href="favicon.ico">
-    <link rel="manifest" href="manifest.webmanifest">
-    <link rel="stylesheet" type="text/css" href="styles/webxr.css">
 
-    <script src="lib/telemetry.js"></script>
-    <script>
-      MozillaResearch.telemetry.start({
-        analytics: true,
-        errorLogging: true,
-        performance: true
-      });
-      MozillaResearch.telemetry.performance.mark('LoaderParsingStart');
-    </script>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- These tags are needed for enabling experimental Chrome APIs via Chrome's Origin-Trial program (Android, Windows): https://github.com/GoogleChrome/OriginTrials/blob/gh-pages/available-trials.md#current-experimental-features -->
+  <!-- Origin Trial Token, feature = Generic Sensors, origin = https://github.io, expires = 2018-04-10 -->
+  <meta http-equiv="origin-trial" data-feature="Generic Sensors" data-expires="2018-04-10"
+    content="Aokv0ODVMUPIswIBi6DnpAIjhWefEd8gD8GpVgdYgETj0C5+/3kKMzZE/FOrBwHcpBO6LHuVRrIw3yOT8EMmJAYAAABQeyJvcmlnaW4iOiJodHRwczovL2dpdGh1Yi5pbzo0NDMiLCJmZWF0dXJlIjoiR2VuZXJpY1NlbnNvciIsImV4cGlyeSI6MTUyMzMxODQwMH0=">
+  <!-- Origin Trial Token, feature = WebVR (For Chrome M62+), origin = https://github.io, expires = 2018-05-07 -->
+  <meta http-equiv="origin-trial" data-feature="WebXR (For Chrome M62+)" data-expires="2018-05-07"
+    content="AgINztgDnjFV8da2D9SSzIITBRlHX8mduCR7DXfENxjr9ALduKOxBDdn2n66auQSlljVyhnRWWerxC0BWbE8pAoAAABOeyJvcmlnaW4iOiJodHRwczovL2dpdGh1Yi5pbzo0NDMiLCJmZWF0dXJlIjoiV2ViVlIxLjFNNjIiLCJleHBpcnkiOjE1MjU3MjU4MDh9">
+  <title>%UNITY_CUSTOM_NAME% | %UNITY_WEB_NAME%</title>
+  <meta name="description" content="%UNITY_CUSTOM_DESCRIPTION%">
+  %UNITY_CUSTOM_META_TAGS%
+  <link rel="icon" href="favicon.ico">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" type="text/css" href="styles/webxr.css">
 
-    <script>
-        // Polyfill for Safari WebGL2 compatibility that Unity expects
-        // Unity framework may try to call getContextSafariWebGL2Fixed on canvas elements
-        // This MUST run before Unity loader/framework scripts load
-        (function() {
-          if (typeof HTMLCanvasElement !== 'undefined') {
-            var originalGetContext = HTMLCanvasElement.prototype.getContext;
-            
-            // Define the polyfill function
-            var polyfillFunction = function(contextType, contextAttributes) {
-              // Try to get WebGL2 context, fall back to WebGL if needed
-              if (contextType === 'webgl2') {
-                try {
-                  return originalGetContext.call(this, 'webgl2', contextAttributes);
-                } catch (e) {
-                  // Fallback to webgl if webgl2 not available
-                  return originalGetContext.call(this, 'webgl', contextAttributes);
+  <script src="lib/telemetry.js"></script>
+  <script>
+    MozillaResearch.telemetry.start({
+      analytics: true,
+      errorLogging: true,
+      performance: true
+    });
+    MozillaResearch.telemetry.performance.mark('LoaderParsingStart');
+  </script>
+
+  <script>
+    // Polyfill for Safari WebGL2 compatibility that Unity expects
+    // Unity framework may try to call getContextSafariWebGL2Fixed on canvas elements
+    // This MUST run before Unity loader/framework scripts load
+    (function ()
+    {
+      if (typeof HTMLCanvasElement !== 'undefined')
+      {
+        var originalGetContext = HTMLCanvasElement.prototype.getContext;
+
+        // Define the polyfill function
+        var polyfillFunction = function (contextType, contextAttributes)
+        {
+          // Try to get WebGL2 context, fall back to WebGL if needed
+          if (contextType === 'webgl2')
+          {
+            try
+            {
+              return originalGetContext.call(this, 'webgl2', contextAttributes);
+            } catch (e)
+            {
+              // Fallback to webgl if webgl2 not available
+              return originalGetContext.call(this, 'webgl', contextAttributes);
+            }
+          }
+          return originalGetContext.call(this, contextType, contextAttributes);
+        };
+
+        // Add the method Unity expects to the prototype
+        HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed = polyfillFunction;
+
+        // Don't patch HTMLElement - only canvas elements should have this method
+        // Unity will only call it on actual canvas elements
+
+        // Patch any existing canvas elements (don't intercept createElement to avoid interfering with Unity)
+        var canvases = document.getElementsByTagName('canvas');
+        for (var i = 0; i < canvases.length; i++)
+        {
+          canvases[i].getContextSafariWebGL2Fixed = polyfillFunction;
+        }
+
+        // Watch for new canvases but don't intercept createElement
+        // Unity needs to create canvases normally
+
+        // Unity's framework calls getContextSafariWebGL2Fixed on HTMLDivElement (via fixedGetContext)
+        // We need to provide it, but make it delegate to the canvas inside the div
+        if (typeof HTMLDivElement !== 'undefined' && HTMLDivElement.prototype)
+        {
+          HTMLDivElement.prototype.getContextSafariWebGL2Fixed = function (contextType, contextAttributes)
+          {
+            // Try to find canvas multiple ways
+            var canvas = null;
+
+            // Method 1: querySelector (most reliable)
+            if (this.querySelector)
+            {
+              canvas = this.querySelector('canvas');
+            }
+
+            // Method 2: Check direct children
+            if (!canvas && this.children)
+            {
+              for (var i = 0; i < this.children.length; i++)
+              {
+                if (this.children[i].tagName === 'CANVAS')
+                {
+                  canvas = this.children[i];
+                  break;
                 }
               }
-              return originalGetContext.call(this, contextType, contextAttributes);
-            };
-            
-            // Add the method Unity expects to the prototype
-            HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed = polyfillFunction;
-            
-            // Don't patch HTMLElement - only canvas elements should have this method
-            // Unity will only call it on actual canvas elements
-            
-            // Patch any existing canvas elements (don't intercept createElement to avoid interfering with Unity)
-            var canvases = document.getElementsByTagName('canvas');
-            for (var i = 0; i < canvases.length; i++) {
-              canvases[i].getContextSafariWebGL2Fixed = polyfillFunction;
             }
-            
-            // Watch for new canvases but don't intercept createElement
-            // Unity needs to create canvases normally
-            
-            // Unity's framework calls getContextSafariWebGL2Fixed on HTMLDivElement (via fixedGetContext)
-            // We need to provide it, but make it delegate to the canvas inside the div
-            if (typeof HTMLDivElement !== 'undefined' && HTMLDivElement.prototype) {
-              HTMLDivElement.prototype.getContextSafariWebGL2Fixed = function(contextType, contextAttributes) {
-                // Try to find canvas multiple ways
-                var canvas = null;
-                
-                // Method 1: querySelector (most reliable)
-                if (this.querySelector) {
-                  canvas = this.querySelector('canvas');
+
+            // Method 3: Check if Unity stored canvas reference (some versions do this)
+            if (!canvas && this._unityCanvas)
+            {
+              canvas = this._unityCanvas;
+            }
+
+            // Method 4: Check all canvases in document and see if any are descendants
+            if (!canvas)
+            {
+              var allCanvases = document.querySelectorAll('canvas');
+              for (var j = 0; j < allCanvases.length; j++)
+              {
+                if (this.contains && this.contains(allCanvases[j]))
+                {
+                  canvas = allCanvases[j];
+                  break;
                 }
-                
-                // Method 2: Check direct children
-                if (!canvas && this.children) {
-                  for (var i = 0; i < this.children.length; i++) {
-                    if (this.children[i].tagName === 'CANVAS') {
-                      canvas = this.children[i];
-                      break;
-                    }
-                  }
-                }
-                
-                // Method 3: Check if Unity stored canvas reference (some versions do this)
-                if (!canvas && this._unityCanvas) {
-                  canvas = this._unityCanvas;
-                }
-                
-                // Method 4: Check all canvases in document and see if any are descendants
-                if (!canvas) {
-                  var allCanvases = document.querySelectorAll('canvas');
-                  for (var j = 0; j < allCanvases.length; j++) {
-                    if (this.contains && this.contains(allCanvases[j])) {
-                      canvas = allCanvases[j];
-                      break;
-                    }
-                  }
-                }
-                
-                // If we found a canvas, delegate to it
-                if (canvas) {
-                  // Verify it's actually a canvas element with getContext
-                  if (!canvas.getContext || typeof canvas.getContext !== 'function') {
-                    console.error('Canvas element missing getContext method!', canvas);
-                    return null;
-                  }
-                  
-                  // Use the Safari polyfill if available, otherwise use regular getContext
-                  if (canvas.getContextSafariWebGL2Fixed && typeof canvas.getContextSafariWebGL2Fixed === 'function') {
-                    try {
-                      return canvas.getContextSafariWebGL2Fixed(contextType, contextAttributes);
-                    } catch (e) {
-                      console.warn('getContextSafariWebGL2Fixed failed, falling back to getContext:', e);
-                      // Fall through to regular getContext
-                    }
-                  }
-                  
-                  // Direct getContext fallback with WebGL2->WebGL fallback
-                  if (contextType === 'webgl2') {
-                    try {
-                      return canvas.getContext('webgl2', contextAttributes);
-                    } catch (e) {
-                      return canvas.getContext('webgl', contextAttributes);
-                    }
-                  }
-                  return canvas.getContext(contextType, contextAttributes);
-                }
-                
-                // If still no canvas, Unity hasn't created it yet
-                // This shouldn't happen, but if it does, try to create/get context directly
-                // Some Unity versions might allow this
-                console.warn('getContextSafariWebGL2Fixed called on div before canvas exists. Waiting...');
-                
-                // Return null - Unity should retry or handle this
+              }
+            }
+
+            // If we found a canvas, delegate to it
+            if (canvas)
+            {
+              // Verify it's actually a canvas element with getContext
+              if (!canvas.getContext || typeof canvas.getContext !== 'function')
+              {
+                console.error('Canvas element missing getContext method!', canvas);
                 return null;
-              };
-            }
-            
-            // Also make it non-configurable/non-enumerable to ensure Unity can find it
-            try {
-              Object.defineProperty(HTMLCanvasElement.prototype, 'getContextSafariWebGL2Fixed', {
-                value: HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed,
-                writable: true,
-                enumerable: true,
-                configurable: true
-              });
-            } catch (e) {
-              // If defineProperty fails, the method should still work
-            }
-            
-            // Ensure getContext is never broken - verify it still exists
-            if (typeof HTMLCanvasElement.prototype.getContext !== 'function') {
-              console.error('ERROR: getContext was removed or corrupted!');
-              HTMLCanvasElement.prototype.getContext = originalGetContext;
-            }
-            
-            console.log('WebGL2 Safari polyfill installed');
-          }
-        })();
-    </script>
-    
-    <script src="Build/unity.loader.js"></script>
-    <script>
-        // Wait for loader to be available before initializing
-        function initializeUnity() {
-          if (typeof createUnityInstance === 'undefined') {
-            setTimeout(initializeUnity, 50);
-            return;
-          }
-          
-          var container = document.querySelector("#gameContainer");
-          
-          if (!container) {
-            console.error('Container element #gameContainer not found!');
-            var loading = document.getElementById('loading');
-            if (loading) {
-              loading.textContent = 'Error: gameContainer element not found';
-            }
-            return;
-          }
-          
-          console.log('Container found:', container);
-          
-          // Create a canvas element inside the container and pass it to Unity
-          // Some Unity versions work better with a canvas element than a container div
-          var canvas = document.createElement('canvas');
-          canvas.id = 'unity-canvas'; // Give it an ID so Unity can find it
-          canvas.setAttribute('tabindex', '0'); // Make it focusable for keyboard events
-          
-          // Set initial canvas size to match viewport
-          canvas.width = window.innerWidth;
-          canvas.height = window.innerHeight;
-          
-          // Full viewport styling
-          canvas.style.position = 'fixed';
-          canvas.style.top = '0';
-          canvas.style.left = '0';
-          canvas.style.width = '100vw';
-          canvas.style.height = '100vh';
-          canvas.style.display = 'block';
-          canvas.style.margin = '0';
-          canvas.style.padding = '0';
-          canvas.style.border = 'none';
-          
-          container.appendChild(canvas);
-          
-          // Store reference on container in case Unity looks for it
-          container._unityCanvas = canvas;
-          
-          // Ensure canvas has all required methods
-          console.log('Canvas created:', canvas);
-          console.log('Canvas has getContext?', typeof canvas.getContext === 'function');
-          console.log('Canvas has getContextSafariWebGL2Fixed?', typeof canvas.getContextSafariWebGL2Fixed === 'function');
-          
-          // Apply polyfill immediately to the canvas we just created
-          if (canvas.getContextSafariWebGL2Fixed) {
-            console.log('Polyfill already on canvas');
-          } else if (HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed) {
-            canvas.getContextSafariWebGL2Fixed = HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed;
-            console.log('Applied polyfill to new canvas');
-          }
-          
-          // Ensure polyfill is applied even after Unity creates canvas
-          // Set up a MutationObserver to catch when Unity creates the canvas
-          var observer = new MutationObserver(function(mutations) {
-            var canvases = document.querySelectorAll('canvas');
-            canvases.forEach(function(canvas) {
-              // CRITICAL: Verify canvas is actually a proper HTMLCanvasElement with getContext
-              if (!(canvas instanceof HTMLCanvasElement)) {
-                console.error('Found canvas-like element that is not HTMLCanvasElement!', canvas);
-                return;
               }
-              
-              if (!canvas.getContext || typeof canvas.getContext !== 'function') {
-                console.error('Canvas missing getContext method! This is a serious error.', canvas);
-                // Try to restore it from prototype
-                canvas.getContext = HTMLCanvasElement.prototype.getContext;
-              }
-              
-              // Add Safari polyfill if missing
-              if (!canvas.getContextSafariWebGL2Fixed) {
-                var polyfill = HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed;
-                if (polyfill) {
-                  canvas.getContextSafariWebGL2Fixed = polyfill;
-                  console.log('Applied polyfill to canvas:', canvas);
-                } else {
-                  console.warn('Could not find polyfill function for canvas:', canvas);
+
+              // Use the Safari polyfill if available, otherwise use regular getContext
+              if (canvas.getContextSafariWebGL2Fixed && typeof canvas.getContextSafariWebGL2Fixed === 'function')
+              {
+                try
+                {
+                  return canvas.getContextSafariWebGL2Fixed(contextType, contextAttributes);
+                } catch (e)
+                {
+                  console.warn('getContextSafariWebGL2Fixed failed, falling back to getContext:', e);
+                  // Fall through to regular getContext
                 }
               }
-            });
-          });
-          
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true
-          });
-          
-          // Also verify container
-          console.log('Container element:', container);
-          console.log('Container has getContext?', container.getContext);
-          console.log('Canvas elements in DOM:', document.querySelectorAll('canvas').length);
-          
-          function unityProgress(instance, progress) {
-            if (!instance.progress) {
-              instance.loader = document.getElementById('loader');
-              instance.progress = document.getElementById('progress');
-              instance.loading = document.getElementById('loading');
-              document.dispatchEvent(new CustomEvent('UnityProgressStart'));
-            }
-            if (instance.progress) {
-              instance.progress.style.width = (100 * progress) + '%';
-            }
-            // Debug: log progress to help diagnose issues
-            if (progress > 0 && progress < 1) {
-              console.log('Unity loading progress: ' + Math.round(progress * 100) + '%');
-            }
-            if (progress >= 1) {
-              console.log('Unity loading complete!');
-              // Hide the loader when Unity is fully loaded
-              if (instance.loader) {
-                instance.loader.style.display = 'none';
-              }
-              // Set data attribute so CSS can show the Enter VR button
-              document.body.setAttribute('data-unity-loaded', 'true');
-              document.dispatchEvent(new CustomEvent('UnityLoaded'));
-            }
-          }
 
-          var buildUrl = '%UNITY_WEBGL_BUILD_URL%';
-          if (buildUrl.indexOf('%') === 0) {
-            // Placeholder not replaced, use default
-            buildUrl = 'Build';
-          }
-          
-          // Unity may generate files with different names based on project settings
-          // Try common naming patterns (Unity often uses "unity" or project name)
-          var projectName = '%UNITY_WEB_NAME%';
-          if (projectName.indexOf('%') === 0) {
-            // Placeholder not replaced, try to detect from loader filename
-            var loaderScript = document.querySelector('script[src*=".loader.js"]');
-            if (loaderScript && loaderScript.src) {
-              var match = loaderScript.src.match(/([^\/]+)\.loader\.js/);
-              if (match && match[1]) {
-                projectName = match[1];
-                console.log('Detected project name from loader:', projectName);
+              // Direct getContext fallback with WebGL2->WebGL fallback
+              if (contextType === 'webgl2')
+              {
+                try
+                {
+                  return canvas.getContext('webgl2', contextAttributes);
+                } catch (e)
+                {
+                  return canvas.getContext('webgl', contextAttributes);
+                }
               }
+              return canvas.getContext(contextType, contextAttributes);
             }
-            // Final fallback - Unity commonly uses "unity" or project-based names
-            if (projectName.indexOf('%') === 0) {
-              projectName = 'unity'; // Common default
-              console.log('Using default project name:', projectName);
-            }
-          }
-          
-          // Remove any path separators and ensure clean filename
-          projectName = projectName.replace(/[\/\\]/g, '');
-          
-          console.log('Initializing Unity with:', {
-            buildUrl: buildUrl,
-            projectName: projectName,
-            dataUrl: buildUrl + "/" + projectName + ".data",
-            frameworkUrl: buildUrl + "/" + projectName + ".framework.js",
-            codeUrl: buildUrl + "/" + projectName + ".wasm"
-          });
 
-          if (typeof createUnityInstance !== 'function') {
-            console.error('createUnityInstance is not a function!', typeof createUnityInstance);
-            var loading = document.getElementById('loading');
-            if (loading) {
-              loading.textContent = 'Error: Unity loader not loaded properly';
-            }
+            // If still no canvas, Unity hasn't created it yet
+            // This shouldn't happen, but if it does, try to create/get context directly
+            // Some Unity versions might allow this
+            console.warn('getContextSafariWebGL2Fixed called on div before canvas exists. Waiting...');
+
+            // Return null - Unity should retry or handle this
+            return null;
+          };
+        }
+
+        // Also make it non-configurable/non-enumerable to ensure Unity can find it
+        try
+        {
+          Object.defineProperty(HTMLCanvasElement.prototype, 'getContextSafariWebGL2Fixed', {
+            value: HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed,
+            writable: true,
+            enumerable: true,
+            configurable: true
+          });
+        } catch (e)
+        {
+          // If defineProperty fails, the method should still work
+        }
+
+        // Ensure getContext is never broken - verify it still exists
+        if (typeof HTMLCanvasElement.prototype.getContext !== 'function')
+        {
+          console.error('ERROR: getContext was removed or corrupted!');
+          HTMLCanvasElement.prototype.getContext = originalGetContext;
+        }
+
+        console.log('WebGL2 Safari polyfill installed');
+      }
+    })();
+  </script>
+
+  <script src="Build/unity.loader.js"></script>
+  <script>
+    // Wait for loader to be available before initializing
+    function initializeUnity()
+    {
+      if (typeof createUnityInstance === 'undefined')
+      {
+        setTimeout(initializeUnity, 50);
+        return;
+      }
+
+      var container = document.querySelector("#gameContainer");
+
+      if (!container)
+      {
+        console.error('Container element #gameContainer not found!');
+        var loading = document.getElementById('loading');
+        if (loading)
+        {
+          loading.textContent = 'Error: gameContainer element not found';
+        }
+        return;
+      }
+
+      console.log('Container found:', container);
+
+      // Create a canvas element inside the container and pass it to Unity
+      // Some Unity versions work better with a canvas element than a container div
+      var canvas = document.createElement('canvas');
+      canvas.id = 'unity-canvas'; // Give it an ID so Unity can find it
+      canvas.setAttribute('tabindex', '0'); // Make it focusable for keyboard events
+
+      // Set initial canvas size to match viewport
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      // Full viewport styling
+      canvas.style.position = 'fixed';
+      canvas.style.top = '0';
+      canvas.style.left = '0';
+      canvas.style.width = '100vw';
+      canvas.style.height = '100vh';
+      canvas.style.display = 'block';
+      canvas.style.margin = '0';
+      canvas.style.padding = '0';
+      canvas.style.border = 'none';
+
+      container.appendChild(canvas);
+
+      // Store reference on container in case Unity looks for it
+      container._unityCanvas = canvas;
+
+      // Ensure canvas has all required methods
+      console.log('Canvas created:', canvas);
+      console.log('Canvas has getContext?', typeof canvas.getContext === 'function');
+      console.log('Canvas has getContextSafariWebGL2Fixed?', typeof canvas.getContextSafariWebGL2Fixed === 'function');
+
+      // Apply polyfill immediately to the canvas we just created
+      if (canvas.getContextSafariWebGL2Fixed)
+      {
+        console.log('Polyfill already on canvas');
+      } else if (HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed)
+      {
+        canvas.getContextSafariWebGL2Fixed = HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed;
+        console.log('Applied polyfill to new canvas');
+      }
+
+      // Ensure polyfill is applied even after Unity creates canvas
+      // Set up a MutationObserver to catch when Unity creates the canvas
+      var observer = new MutationObserver(function (mutations)
+      {
+        var canvases = document.querySelectorAll('canvas');
+        canvases.forEach(function (canvas)
+        {
+          // CRITICAL: Verify canvas is actually a proper HTMLCanvasElement with getContext
+          if (!(canvas instanceof HTMLCanvasElement))
+          {
+            console.error('Found canvas-like element that is not HTMLCanvasElement!', canvas);
             return;
           }
 
-          console.log('Calling createUnityInstance...');
-          console.log('Container type:', container.tagName);
-          console.log('Container is canvas?', container.tagName === 'CANVAS');
-          
-          // Verify container is valid
-          if (!container || (container.tagName !== 'DIV' && container.tagName !== 'CANVAS')) {
-            console.error('Invalid container! Expected DIV or CANVAS, got:', container);
+          if (!canvas.getContext || typeof canvas.getContext !== 'function')
+          {
+            console.error('Canvas missing getContext method! This is a serious error.', canvas);
+            // Try to restore it from prototype
+            canvas.getContext = HTMLCanvasElement.prototype.getContext;
           }
-          
-          // Alternative: Create canvas first and pass it directly (some Unity versions prefer this)
-          // But for now, let's try with container div as Unity should handle it
-          
-          console.log('Creating Unity instance with canvas:', canvas.id);
-          console.log('Canvas element:', canvas);
-          
-          // Try passing the canvas directly instead of container
-          // Unity should use this canvas instead of creating its own
-          createUnityInstance(canvas, {
-            dataUrl: buildUrl + "/" + projectName + ".data",
-            frameworkUrl: buildUrl + "/" + projectName + ".framework.js",
-            codeUrl: buildUrl + "/" + projectName + ".wasm",
-            streamingAssetsUrl: "StreamingAssets",
-            companyName: "%UNITY_COMPANY_NAME%",
-            productName: "%UNITY_PRODUCT_NAME%",
-            productVersion: "%UNITY_PRODUCT_VERSION%",
-            // `preserveDrawingBuffer` is needed for WebVR content to be mirrored to the `<canvas>`.
-            webglContextAttributes: {
-              preserveDrawingBuffer: true
+
+          // Add Safari polyfill if missing
+          if (!canvas.getContextSafariWebGL2Fixed)
+          {
+            var polyfill = HTMLCanvasElement.prototype.getContextSafariWebGL2Fixed;
+            if (polyfill)
+            {
+              canvas.getContextSafariWebGL2Fixed = polyfill;
+              console.log('Applied polyfill to canvas:', canvas);
+            } else
+            {
+              console.warn('Could not find polyfill function for canvas:', canvas);
             }
-          }, unityProgress).then(function(instance) {
-            window.gameInstance = instance;
-            console.log('Unity instance created successfully');
-            
-            // Ensure loader is hidden after successful initialization
-            var loader = document.getElementById('loader');
-            if (loader) {
-              loader.style.display = 'none';
-            }
-            
-            // Find the actual canvas Unity is using (it might have replaced ours)
-            var unityCanvas = instance.Module && instance.Module.canvas;
-            if (unityCanvas) {
-              console.log('Unity canvas found:', unityCanvas);
-              console.log('Canvas dimensions:', unityCanvas.width, 'x', unityCanvas.height);
-              
-              // Ensure canvas is properly sized for WebXR
-              // WebXR will resize it, but we need proper initial size
-              if (!unityCanvas.width || !unityCanvas.height) {
-                unityCanvas.width = window.innerWidth;
-                unityCanvas.height = window.innerHeight;
-                console.log('Set canvas initial size to:', unityCanvas.width, 'x', unityCanvas.height);
-              }
-              
-              // Ensure canvas has proper styling for full viewport
-              unityCanvas.style.position = 'fixed'; // Use fixed instead of absolute for WebXR
-              unityCanvas.style.top = '0';
-              unityCanvas.style.left = '0';
-              unityCanvas.style.width = '100%';
-              unityCanvas.style.height = '100%';
-              unityCanvas.style.display = 'block';
-              unityCanvas.style.margin = '0';
-              unityCanvas.style.padding = '0';
-              
-              // Ensure the game container also has proper styling
-              var gameContainer = document.getElementById('game');
-              if (gameContainer) {
-                gameContainer.style.position = 'fixed';
-                gameContainer.style.top = '0';
-                gameContainer.style.left = '0';
-                gameContainer.style.width = '100%';
-                gameContainer.style.height = '100%';
-                gameContainer.style.margin = '0';
-                gameContainer.style.padding = '0';
-              }
-            } else {
-              console.warn('Could not find Unity canvas in instance.Module.canvas');
-            }
-            
-            // Set data attribute so CSS can show the Enter VR button
-            document.body.setAttribute('data-unity-loaded', 'true');
-            
-            // Also dispatch UnityLoaded event in case webxr.js is waiting for it
-            document.dispatchEvent(new CustomEvent('UnityLoaded'));
-            
-            // Listen for WebXR session start to ensure proper canvas setup
-            if (navigator.xr && navigator.xr.addEventListener) {
-              // Monitor when VR session starts to fix viewport issues
-              document.addEventListener('UnityLoaded', function() {
-                // Small delay to ensure webxr.js is initialized
-                setTimeout(function() {
-                  if (window.xrManager && window.xrManager.vrSession) {
-                    console.log('VR session detected, ensuring canvas is properly configured');
+          }
+        });
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+
+      // Also verify container
+      console.log('Container element:', container);
+      console.log('Container has getContext?', container.getContext);
+      console.log('Canvas elements in DOM:', document.querySelectorAll('canvas').length);
+
+      function unityProgress(instance, progress)
+      {
+        if (!instance.progress)
+        {
+          instance.loader = document.getElementById('loader');
+          instance.progress = document.getElementById('progress');
+          instance.loading = document.getElementById('loading');
+          document.dispatchEvent(new CustomEvent('UnityProgressStart'));
+        }
+        if (instance.progress)
+        {
+          instance.progress.style.width = (100 * progress) + '%';
+        }
+        // Debug: log progress to help diagnose issues
+        if (progress > 0 && progress < 1)
+        {
+          console.log('Unity loading progress: ' + Math.round(progress * 100) + '%');
+        }
+        if (progress >= 1)
+        {
+          console.log('Unity loading complete!');
+          // Hide the loader when Unity is fully loaded
+          if (instance.loader)
+          {
+            instance.loader.style.display = 'none';
+          }
+          // Set data attribute so CSS can show the Enter VR button
+          document.body.setAttribute('data-unity-loaded', 'true');
+          document.dispatchEvent(new CustomEvent('UnityLoaded'));
+        }
+      }
+
+      var buildUrl = '%UNITY_WEBGL_BUILD_URL%';
+      if (buildUrl.indexOf('%') === 0)
+      {
+        // Placeholder not replaced, use default
+        buildUrl = 'Build';
+      }
+
+      // Unity may generate files with different names based on project settings
+      // Try common naming patterns (Unity often uses "unity" or project name)
+      var projectName = '%UNITY_WEB_NAME%';
+      if (projectName.indexOf('%') === 0)
+      {
+        // Placeholder not replaced, try to detect from loader filename
+        var loaderScript = document.querySelector('script[src*=".loader.js"]');
+        if (loaderScript && loaderScript.src)
+        {
+          var match = loaderScript.src.match(/([^\/]+)\.loader\.js/);
+          if (match && match[1])
+          {
+            projectName = match[1];
+            console.log('Detected project name from loader:', projectName);
+          }
+        }
+        // Final fallback - Unity commonly uses "unity" or project-based names
+        if (projectName.indexOf('%') === 0)
+        {
+          projectName = 'unity'; // Common default
+          console.log('Using default project name:', projectName);
+        }
+      }
+
+      // Remove any path separators and ensure clean filename
+      projectName = projectName.replace(/[\/\\]/g, '');
+
+      console.log('Initializing Unity with:', {
+        buildUrl: buildUrl,
+        projectName: projectName,
+        dataUrl: buildUrl + "/" + projectName + ".data",
+        frameworkUrl: buildUrl + "/" + projectName + ".framework.js",
+        codeUrl: buildUrl + "/" + projectName + ".wasm"
+      });
+
+      if (typeof createUnityInstance !== 'function')
+      {
+        console.error('createUnityInstance is not a function!', typeof createUnityInstance);
+        var loading = document.getElementById('loading');
+        if (loading)
+        {
+          loading.textContent = 'Error: Unity loader not loaded properly';
+        }
+        return;
+      }
+
+      console.log('Calling createUnityInstance...');
+      console.log('Container type:', container.tagName);
+      console.log('Container is canvas?', container.tagName === 'CANVAS');
+
+      // Verify container is valid
+      if (!container || (container.tagName !== 'DIV' && container.tagName !== 'CANVAS'))
+      {
+        console.error('Invalid container! Expected DIV or CANVAS, got:', container);
+      }
+
+      // Alternative: Create canvas first and pass it directly (some Unity versions prefer this)
+      // But for now, let's try with container div as Unity should handle it
+
+      console.log('Creating Unity instance with canvas:', canvas.id);
+      console.log('Canvas element:', canvas);
+
+      // Try passing the canvas directly instead of container
+      // Unity should use this canvas instead of creating its own
+      createUnityInstance(canvas, {
+        dataUrl: buildUrl + "/" + projectName + ".data",
+        frameworkUrl: buildUrl + "/" + projectName + ".framework.js",
+        codeUrl: buildUrl + "/" + projectName + ".wasm",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "%UNITY_COMPANY_NAME%",
+        productName: "%UNITY_PRODUCT_NAME%",
+        productVersion: "%UNITY_PRODUCT_VERSION%",
+        // `preserveDrawingBuffer` is needed for WebVR content to be mirrored to the `<canvas>`.
+        webglContextAttributes: {
+          preserveDrawingBuffer: true
+        }
+      }, unityProgress).then(function (instance)
+      {
+        window.gameInstance = instance;
+        console.log('Unity instance created successfully');
+
+        // Ensure loader is hidden after successful initialization
+        var loader = document.getElementById('loader');
+        if (loader)
+        {
+          loader.style.display = 'none';
+        }
+
+        // Find the actual canvas Unity is using (it might have replaced ours)
+        var unityCanvas = instance.Module && instance.Module.canvas;
+        if (unityCanvas)
+        {
+          console.log('Unity canvas found:', unityCanvas);
+          console.log('Canvas dimensions:', unityCanvas.width, 'x', unityCanvas.height);
+
+          // Don't set canvas size here - let Unity and webxr.js manage it
+          // Unity will set it based on its needs, webxr.js will resize for VR
+          console.log('Unity canvas initial dimensions:', unityCanvas.width, 'x', unityCanvas.height);
+
+          // Ensure canvas has proper styling for full viewport
+          unityCanvas.style.position = 'fixed'; // Use fixed instead of absolute for WebXR
+          unityCanvas.style.top = '0';
+          unityCanvas.style.left = '0';
+          unityCanvas.style.width = '100%';
+          unityCanvas.style.height = '100%';
+          unityCanvas.style.display = 'block';
+          unityCanvas.style.margin = '0';
+          unityCanvas.style.padding = '0';
+
+          // Ensure the game container also has proper styling
+          var gameContainer = document.getElementById('game');
+          if (gameContainer)
+          {
+            gameContainer.style.position = 'fixed';
+            gameContainer.style.top = '0';
+            gameContainer.style.left = '0';
+            gameContainer.style.width = '100%';
+            gameContainer.style.height = '100%';
+            gameContainer.style.margin = '0';
+            gameContainer.style.padding = '0';
+          }
+        } else
+        {
+          console.warn('Could not find Unity canvas in instance.Module.canvas');
+        }
+
+        // Set data attribute so CSS can show the Enter VR button
+        document.body.setAttribute('data-unity-loaded', 'true');
+
+        // Also dispatch UnityLoaded event in case webxr.js is waiting for it
+        document.dispatchEvent(new CustomEvent('UnityLoaded'));
+
+        // Listen for WebXR session start to ensure proper canvas setup
+        // Hook into webxr.js to fix viewport when VR starts
+        var originalAnimate = null;
+        document.addEventListener('UnityLoaded', function ()
+        {
+          setTimeout(function ()
+          {
+            // Find the xrManager instance (webxr.js creates it)
+            var xrManager = window.xrManager || (window.xr && window.xr.manager);
+
+            if (xrManager && xrManager.animate)
+            {
+              // Wrap the animate function to ensure viewport is correct
+              originalAnimate = xrManager.animate.bind(xrManager);
+              xrManager.animate = function (time, frame)
+              {
+                var result = originalAnimate(time, frame);
+
+                // Ensure viewport is set correctly for VR
+                if (this.ctx && this.canvas && this.vrSession && this.isInVRSession)
+                {
+                  var glLayer = this.vrSession.renderState.baseLayer;
+                  if (glLayer)
+                  {
+                    // WebXR provides a framebuffer that Unity should render to
+                    // glLayer.framebufferWidth = width of the WebXR framebuffer (usually full resolution)
+                    // glLayer.framebufferHeight = height of the WebXR framebuffer
+                    // 
+                    // For stereo VR headsets, the framebuffer is typically:
+                    // - Width: Full width (e.g., 2160px for Quest 2 = 1080px per eye * 2)
+                    // - Height: Full height per eye (e.g., 1200px for Quest 2)
+                    // Unity should render left eye to left half, right eye to right half
+
+                    // Log framebuffer dimensions for debugging
+                    if (!this._fbLogged)
+                    {
+                      console.log('WebXR Framebuffer dimensions:', {
+                        width: glLayer.framebufferWidth,
+                        height: glLayer.framebufferHeight,
+                        eyeWidth: glLayer.framebufferWidth / 2,
+                        eyeHeight: glLayer.framebufferHeight
+                      });
+                      this._fbLogged = true;
+                    }
+
+                    // Ensure canvas matches framebuffer size
+                    if (this.canvas.width !== glLayer.framebufferWidth ||
+                      this.canvas.height !== glLayer.framebufferHeight)
+                    {
+                      this.canvas.width = glLayer.framebufferWidth;
+                      this.canvas.height = glLayer.framebufferHeight;
+                      console.log('Canvas resized to match WebXR framebuffer:',
+                        glLayer.framebufferWidth, 'x', glLayer.framebufferHeight);
+                    }
+
+                    // Set viewport to full framebuffer - Unity will handle stereo split internally
+                    // Each eye should render to full size, not half
+                    this.ctx.viewport(0, 0, glLayer.framebufferWidth, glLayer.framebufferHeight);
+
+                    // Clear scissor test to ensure full rendering
+                    this.ctx.disable(this.ctx.SCISSOR_TEST);
                   }
-                }, 1000);
-              });
+                }
+
+                return result;
+              };
+              console.log('WebXR animate function wrapped to fix viewport');
             }
-            
-            console.log('Unity fully initialized, Enter VR button should appear if WebXR is supported');
-          }).catch(function(error) {
-            console.error('Unity initialization failed:', error);
-            console.error('Error type:', typeof error);
-            console.error('Error toString:', String(error));
-            console.error('Error details:', {
-              message: error ? error.message : 'No message property',
-              stack: error ? error.stack : 'No stack property',
-              name: error ? error.name : 'No name property',
-              fullError: JSON.stringify(error, Object.getOwnPropertyNames(error))
-            });
-            console.log('Configuration used:', {
-              buildUrl: buildUrl,
-              projectName: projectName,
-              container: container ? container.id : 'not found',
-              containerExists: !!container
-            });
-            console.log('Expected files:', [
-              buildUrl + "/" + projectName + ".data",
-              buildUrl + "/" + projectName + ".framework.js",
-              buildUrl + "/" + projectName + ".wasm"
-            ]);
-            
-            // Try to extract a meaningful error message
-            var errorMsg = 'Unknown error';
-            if (error) {
-              if (error.message) {
-                errorMsg = error.message;
-              } else if (typeof error === 'string') {
-                errorMsg = error;
-              } else if (error.toString && error.toString() !== '[object Object]') {
-                errorMsg = error.toString();
-              }
-            }
-            
-            // Show error message to user
-            var loading = document.getElementById('loading');
-            if (loading) {
-              loading.textContent = 'Failed to load. Check console for details. Error: ' + errorMsg;
-            }
-          });
+          }, 2000); // Wait for webxr.js to initialize
+        });
+
+        console.log('Unity fully initialized, Enter VR button should appear if WebXR is supported');
+      }).catch(function (error)
+      {
+        console.error('Unity initialization failed:', error);
+        console.error('Error type:', typeof error);
+        console.error('Error toString:', String(error));
+        console.error('Error details:', {
+          message: error ? error.message : 'No message property',
+          stack: error ? error.stack : 'No stack property',
+          name: error ? error.name : 'No name property',
+          fullError: JSON.stringify(error, Object.getOwnPropertyNames(error))
+        });
+        console.log('Configuration used:', {
+          buildUrl: buildUrl,
+          projectName: projectName,
+          container: container ? container.id : 'not found',
+          containerExists: !!container
+        });
+        console.log('Expected files:', [
+          buildUrl + "/" + projectName + ".data",
+          buildUrl + "/" + projectName + ".framework.js",
+          buildUrl + "/" + projectName + ".wasm"
+        ]);
+
+        // Try to extract a meaningful error message
+        var errorMsg = 'Unknown error';
+        if (error)
+        {
+          if (error.message)
+          {
+            errorMsg = error.message;
+          } else if (typeof error === 'string')
+          {
+            errorMsg = error;
+          } else if (error.toString && error.toString() !== '[object Object]')
+          {
+            errorMsg = error.toString();
+          }
         }
-        
-        // Start initialization once DOM is ready
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', initializeUnity);
-        } else {
-          initializeUnity();
+
+        // Show error message to user
+        var loading = document.getElementById('loading');
+        if (loading)
+        {
+          loading.textContent = 'Failed to load. Check console for details. Error: ' + errorMsg;
         }
-    </script>
-  </head>
-  <body>
-    <div id="loader">
-      <div id="loading" class="loading">Loading</div>
-      <div id="progress" class="progress"></div>
+      });
+    }
+
+    // Start initialization once DOM is ready
+    if (document.readyState === 'loading')
+    {
+      document.addEventListener('DOMContentLoaded', initializeUnity);
+    } else
+    {
+      initializeUnity();
+    }
+  </script>
+</head>
+
+<body>
+  <div id="loader">
+    <div id="loading" class="loading">Loading</div>
+    <div id="progress" class="progress"></div>
+  </div>
+
+  <div id="game">
+    <div id="gameContainer"></div>
+  </div>
+
+  <div id="instruction">
+    <div id="novr" class="panel center">
+      <h3>You&rsquo;ll need a <a href="https://developer.mozilla.com/topics/mixed-reality/">WebXR-enabled browser</a>
+        and VR headset to fully enjoy this experience.</h3>
+      <p><img src="mousedrag.png" width="70" alt="Click-and-drag your mouse"></p>
+      <p>In the meantime, <strong><em>click and drag</em></strong> to have a look around!</p>
+      <p>
+        <button class="confirm">Continue</button>
+      </p>
     </div>
+  </div>
 
-    <div id="game">
-      <div id="gameContainer"></div>
-    </div>
+  <button id="enterxr" value="Enter VR"></button>
 
-    <div id="instruction">
-      <div id="novr" class="panel center">
-        <h3>You&rsquo;ll need a <a href="https://developer.mozilla.com/topics/mixed-reality/">WebXR-enabled browser</a> and VR headset to fully enjoy this experience.</h3>
-        <p><img src="mousedrag.png" width="70" alt="Click-and-drag your mouse"></p>
-        <p>In the meantime, <strong><em>click and drag</em></strong> to have a look around!</p>
-        <p>
-          <button class="confirm">Continue</button>
-        </p>
-      </div>
-    </div>
+  <div id="performance" data-enabled="false"></div>
 
-    <button id="enterxr" value="Enter VR"></button>
-
-    <div id="performance" data-enabled="false"></div>
-
-    <script src="vendor/gl-matrix-min.js"></script>
-    <script src="webxr.js"></script>
-  </body>
+  <script src="vendor/gl-matrix-min.js"></script>
+  <script src="webxr.js"></script>
+</body>
 
 </html>
