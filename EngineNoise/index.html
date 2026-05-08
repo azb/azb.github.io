@@ -3,14 +3,11 @@
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Unity WebGL Player | EngineNoise2022</title>
+    <title>Unity WebGL Player | EngineNoiseGPS</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
-    <div id="unity-start-overlay" style="display:none;position:fixed;inset:0;background:#000d;color:#fff;z-index:9999;align-items:center;justify-content:center;font-family:Arial,sans-serif;">
-      <button id="unity-start-button" style="padding:14px 22px;font-size:18px;cursor:pointer;">Tap to Start Audio</button>
-    </div>
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=1920 height=1080 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
@@ -23,7 +20,7 @@
       <div id="unity-footer">
         <div id="unity-webgl-logo"></div>
         <div id="unity-fullscreen-button"></div>
-        <div id="unity-build-title">EngineNoise2022</div>
+        <div id="unity-build-title">EngineNoiseGPS</div>
       </div>
     </div>
     <script>
@@ -34,50 +31,6 @@
       var progressBarFull = document.querySelector("#unity-progress-bar-full");
       var fullscreenButton = document.querySelector("#unity-fullscreen-button");
       var warningBanner = document.querySelector("#unity-warning");
-      var startOverlay = document.querySelector("#unity-start-overlay");
-      var startButton = document.querySelector("#unity-start-button");
-      var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-      var trackedAudioContexts = [];
-
-      function trackAudioContextConstructors() {
-        function wrapCtor(name) {
-          var Original = window[name];
-          if (!Original || Original.__unityTrackedWrapper) return;
-          var Wrapped = function() {
-            var ctx = new Original(...arguments);
-            trackedAudioContexts.push(ctx);
-            return ctx;
-          };
-          Wrapped.prototype = Original.prototype;
-          Wrapped.__unityTrackedWrapper = true;
-          window[name] = Wrapped;
-        }
-        wrapCtor("AudioContext");
-        wrapCtor("webkitAudioContext");
-      }
-
-      function unlockAudioContexts() {
-        var AudioCtx = window.AudioContext || window.webkitAudioContext;
-        var contexts = trackedAudioContexts.slice();
-        if (AudioCtx) {
-          try {
-            contexts.push(new AudioCtx());
-          } catch (e) {}
-        }
-        contexts.forEach((ctx) => {
-          try {
-            if (ctx.state === "suspended") ctx.resume();
-            var buffer = ctx.createBuffer(1, 1, 22050);
-            var source = ctx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(ctx.destination);
-            source.start(0);
-          } catch (e) {}
-        });
-      }
-
-      trackAudioContextConstructors();
 
       // Shows a temporary message banner/ribbon for a few seconds, or
       // a permanent error message on top of the canvas if type=='error'.
@@ -111,7 +64,7 @@
         codeUrl: buildUrl + "/EngineNoise.wasm",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "AZBGames",
-        productName: "EngineNoise2022",
+        productName: "EngineNoiseGPS",
         productVersion: "0.1",
         showBanner: unityShowBanner,
       };
@@ -123,8 +76,7 @@
       // the canvas DOM size and WebGL render target sizes yourself.
       // config.matchWebGLToCanvasSize = false;
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
-          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) {
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
         // Mobile device style: fill the whole browser client area with the game canvas:
 
         var meta = document.createElement('meta');
@@ -151,32 +103,17 @@
       var script = document.createElement("script");
       script.src = loaderUrl;
       script.onload = () => {
-        const startUnity = () => {
-          createUnityInstance(canvas, config, (progress) => {
+        createUnityInstance(canvas, config, (progress) => {
           progressBarFull.style.width = 100 * progress + "%";
               }).then((unityInstance) => {
                 loadingBar.style.display = "none";
-                startOverlay.style.display = "none";
                 fullscreenButton.onclick = () => {
                   unityInstance.SetFullscreen(1);
                 };
               }).catch((message) => {
                 alert(message);
               });
-        };
-
-        if (isIOS) {
-          startOverlay.style.display = "flex";
-          startButton.addEventListener("click", () => {
-            // iOS requires a user gesture to resume/unlock all WebAudio contexts.
-            unlockAudioContexts();
-            startUnity();
-            setTimeout(unlockAudioContexts, 500);
-          }, { once: true });
-        } else {
-          startUnity();
-        }
-      };
+            };
 
       document.body.appendChild(script);
 
