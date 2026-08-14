@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>WebXR Room Name Tags</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="setup" class="panel">
+    <h1>Room Name Tags</h1>
+    <p>Same-room WebXR multiplayer with two-point physical calibration.</p>
+
+    <label>Your name
+      <input id="name" maxlength="24" placeholder="Arthur" autocomplete="nickname" />
+    </label>
+
+    <label>Room ID
+      <input id="room" maxlength="48" placeholder="demo-room" value="demo-room" />
+    </label>
+
+    <details>
+      <summary>Firebase configuration</summary>
+      <p class="small">Paste your Firebase Web App configuration. It is safe for a browser app; protect your database with Firebase Security Rules.</p>
+      <textarea id="firebaseConfig" spellcheck="false" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'></textarea>
+    </details>
+
+    <button id="start">Enter Room</button>
+    <p id="setupError" class="error"></p>
+  </div>
+
+  <div id="hud" class="panel hidden">
+    <div><b id="roomLabel"></b> · <span id="status">Connecting…</span></div>
+    <div id="instructions">
+      <b>Calibration:</b> grab the <span class="red">red</span> and <span class="blue">blue</span> dots and put them on the same two physical landmarks.
+      Then release and press <b>Calibrate</b>.
+    </div>
+    <button id="calibrate">Calibrate</button>
+    <button id="recalibrate" class="secondary">Recalibrate</button>
+    <button id="exit" class="secondary">Exit</button>
+  </div>
+
+  <div id="desktopHint" class="panel hidden">
+    WebXR requires a compatible headset/browser. On Quest, open this page in Meta Quest Browser and enter VR.
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
