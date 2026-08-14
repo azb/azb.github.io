@@ -8,6 +8,16 @@ html, body {
   color: #fff;
 }
 body { touch-action: none; }
+#overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+#overlay .panel,
+#overlay button {
+  pointer-events: auto;
+}
 canvas {
   position: fixed;
   inset: 0;
@@ -64,3 +74,11 @@ button.secondary { background: #444; color: #fff; }
 .red { color: #ff4040; }
 .blue { color: #4090ff; }
 #desktopHint { bottom: 16px; top: auto; }
+#ARButton {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 11;
+  pointer-events: auto;
+  margin: 0;
+}

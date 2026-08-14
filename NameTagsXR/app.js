@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { VRButton } from "three/addons/webxr/VRButton.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
 import { initializeAuth, getAuth, inMemoryPersistence, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
 import {
@@ -28,15 +28,21 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101015);
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 100);
-camera.position.set(0, 1.6, 2.5);
+camera.position.set(0, 2.2, 6);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x101015, 1);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType("local-floor");
 renderer.domElement.style.zIndex = "0";
 document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.2, 0);
+controls.enableDamping = true;
+controls.update();
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 2));
 const grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
@@ -68,6 +74,10 @@ const hud = document.getElementById("hud");
 const statusEl = document.getElementById("status");
 const setupError = document.getElementById("setupError");
 const roomLabel = document.getElementById("roomLabel");
+const playerListEl = document.getElementById("playerList");
+
+let arButton = null;
+let tryEnterAR = async () => {};
 
 const startButton = document.getElementById("start");
 startButton.onclick = start;
@@ -158,14 +168,23 @@ function createNameTag(name) {
 function createRemotePlayer(id, name) {
   const obj = new THREE.Group();
   obj.userData.name = name;
-  const tag = createNameTag(name);
-  tag.position.y = .15;
-  obj.add(tag);
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(.09, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0xeeeeee, transparent: true, opacity: .25 })
+  obj.userData.target = new THREE.Vector3();
+
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(.18, 1.1, 4, 12),
+    new THREE.MeshBasicMaterial({ color: 0x7ec8ff, transparent: true, opacity: .55 })
   );
-  head.position.y = -.02;
+  body.position.y = -.75;
+  obj.add(body);
+
+  const tag = createNameTag(name);
+  tag.position.y = .28;
+  obj.add(tag);
+
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(.14, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .85 })
+  );
   obj.add(head);
   scene.add(obj);
   return obj;
@@ -177,14 +196,49 @@ function updateRemotePlayer(id, p) {
     obj = createRemotePlayer(id, p.name || "Player");
     remotePlayers.set(id, obj);
   }
-  if (!calibrated) return;
+
+  if (typeof p.x !== "number" || typeof p.y !== "number" || typeof p.z !== "number") {
+    obj.visible = false;
+    return;
+  }
 
   const local = roomToLocal(new THREE.Vector3(p.x, p.y, p.z));
-  obj.position.copy(local);
+  obj.userData.target.copy(local);
+  if (!obj.userData.placed) {
+    obj.position.copy(local);
+    obj.userData.placed = true;
+  }
+  obj.userData.tracking = !!p.presenting;
   obj.visible = true;
+}
 
-  // Make the tag face the local viewer.
-  obj.children[0].lookAt(camera.position);
+function updateRemoteVisuals() {
+  const lookAt = new THREE.Vector3();
+  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(lookAt);
+  else camera.getWorldPosition(lookAt);
+
+  for (const obj of remotePlayers.values()) {
+    if (obj.userData.target) obj.position.lerp(obj.userData.target, 0.35);
+    const tag = obj.children.find(c => c.type === "Group");
+    if (tag) tag.lookAt(lookAt);
+  }
+}
+
+function describePlayers(snap) {
+  const others = [];
+  snap.forEach(d => {
+    if (d.id === uid) return;
+    const p = d.data();
+    const tracking = typeof p.x === "number" && p.presenting;
+    others.push(`${p.name || "Player"}${tracking ? "" : " (not tracking)"}`);
+  });
+  if (!others.length) {
+    playerListEl.textContent = renderer.xr.isPresenting
+      ? "Broadcasting your pose · no other players yet."
+      : "No other players yet. On Spectacles, enter the room and start AR, then walk.";
+    return;
+  }
+  playerListEl.textContent = others.join(" · ");
 }
 
 function startFirebase(config) {
@@ -239,7 +293,7 @@ async function start() {
         if (d.id === uid) return;
         const p = d.data();
         seen.add(d.id);
-        if (p.calibrated) updateRemotePlayer(d.id, p);
+        updateRemotePlayer(d.id, p);
       });
       for (const [id, obj] of remotePlayers) {
         if (!seen.has(id)) {
@@ -247,15 +301,17 @@ async function start() {
           remotePlayers.delete(id);
         }
       }
+      describePlayers(snap);
     });
 
     setup.classList.add("hidden");
     hud.classList.remove("hidden");
     roomLabel.textContent = `Room: ${roomId}`;
     sessionStarted = true;
-    statusEl.textContent = "Connected · calibrate the two dots";
+    statusEl.textContent = "Connected · start AR on Spectacles to broadcast walking";
 
     setupXR();
+    await tryEnterAR();
   } catch (e) {
     console.error(e);
     setupError.textContent = firebaseErrorMessage(e);
@@ -264,15 +320,128 @@ async function start() {
   }
 }
 
-function setupXR() {
-  if (!navigator.xr) {
-    document.getElementById("desktopHint").classList.remove("hidden");
+function setPassthrough(on) {
+  if (on) {
+    scene.background = null;
+    renderer.setClearColor(0x000000, 0);
+    grid.visible = false;
+    floor.visible = false;
+  } else {
+    scene.background = new THREE.Color(0x101015);
+    renderer.setClearColor(0x101015, 1);
+    grid.visible = true;
+    floor.visible = true;
   }
-  const vrButton = VRButton.createButton(renderer);
-  vrButton.style.bottom = "16px";
-  vrButton.style.left = "auto";
-  vrButton.style.right = "16px";
-  document.body.appendChild(vrButton);
+}
+
+function setupXR() {
+  const overlay = document.getElementById("overlay");
+  arButton = document.createElement("button");
+  arButton.id = "ARButton";
+  arButton.textContent = "START AR";
+  overlay.appendChild(arButton);
+
+  const sessionAttempts = [
+    {
+      optionalFeatures: ["local-floor", "unbounded", "hand-tracking", "dom-overlay"],
+      domOverlay: { root: overlay }
+    },
+    { optionalFeatures: ["local-floor", "unbounded", "hand-tracking"] },
+    { optionalFeatures: ["hand-tracking"] },
+    {}
+  ];
+
+  let currentSession = null;
+
+  async function bindSession(session) {
+    session.addEventListener("end", onSessionEnded);
+    let lastErr;
+    for (const space of ["local-floor", "unbounded", "local"]) {
+      renderer.xr.setReferenceSpaceType(space);
+      try {
+        await renderer.xr.setSession(session);
+        return;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error("No XR reference space");
+  }
+
+  async function onSessionStarted(session) {
+    await bindSession(session);
+    arButton.textContent = "STOP AR";
+    currentSession = session;
+    controls.enabled = false;
+    statusEl.textContent = "Tracking pose · walking should appear on other devices";
+    publishPlayer(true).catch(console.error);
+  }
+
+  function onSessionEnded() {
+    currentSession = null;
+    arButton.textContent = "START AR";
+    controls.enabled = true;
+    statusEl.textContent = "AR stopped · pose is no longer broadcasting";
+    if (uid && roomId && db) {
+      setDoc(doc(db, "rooms", roomId, "players", uid), { presenting: false }, { merge: true }).catch(() => {});
+    }
+  }
+
+  tryEnterAR = async () => {
+    if (!navigator.xr || currentSession) return;
+    const supported = await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
+    if (!supported) return;
+    let lastErr;
+    for (const sessionInit of sessionAttempts) {
+      try {
+        const session = await navigator.xr.requestSession("immersive-ar", sessionInit);
+        await onSessionStarted(session);
+        return;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (lastErr) console.warn("AR session not started", lastErr);
+  };
+
+  arButton.onclick = async () => {
+    if (currentSession) {
+      currentSession.end();
+      return;
+    }
+    try {
+      await tryEnterAR();
+      if (!renderer.xr.isPresenting) {
+        statusEl.textContent = "Could not start AR on this device";
+      }
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = err.message || "Failed to start AR";
+    }
+  };
+
+  if (!navigator.xr) {
+    arButton.textContent = "AR NOT SUPPORTED";
+    arButton.disabled = true;
+    document.getElementById("desktopHint").classList.remove("hidden");
+  } else {
+    navigator.xr.isSessionSupported("immersive-ar").then(supported => {
+      if (!supported) {
+        arButton.textContent = "AR NOT SUPPORTED";
+        arButton.disabled = true;
+        document.getElementById("desktopHint").classList.remove("hidden");
+      }
+    }).catch(() => {
+      arButton.textContent = "AR NOT ALLOWED";
+      arButton.disabled = true;
+    });
+  }
+
+  renderer.xr.addEventListener("sessionstart", () => setPassthrough(true));
+  renderer.xr.addEventListener("sessionend", () => {
+    setPassthrough(false);
+    controls.enabled = true;
+  });
 
   for (let i = 0; i < 2; i++) {
     const controller = renderer.xr.getController(i);
@@ -300,23 +469,30 @@ function setupXR() {
   renderer.setAnimationLoop(render);
 }
 
+function findGrabbable(controller) {
+  const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+  for (const dot of [redDot, blueDot]) {
+    if (dot.visible && origin.distanceTo(dot.position) < .18) return dot;
+  }
+
+  tempMatrix.identity().extractRotation(controller.matrixWorld);
+  raycaster.ray.origin.copy(origin);
+  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+  const hits = raycaster.intersectObjects([redDot, blueDot], true);
+  if (!hits.length) return null;
+  let root = hits[0].object;
+  while (root.parent && !root.userData.grabbable) root = root.parent;
+  return root.userData.grabbable ? root : null;
+}
+
 function onSelectStart(e) {
   const controller = e.target;
   controller.userData.selecting = true;
-
-  tempMatrix.identity().extractRotation(controller.matrixWorld);
-  raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-  raycaster.ray.direction.set(0,0,-1).applyMatrix4(tempMatrix);
-
-  const hits = raycaster.intersectObjects([redDot, blueDot], true);
-  if (!hits.length) return;
-
-  let root = hits[0].object;
-  while (root.parent && !root.userData.grabbable) root = root.parent;
-  if (!root.userData.grabbable) return;
-
-  controller.userData.grabbed = root;
-  controller.userData.grabOffset = root.position.clone().sub(controller.position);
+  const grabbed = findGrabbable(controller);
+  if (!grabbed) return;
+  const cp = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+  controller.userData.grabbed = grabbed;
+  controller.userData.grabOffset = grabbed.position.clone().sub(cp);
 }
 
 function onSelectEnd(e) {
@@ -338,7 +514,8 @@ function updateGrab() {
 
 function getLocalHeadPosition() {
   const p = new THREE.Vector3();
-  camera.getWorldPosition(p);
+  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(p);
+  else camera.getWorldPosition(p);
   return p;
 }
 
@@ -386,12 +563,13 @@ function calibrate() {
 }
 
 async function publishPlayer(force = false) {
-  if (!sessionStarted || !uid || !calibrated) return;
+  if (!sessionStarted || !uid || !renderer.xr.isPresenting) return;
   const now = performance.now();
-  if (!force && now - lastNetworkSend < 65) return;
+  if (!force && now - lastNetworkSend < 80) return;
   lastNetworkSend = now;
 
   const localHead = getLocalHeadPosition();
+  if (!Number.isFinite(localHead.x + localHead.y + localHead.z)) return;
   const roomHead = localToRoom(localHead);
 
   await setDoc(doc(db, "rooms", roomId, "players", uid), {
@@ -399,16 +577,16 @@ async function publishPlayer(force = false) {
     x: roomHead.x,
     y: roomHead.y,
     z: roomHead.z,
-    calibrated: true,
+    presenting: true,
+    calibrated,
     updatedAt: serverTimestamp()
   }, { merge: true });
 }
 
 function render() {
   updateGrab();
-
-  // Publish after XR pose has updated the camera.
-  if (calibrated) publishPlayer(false).catch(console.error);
-
   renderer.render(scene, camera);
+  if (!renderer.xr.isPresenting) controls.update();
+  updateRemoteVisuals();
+  publishPlayer(false).catch(console.error);
 }
