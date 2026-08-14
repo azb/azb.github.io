@@ -8,9 +8,16 @@ html, body {
   color: #fff;
 }
 body { touch-action: none; }
+canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: block;
+}
 .panel {
   position: fixed;
   z-index: 10;
+  pointer-events: auto;
   left: 16px;
   top: 16px;
   max-width: 420px;
@@ -44,10 +51,15 @@ button {
   background: #fff;
   color: #111;
   font-weight: 700;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: .65;
+  cursor: wait;
 }
 button.secondary { background: #444; color: #fff; }
 .small { font-size: 12px; opacity: .8; }
-.error { color: #ff8080; }
+.error { color: #ff8080; min-height: 1.2em; }
 .hidden { display: none; }
 .red { color: #ff4040; }
 .blue { color: #4090ff; }

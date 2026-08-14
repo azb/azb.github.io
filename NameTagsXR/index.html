@@ -38,6 +38,11 @@
     WebXR requires a compatible headset/browser. On Quest, open this page in Meta Quest Browser and enter VR.
   </div>
 
-  <script type="module" src="./app.js"></script>
+  <script type="module">
+    import("./app.js").catch(err => {
+      const el = document.getElementById("setupError");
+      el.textContent = "Failed to load app: " + (err && err.message ? err.message : err);
+    });
+  </script>
 </body>
 </html>

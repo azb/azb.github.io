@@ -1,8 +1,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js";
 import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/webxr/VRButton.js";
-import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js";
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
+import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+import { initializeAuth, getAuth, inMemoryPersistence, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
 import {
   getFirestore, doc, setDoc, onSnapshot, collection, serverTimestamp,
   deleteDoc
@@ -36,6 +35,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType("local-floor");
+renderer.domElement.style.zIndex = "0";
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 2));
@@ -69,7 +69,8 @@ const statusEl = document.getElementById("status");
 const setupError = document.getElementById("setupError");
 const roomLabel = document.getElementById("roomLabel");
 
-document.getElementById("start").onclick = start;
+const startButton = document.getElementById("start");
+startButton.onclick = start;
 document.getElementById("calibrate").onclick = calibrate;
 document.getElementById("recalibrate").onclick = () => {
   calibrated = false;
@@ -90,6 +91,8 @@ window.addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
+
+renderer.setAnimationLoop(render);
 
 function makeDot(color, text) {
   const group = new THREE.Group();
@@ -185,13 +188,37 @@ function updateRemotePlayer(id, p) {
 }
 
 function startFirebase(config) {
-  firebaseApp = initializeApp(config);
-  auth = getAuth(firebaseApp);
+  firebaseApp = getApps().length ? getApp() : initializeApp(config);
+  try {
+    auth = initializeAuth(firebaseApp, { persistence: inMemoryPersistence });
+  } catch {
+    auth = getAuth(firebaseApp);
+  }
   db = getFirestore(firebaseApp);
+}
+
+function firebaseErrorMessage(e) {
+  const code = e && e.code || "";
+  const message = e && e.message || "";
+  if (code === "auth/configuration-not-found" || /CONFIGURATION_NOT_FOUND/i.test(message)) {
+    return "Firebase Authentication is not set up. In Firebase Console open Authentication → Get started, then enable Anonymous under Sign-in method.";
+  }
+  if (code === "auth/operation-not-allowed") {
+    return "Anonymous sign-in is disabled. Enable it in Firebase Console → Authentication → Sign-in method → Anonymous.";
+  }
+  if (code === "auth/unauthorized-domain") {
+    return "This site is not allowed. Add azb.github.io and localhost under Authentication → Settings → Authorized domains.";
+  }
+  if (code === "permission-denied") {
+    return "Firestore blocked the write. Create the database and deploy firebase.rules.";
+  }
+  return message || "Firebase connection failed.";
 }
 
 async function start() {
   setupError.textContent = "";
+  startButton.disabled = true;
+  startButton.textContent = "Connecting…";
   playerName = document.getElementById("name").value.trim() || "Player";
   roomId = document.getElementById("room").value.trim() || "demo-room";
 
@@ -231,7 +258,9 @@ async function start() {
     setupXR();
   } catch (e) {
     console.error(e);
-    setupError.textContent = e.message || "Firebase connection failed.";
+    setupError.textContent = firebaseErrorMessage(e);
+    startButton.disabled = false;
+    startButton.textContent = "Enter Room";
   }
 }
 
