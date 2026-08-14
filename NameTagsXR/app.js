@@ -8,6 +8,16 @@ import {
   deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
+const firebaseConfig = {
+  apiKey: "AIzaSyD9wx0VS7oZLUqB4v5-XEBHGVHom4f7dZM",
+  authDomain: "nametagsxr.firebaseapp.com",
+  projectId: "nametagsxr",
+  storageBucket: "nametagsxr.firebasestorage.app",
+  messagingSenderId: "1044217406309",
+  appId: "1:1044217406309:web:ca475c4e8441752ca0f78c",
+  measurementId: "G-R13NNSLFQ0"
+};
+
 let firebaseApp, auth, db, roomRef, playersUnsub;
 let uid, roomId, playerName;
 let calibrated = false;
@@ -185,17 +195,8 @@ async function start() {
   playerName = document.getElementById("name").value.trim() || "Player";
   roomId = document.getElementById("room").value.trim() || "demo-room";
 
-  let config;
   try {
-    config = JSON.parse(document.getElementById("firebaseConfig").value);
-    if (!config.projectId || !config.appId) throw new Error("Missing projectId/appId");
-  } catch (e) {
-    setupError.textContent = "Enter a valid Firebase Web App config JSON.";
-    return;
-  }
-
-  try {
-    startFirebase(config);
+    startFirebase(firebaseConfig);
     const cred = await signInAnonymously(auth);
     uid = cred.user.uid;
 
