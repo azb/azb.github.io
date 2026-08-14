@@ -203,8 +203,8 @@ function firebaseErrorMessage(e) {
   if (code === "auth/configuration-not-found" || /CONFIGURATION_NOT_FOUND/i.test(message)) {
     return "Firebase Authentication is not set up. In Firebase Console open Authentication → Get started, then enable Anonymous under Sign-in method.";
   }
-  if (code === "auth/operation-not-allowed") {
-    return "Anonymous sign-in is disabled. Enable it in Firebase Console → Authentication → Sign-in method → Anonymous.";
+  if (code === "auth/operation-not-allowed" || code === "auth/admin-restricted-operation") {
+    return "Anonymous sign-in is disabled. In Firebase Console go to Authentication → Sign-in method → Anonymous → Enable.";
   }
   if (code === "auth/unauthorized-domain") {
     return "This site is not allowed. Add azb.github.io and localhost under Authentication → Settings → Authorized domains.";
