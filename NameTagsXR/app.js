@@ -23,6 +23,10 @@ let calibrated = false;
 let calibration = null;
 let lastNetworkSend = 0;
 let sessionStarted = false;
+let pruneTimer = null;
+const POSE_MS = 80;
+const HEARTBEAT_MS = 2000;
+const STALE_MS = 8000;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101015);
@@ -88,13 +92,10 @@ document.getElementById("recalibrate").onclick = () => {
   statusEl.textContent = "Recalibration: place red + blue again";
   redDot.visible = blueDot.visible = true;
 };
-document.getElementById("exit").onclick = async () => {
-  if (playersUnsub) playersUnsub();
-  if (uid && roomId) {
-    try { await deleteDoc(doc(db, "rooms", roomId, "players", uid)); } catch {}
-  }
-  location.reload();
-};
+document.getElementById("exit").onclick = () => leaveRoom(true);
+
+window.addEventListener("pagehide", () => leaveRoom(false));
+window.addEventListener("beforeunload", () => leaveRoom(false));
 
 window.addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
@@ -224,11 +225,64 @@ function updateRemoteVisuals() {
   }
 }
 
+function playerUpdatedAt(p) {
+  if (p && p.updatedAt && typeof p.updatedAt.toMillis === "function") return p.updatedAt.toMillis();
+  return 0;
+}
+
+function isPlayerStale(p) {
+  const t = playerUpdatedAt(p);
+  return t > 0 && Date.now() - t > STALE_MS;
+}
+
+function removeRemote(id) {
+  const obj = remotePlayers.get(id);
+  if (!obj) return;
+  scene.remove(obj);
+  remotePlayers.delete(id);
+}
+
+function pruneStalePlayers(snap) {
+  const staleIds = [];
+  if (snap) {
+    snap.forEach(d => {
+      if (d.id === uid) return;
+      if (isPlayerStale(d.data())) staleIds.push(d.id);
+    });
+  } else {
+    const now = Date.now();
+    for (const [id, obj] of remotePlayers) {
+      if (now - (obj.userData.lastSeen || 0) > STALE_MS) staleIds.push(id);
+    }
+  }
+  for (const id of staleIds) {
+    removeRemote(id);
+    if (db && roomId) deleteDoc(doc(db, "rooms", roomId, "players", id)).catch(() => {});
+  }
+}
+
+function leaveRoom(reload) {
+  if (pruneTimer) {
+    clearInterval(pruneTimer);
+    pruneTimer = null;
+  }
+  if (playersUnsub) {
+    playersUnsub();
+    playersUnsub = null;
+  }
+  sessionStarted = false;
+  if (uid && roomId && db) {
+    deleteDoc(doc(db, "rooms", roomId, "players", uid)).catch(() => {});
+  }
+  if (reload) location.reload();
+}
+
 function describePlayers(snap) {
   const others = [];
   snap.forEach(d => {
     if (d.id === uid) return;
     const p = d.data();
+    if (isPlayerStale(p)) return;
     const tracking = typeof p.x === "number" && p.presenting;
     others.push(`${p.name || "Player"}${tracking ? "" : " (not tracking)"}`);
   });
@@ -292,15 +346,16 @@ async function start() {
       snap.forEach(d => {
         if (d.id === uid) return;
         const p = d.data();
+        if (isPlayerStale(p)) return;
         seen.add(d.id);
         updateRemotePlayer(d.id, p);
+        const obj = remotePlayers.get(d.id);
+        if (obj) obj.userData.lastSeen = playerUpdatedAt(p) || Date.now();
       });
       for (const [id, obj] of remotePlayers) {
-        if (!seen.has(id)) {
-          scene.remove(obj);
-          remotePlayers.delete(id);
-        }
+        if (!seen.has(id)) removeRemote(id);
       }
+      pruneStalePlayers(snap);
       describePlayers(snap);
     });
 
@@ -309,6 +364,8 @@ async function start() {
     roomLabel.textContent = `Room: ${roomId}`;
     sessionStarted = true;
     statusEl.textContent = "Connected · start AR on Spectacles to broadcast walking";
+    pruneTimer = setInterval(() => pruneStalePlayers(), HEARTBEAT_MS);
+    await publishPlayer(true);
 
     setupXR();
     await tryEnterAR();
@@ -563,24 +620,30 @@ function calibrate() {
 }
 
 async function publishPlayer(force = false) {
-  if (!sessionStarted || !uid || !renderer.xr.isPresenting) return;
+  if (!sessionStarted || !uid) return;
   const now = performance.now();
-  if (!force && now - lastNetworkSend < 80) return;
+  const interval = renderer.xr.isPresenting ? POSE_MS : HEARTBEAT_MS;
+  if (!force && now - lastNetworkSend < interval) return;
   lastNetworkSend = now;
 
-  const localHead = getLocalHeadPosition();
-  if (!Number.isFinite(localHead.x + localHead.y + localHead.z)) return;
-  const roomHead = localToRoom(localHead);
-
-  await setDoc(doc(db, "rooms", roomId, "players", uid), {
+  const payload = {
     name: playerName,
-    x: roomHead.x,
-    y: roomHead.y,
-    z: roomHead.z,
-    presenting: true,
+    presenting: renderer.xr.isPresenting,
     calibrated,
     updatedAt: serverTimestamp()
-  }, { merge: true });
+  };
+
+  if (renderer.xr.isPresenting) {
+    const localHead = getLocalHeadPosition();
+    if (Number.isFinite(localHead.x + localHead.y + localHead.z)) {
+      const roomHead = localToRoom(localHead);
+      payload.x = roomHead.x;
+      payload.y = roomHead.y;
+      payload.z = roomHead.z;
+    }
+  }
+
+  await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: true });
 }
 
 function render() {
