@@ -27,6 +27,23 @@ let pruneTimer = null;
 const POSE_MS = 80;
 const HEARTBEAT_MS = 2000;
 const STALE_MS = 8000;
+const HAND_JOINTS = [
+  "wrist",
+  "thumb-phalanx-proximal", "thumb-tip",
+  "index-finger-phalanx-proximal", "index-finger-tip",
+  "middle-finger-phalanx-proximal", "middle-finger-tip",
+  "ring-finger-phalanx-proximal", "ring-finger-tip",
+  "pinky-finger-phalanx-proximal", "pinky-finger-tip"
+];
+const FINGER_CHAINS = [
+  ["wrist", "thumb-phalanx-proximal", "thumb-tip"],
+  ["wrist", "index-finger-phalanx-proximal", "index-finger-tip"],
+  ["wrist", "middle-finger-phalanx-proximal", "middle-finger-tip"],
+  ["wrist", "ring-finger-phalanx-proximal", "ring-finger-tip"],
+  ["wrist", "pinky-finger-phalanx-proximal", "pinky-finger-tip"]
+];
+const localHands = [];
+const _handPos = new THREE.Vector3();
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101015);
@@ -241,10 +258,39 @@ function createNameTag(name) {
   return group;
 }
 
+function createRemoteHand(color) {
+  const group = new THREE.Group();
+  group.userData.points = {};
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .85 });
+  for (const name of HAND_JOINTS) {
+    const r = name === "wrist" ? .03 : name.endsWith("tip") ? .012 : .016;
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
+    mesh.visible = false;
+    mesh.userData.target = new THREE.Vector3();
+    group.add(mesh);
+    group.userData.points[name] = mesh;
+  }
+  const positions = new Float32Array(FINGER_CHAINS.length * 4 * 3);
+  const lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  lineGeo.setDrawRange(0, 0);
+  const line = new THREE.LineSegments(
+    lineGeo,
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: .65 })
+  );
+  group.add(line);
+  group.userData.line = line;
+  group.userData.linePos = positions;
+  group.visible = false;
+  scene.add(group);
+  return group;
+}
+
 function createRemotePlayer(id, name) {
   const obj = new THREE.Group();
   obj.userData.name = name;
   obj.userData.target = new THREE.Vector3();
+  obj.userData.hands = null;
 
   const body = new THREE.Mesh(
     new THREE.CapsuleGeometry(.18, 1.1, 4, 12),
@@ -262,6 +308,8 @@ function createRemotePlayer(id, name) {
     new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .85 })
   );
   obj.add(head);
+  obj.userData.leftHand = createRemoteHand(0x9ad4ff);
+  obj.userData.rightHand = createRemoteHand(0xffc89a);
   scene.add(obj);
   return obj;
 }
@@ -275,6 +323,8 @@ function updateRemotePlayer(id, p) {
 
   if (typeof p.x !== "number" || typeof p.y !== "number" || typeof p.z !== "number") {
     obj.visible = false;
+    applyHandJoints(obj.userData.leftHand, null);
+    applyHandJoints(obj.userData.rightHand, null);
     return;
   }
 
@@ -285,7 +335,61 @@ function updateRemotePlayer(id, p) {
     obj.userData.placed = true;
   }
   obj.userData.tracking = !!p.presenting;
+  obj.userData.hands = p.presenting ? p.hands || null : null;
   obj.visible = true;
+  applyHandJoints(obj.userData.leftHand, obj.userData.hands && obj.userData.hands.left);
+  applyHandJoints(obj.userData.rightHand, obj.userData.hands && obj.userData.hands.right);
+}
+
+function applyHandJoints(hand, joints) {
+  if (!hand) return;
+  if (!joints || !joints.wrist) {
+    hand.visible = false;
+    return;
+  }
+  hand.visible = true;
+  for (const name of HAND_JOINTS) {
+    const mesh = hand.userData.points[name];
+    const arr = joints[name];
+    if (!mesh) continue;
+    if (!Array.isArray(arr) || arr.length < 3) {
+      mesh.visible = false;
+      continue;
+    }
+    mesh.userData.target.copy(roomToLocal(new THREE.Vector3(arr[0], arr[1], arr[2])));
+    if (!mesh.userData.placed) {
+      mesh.position.copy(mesh.userData.target);
+      mesh.userData.placed = true;
+    }
+    mesh.visible = true;
+  }
+}
+
+function updateHandVisual(hand) {
+  if (!hand || !hand.visible) return;
+  let segs = 0;
+  const pos = hand.userData.linePos;
+  for (const name of HAND_JOINTS) {
+    const mesh = hand.userData.points[name];
+    if (mesh && mesh.visible && mesh.userData.target) mesh.position.lerp(mesh.userData.target, 0.4);
+  }
+  for (const chain of FINGER_CHAINS) {
+    for (let i = 0; i < chain.length - 1; i++) {
+      const a = hand.userData.points[chain[i]];
+      const b = hand.userData.points[chain[i + 1]];
+      if (!a || !b || !a.visible || !b.visible) continue;
+      pos[segs * 6] = a.position.x;
+      pos[segs * 6 + 1] = a.position.y;
+      pos[segs * 6 + 2] = a.position.z;
+      pos[segs * 6 + 3] = b.position.x;
+      pos[segs * 6 + 4] = b.position.y;
+      pos[segs * 6 + 5] = b.position.z;
+      segs++;
+    }
+  }
+  const line = hand.userData.line;
+  line.geometry.attributes.position.needsUpdate = true;
+  line.geometry.setDrawRange(0, segs * 2);
 }
 
 function updateRemoteVisuals() {
@@ -297,6 +401,8 @@ function updateRemoteVisuals() {
     if (obj.userData.target) obj.position.lerp(obj.userData.target, 0.35);
     const tag = obj.children.find(c => c.type === "Group");
     if (tag) tag.lookAt(lookAt);
+    updateHandVisual(obj.userData.leftHand);
+    updateHandVisual(obj.userData.rightHand);
   }
 }
 
@@ -314,6 +420,8 @@ function removeRemote(id) {
   const obj = remotePlayers.get(id);
   if (!obj) return;
   scene.remove(obj);
+  if (obj.userData.leftHand) scene.remove(obj.userData.leftHand);
+  if (obj.userData.rightHand) scene.remove(obj.userData.rightHand);
   remotePlayers.delete(id);
 }
 
@@ -562,10 +670,27 @@ function setupXR() {
     controller.addEventListener("selectend", onSelectEnd);
     controller.addEventListener("squeezestart", onSelectStart);
     controller.addEventListener("squeezeend", onSelectEnd);
+    controller.addEventListener("connected", e => {
+      controller.userData.handedness = e.data.handedness;
+    });
+    controller.addEventListener("disconnected", () => {
+      controller.userData.handedness = null;
+    });
 
     const grip = renderer.xr.getControllerGrip(i);
     scene.add(controller, grip);
     controllers.push(controller);
+
+    const hand = renderer.xr.getHand(i);
+    hand.userData.handedness = null;
+    hand.addEventListener("connected", e => {
+      hand.userData.handedness = e.data.handedness;
+    });
+    hand.addEventListener("disconnected", () => {
+      hand.userData.handedness = null;
+    });
+    scene.add(hand);
+    localHands.push(hand);
   }
 
   // Pointer-like controller rays.
@@ -629,6 +754,41 @@ function getLocalHeadPosition() {
   if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(p);
   else camera.getWorldPosition(p);
   return p;
+}
+
+function compact(n) {
+  return Math.round(n * 1000) / 1000;
+}
+
+function worldToRoomArray(obj) {
+  obj.getWorldPosition(_handPos);
+  const room = localToRoom(_handPos);
+  return [compact(room.x), compact(room.y), compact(room.z)];
+}
+
+function captureHands() {
+  const out = { left: null, right: null };
+  for (const hand of localHands) {
+    const side = hand.userData.handedness;
+    if (side !== "left" && side !== "right") continue;
+    const joints = hand.joints;
+    const wrist = joints && joints.wrist;
+    if (!wrist || (wrist.visible === false)) continue;
+    const packed = {};
+    for (const name of HAND_JOINTS) {
+      const joint = joints[name];
+      if (!joint || joint.visible === false) continue;
+      packed[name] = worldToRoomArray(joint);
+    }
+    if (packed.wrist) out[side] = packed;
+  }
+  for (const c of controllers) {
+    const side = c.userData.handedness;
+    if ((side !== "left" && side !== "right") || out[side]) continue;
+    if (!renderer.xr.isPresenting) continue;
+    out[side] = { wrist: worldToRoomArray(c) };
+  }
+  return out;
 }
 
 // local point -> canonical room point.
@@ -696,9 +856,10 @@ async function publishPlayer(force = false) {
       payload.y = roomHead.y;
       payload.z = roomHead.z;
     }
+    payload.hands = captureHands();
   }
 
-  await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: true });
+  await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: !renderer.xr.isPresenting });
 }
 
 function render() {
