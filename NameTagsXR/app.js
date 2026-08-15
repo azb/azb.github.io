@@ -43,6 +43,61 @@ const HAND_JOINTS = [
   "ring-finger-metacarpal", "ring-finger-phalanx-proximal", "ring-finger-phalanx-intermediate", "ring-finger-phalanx-distal", "ring-finger-tip",
   "pinky-finger-metacarpal", "pinky-finger-phalanx-proximal", "pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal", "pinky-finger-tip"
 ];
+const JOINT_CHILD = {
+  wrist: "middle-finger-metacarpal",
+  "thumb-metacarpal": "thumb-phalanx-proximal",
+  "thumb-phalanx-proximal": "thumb-phalanx-distal",
+  "thumb-phalanx-distal": "thumb-tip",
+  "index-finger-metacarpal": "index-finger-phalanx-proximal",
+  "index-finger-phalanx-proximal": "index-finger-phalanx-intermediate",
+  "index-finger-phalanx-intermediate": "index-finger-phalanx-distal",
+  "index-finger-phalanx-distal": "index-finger-tip",
+  "middle-finger-metacarpal": "middle-finger-phalanx-proximal",
+  "middle-finger-phalanx-proximal": "middle-finger-phalanx-intermediate",
+  "middle-finger-phalanx-intermediate": "middle-finger-phalanx-distal",
+  "middle-finger-phalanx-distal": "middle-finger-tip",
+  "ring-finger-metacarpal": "ring-finger-phalanx-proximal",
+  "ring-finger-phalanx-proximal": "ring-finger-phalanx-intermediate",
+  "ring-finger-phalanx-intermediate": "ring-finger-phalanx-distal",
+  "ring-finger-phalanx-distal": "ring-finger-tip",
+  "pinky-finger-metacarpal": "pinky-finger-phalanx-proximal",
+  "pinky-finger-phalanx-proximal": "pinky-finger-phalanx-intermediate",
+  "pinky-finger-phalanx-intermediate": "pinky-finger-phalanx-distal",
+  "pinky-finger-phalanx-distal": "pinky-finger-tip"
+};
+const REST_JOINT_LOCAL = {
+  wrist: [0, 0, 0],
+  "thumb-metacarpal": [0.021, 0.025, 0.02],
+  "thumb-phalanx-proximal": [0.028, 0.055, 0.032],
+  "thumb-phalanx-distal": [0.03, 0.078, 0.038],
+  "thumb-tip": [0.03, 0.098, 0.04],
+  "index-finger-metacarpal": [0.012, 0.038, 0.008],
+  "index-finger-phalanx-proximal": [0.014, 0.082, 0.01],
+  "index-finger-phalanx-intermediate": [0.014, 0.108, 0.01],
+  "index-finger-phalanx-distal": [0.014, 0.126, 0.01],
+  "index-finger-tip": [0.014, 0.142, 0.01],
+  "middle-finger-metacarpal": [0.002, 0.04, 0.002],
+  "middle-finger-phalanx-proximal": [0.002, 0.088, 0.004],
+  "middle-finger-phalanx-intermediate": [0.002, 0.118, 0.004],
+  "middle-finger-phalanx-distal": [0.002, 0.138, 0.004],
+  "middle-finger-tip": [0.002, 0.155, 0.004],
+  "ring-finger-metacarpal": [-0.008, 0.036, 0],
+  "ring-finger-phalanx-proximal": [-0.01, 0.08, 0],
+  "ring-finger-phalanx-intermediate": [-0.01, 0.106, 0],
+  "ring-finger-phalanx-distal": [-0.01, 0.124, 0],
+  "ring-finger-tip": [-0.01, 0.14, 0],
+  "pinky-finger-metacarpal": [-0.018, 0.03, -0.004],
+  "pinky-finger-phalanx-proximal": [-0.022, 0.068, -0.004],
+  "pinky-finger-phalanx-intermediate": [-0.024, 0.09, -0.004],
+  "pinky-finger-phalanx-distal": [-0.024, 0.106, -0.004],
+  "pinky-finger-tip": [-0.024, 0.12, -0.004]
+};
+const _restX = new THREE.Vector3();
+const _restY = new THREE.Vector3();
+const _restZ = new THREE.Vector3();
+const _restPos = new THREE.Vector3();
+const _basis = new THREE.Matrix4();
+const _headEuler = new THREE.Euler();
 const RTC_CONFIG = {
   iceCandidatePoolSize: 4,
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }]
@@ -451,10 +506,11 @@ function updateRemotePlayer(id, p) {
     obj.userData.placed = true;
   }
   obj.userData.tracking = !!p.presenting;
-  obj.userData.hands = p.presenting ? p.hands || null : null;
+  const hands = p.presenting ? restHandsForPlayer(p) : null;
+  obj.userData.hands = hands;
   obj.visible = true;
-  applyHandJoints(obj.userData.leftHand, obj.userData.hands && obj.userData.hands.left);
-  applyHandJoints(obj.userData.rightHand, obj.userData.hands && obj.userData.hands.right);
+  applyHandJoints(obj.userData.leftHand, hands && hands.left);
+  applyHandJoints(obj.userData.rightHand, hands && hands.right);
 }
 
 function packedJoints(data) {
@@ -1272,11 +1328,98 @@ function updateGrab() {
   }
 }
 
-function getLocalHeadPosition() {
-  const p = new THREE.Vector3();
-  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(p);
-  else camera.getWorldPosition(p);
-  return p;
+function getLocalHeadYaw() {
+  const q = new THREE.Quaternion();
+  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldQuaternion(q);
+  else camera.getWorldQuaternion(q);
+  _headEuler.setFromQuaternion(q, "YXZ");
+  return _headEuler.y;
+}
+
+function localYawToRoom(yaw) {
+  return calibration ? yaw + calibration.yaw : yaw;
+}
+
+function packRoomPose(pos, quat) {
+  return [
+    compact(pos.x), compact(pos.y), compact(pos.z),
+    compact4(quat.x), compact4(quat.y), compact4(quat.z), compact4(quat.w)
+  ];
+}
+
+function hasHandData(data) {
+  if (!data) return false;
+  if (Array.isArray(data) && data.length >= 3) return true;
+  if (typeof data !== "object") return false;
+  for (const name of HAND_JOINTS) {
+    if (Array.isArray(data[name]) && data[name].length >= 3) return true;
+  }
+  return false;
+}
+
+function makeRestHand(head, yaw, side) {
+  const sign = side === "left" ? -1 : 1;
+  const wristPos = new THREE.Vector3(sign * 0.23, -0.7, 0.06).applyAxisAngle(_yAxis, yaw).add(head);
+  _restY.set(0, -1, 0);
+  _restZ.set(sign, 0, 0).applyAxisAngle(_yAxis, yaw);
+  _restX.crossVectors(_restY, _restZ).normalize();
+  _restZ.crossVectors(_restX, _restY).normalize();
+  const palmBack = _restZ.clone();
+  const wristQuat = new THREE.Quaternion().setFromRotationMatrix(_basis.makeBasis(_restX, _restY, _restZ));
+
+  const positions = {};
+  for (const name of HAND_JOINTS) {
+    const off = REST_JOINT_LOCAL[name] || [0, 0, 0];
+    _restPos.set(sign * off[0], off[1], off[2]).applyQuaternion(wristQuat).add(wristPos);
+    positions[name] = _restPos.clone();
+  }
+
+  const packed = {};
+  const q = new THREE.Quaternion();
+  for (const name of HAND_JOINTS) {
+    const from = positions[name];
+    const child = JOINT_CHILD[name];
+    const to = child && positions[child];
+    if (to) {
+      _restY.copy(to).sub(from);
+      if (_restY.lengthSq() > 1e-8) {
+        _restY.normalize();
+        _restX.crossVectors(_restY, palmBack);
+        if (_restX.lengthSq() > 1e-8) {
+          _restX.normalize();
+          _restZ.crossVectors(_restX, _restY).normalize();
+          q.setFromRotationMatrix(_basis.makeBasis(_restX, _restY, _restZ));
+        } else {
+          q.copy(wristQuat);
+        }
+      } else {
+        q.copy(wristQuat);
+      }
+    } else {
+      q.copy(wristQuat);
+    }
+    packed[name] = packRoomPose(from, q);
+  }
+  return packed;
+}
+
+function restHandsForPlayer(p) {
+  const head = new THREE.Vector3(p.x, p.y, p.z);
+  const yaw = typeof p.yaw === "number" ? p.yaw : 0;
+  const src = p.hands || {};
+  return {
+    left: hasHandData(src.left) ? src.left : makeRestHand(head, yaw, "left"),
+    right: hasHandData(src.right) ? src.right : makeRestHand(head, yaw, "right")
+  };
+}
+
+function fillRestHands(out) {
+  if (hasHandData(out.left) && hasHandData(out.right)) return out;
+  const head = localToRoom(getLocalHeadPosition());
+  const yaw = localYawToRoom(getLocalHeadYaw());
+  if (!hasHandData(out.left)) out.left = makeRestHand(head, yaw, "left");
+  if (!hasHandData(out.right)) out.right = makeRestHand(head, yaw, "right");
+  return out;
 }
 
 function compact(n) {
@@ -1338,7 +1481,8 @@ function captureHands(frame) {
         unnamed++;
       }
       if (source.hand) {
-        out[side] = captureHandJoints(source.hand, frame, refSpace);
+        const joints = captureHandJoints(source.hand, frame, refSpace);
+        if (joints) out[side] = joints;
         continue;
       }
       const space = source.gripSpace || source.targetRaySpace;
@@ -1349,19 +1493,18 @@ function captureHands(frame) {
       const o = pose.transform.orientation;
       out[side] = { wrist: packPose(p.x, p.y, p.z, o.x, o.y, o.z, o.w) };
     }
-    if (out.left || out.right) return out;
   }
 
   for (const hand of localHands) {
     const side = hand.userData.handedness;
-    if (side !== "left" && side !== "right") continue;
+    if ((side !== "left" && side !== "right") || hasHandData(out[side])) continue;
     const joints = hand.joints;
     if (!joints) continue;
     const packed = {};
     let any = false;
     for (const name of HAND_JOINTS) {
       const joint = joints[name];
-      if (!joint) continue;
+      if (!joint || !joint.visible) continue;
       packed[name] = worldToRoomPose(joint);
       any = true;
     }
@@ -1369,10 +1512,10 @@ function captureHands(frame) {
   }
   for (const c of controllers) {
     const side = c.userData.handedness;
-    if ((side !== "left" && side !== "right") || out[side]) continue;
+    if ((side !== "left" && side !== "right") || hasHandData(out[side])) continue;
     out[side] = { wrist: worldToRoomPose(c) };
   }
-  return out;
+  return fillRestHands(out);
 }
 
 // local point -> canonical room point.
@@ -1477,6 +1620,7 @@ async function publishPlayer(force = false) {
       payload.x = roomHead.x;
       payload.y = roomHead.y;
       payload.z = roomHead.z;
+      payload.yaw = compact(localYawToRoom(getLocalHeadYaw()));
     }
     payload.hands = captureHands(lastXRFrame);
   }
