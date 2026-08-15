@@ -81,7 +81,46 @@ const roomLabel = document.getElementById("roomLabel");
 const playerListEl = document.getElementById("playerList");
 
 let arButton = null;
-let tryEnterAR = async () => {};
+let currentXRSession = null;
+let xrSupportedMode = null;
+let xrConfigured = false;
+
+(async function detectXRSupport() {
+  if (!navigator.xr) return;
+  if (await navigator.xr.isSessionSupported("immersive-ar").catch(() => false)) {
+    xrSupportedMode = "immersive-ar";
+  } else if (await navigator.xr.isSessionSupported("immersive-vr").catch(() => false)) {
+    xrSupportedMode = "immersive-vr";
+  }
+})();
+
+function beginXRSessionFromGesture() {
+  if (!navigator.xr || currentXRSession) return Promise.resolve(null);
+  const overlay = document.getElementById("overlay");
+  const arInits = [
+    { optionalFeatures: ["local-floor", "unbounded", "hand-tracking", "dom-overlay"], domOverlay: { root: overlay } },
+    { optionalFeatures: ["local-floor", "unbounded", "hand-tracking"] },
+    {}
+  ];
+  const vrInits = [
+    { optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"] },
+    {}
+  ];
+  const tries = [];
+  if (xrSupportedMode !== "immersive-vr") {
+    for (const init of arInits) tries.push(["immersive-ar", init]);
+  }
+  if (xrSupportedMode !== "immersive-ar") {
+    for (const init of vrInits) tries.push(["immersive-vr", init]);
+  }
+  if (!tries.length) return Promise.resolve(null);
+  let chain = navigator.xr.requestSession(tries[0][0], tries[0][1]);
+  for (let i = 1; i < tries.length; i++) {
+    const [mode, init] = tries[i];
+    chain = chain.catch(() => navigator.xr.requestSession(mode, init));
+  }
+  return chain.catch(() => null);
+}
 
 const startButton = document.getElementById("start");
 startButton.onclick = start;
@@ -289,7 +328,7 @@ function describePlayers(snap) {
   if (!others.length) {
     playerListEl.textContent = renderer.xr.isPresenting
       ? "Broadcasting your pose · no other players yet."
-      : "No other players yet. On another XR device, enter the room and start AR, then walk.";
+      : "No other players yet. On another XR device, enter the room, then walk.";
     return;
   }
   playerListEl.textContent = others.join(" · ");
@@ -330,6 +369,13 @@ async function start() {
   playerName = document.getElementById("name").value.trim() || "Player";
   roomId = document.getElementById("room").value.trim() || "demo-room";
 
+  const xrPromise = beginXRSessionFromGesture();
+  setupXR();
+  const xrAttach = xrPromise.then(session => session && enterXRSession(session)).catch(err => {
+    console.warn(err);
+    return null;
+  });
+
   try {
     startFirebase(firebaseConfig);
     const cred = await signInAnonymously(auth);
@@ -363,14 +409,20 @@ async function start() {
     hud.classList.remove("hidden");
     roomLabel.textContent = `Room: ${roomId}`;
     sessionStarted = true;
-    statusEl.textContent = "Connected · start AR to broadcast walking";
+    statusEl.textContent = "Connected";
     pruneTimer = setInterval(() => pruneStalePlayers(), HEARTBEAT_MS);
     await publishPlayer(true);
-
-    setupXR();
-    await tryEnterAR();
+    await xrAttach;
+    if (renderer.xr.isPresenting) {
+      statusEl.textContent = "Tracking pose · walking should appear on other devices";
+    } else if (xrSupportedMode) {
+      statusEl.textContent = "Connected · tap START XR to enter the headset session";
+    } else {
+      statusEl.textContent = "Connected · start XR on a headset to broadcast walking";
+    }
   } catch (e) {
     console.error(e);
+    if (currentXRSession) currentXRSession.end();
     setupError.textContent = firebaseErrorMessage(e);
     startButton.disabled = false;
     startButton.textContent = "Enter Room";
@@ -391,110 +443,76 @@ function setPassthrough(on) {
   }
 }
 
+function applySessionAppearance(session) {
+  const blend = session && session.environmentBlendMode;
+  setPassthrough(blend === "alpha-blend" || blend === "additive");
+}
+
+async function enterXRSession(session) {
+  if (!session || currentXRSession) return;
+  session.addEventListener("end", onXRSessionEnded);
+  let lastErr;
+  for (const space of ["local-floor", "unbounded", "local"]) {
+    renderer.xr.setReferenceSpaceType(space);
+    try {
+      await renderer.xr.setSession(session);
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (lastErr) throw lastErr;
+  currentXRSession = session;
+  applySessionAppearance(session);
+  if (arButton) arButton.textContent = "STOP XR";
+  controls.enabled = false;
+  statusEl.textContent = "Tracking pose · walking should appear on other devices";
+  publishPlayer(true).catch(console.error);
+}
+
+function onXRSessionEnded() {
+  currentXRSession = null;
+  if (arButton) arButton.textContent = xrSupportedMode ? "START XR" : "XR NOT SUPPORTED";
+  controls.enabled = true;
+  setPassthrough(false);
+  statusEl.textContent = "XR stopped · pose is no longer broadcasting";
+  if (uid && roomId && db) {
+    setDoc(doc(db, "rooms", roomId, "players", uid), { presenting: false }, { merge: true }).catch(() => {});
+  }
+}
+
 function setupXR() {
+  if (xrConfigured) return;
+  xrConfigured = true;
+
   const overlay = document.getElementById("overlay");
   arButton = document.createElement("button");
   arButton.id = "ARButton";
-  arButton.textContent = "START AR";
+  arButton.textContent = "START XR";
   overlay.appendChild(arButton);
 
-  const sessionAttempts = [
-    {
-      optionalFeatures: ["local-floor", "unbounded", "hand-tracking", "dom-overlay"],
-      domOverlay: { root: overlay }
-    },
-    { optionalFeatures: ["local-floor", "unbounded", "hand-tracking"] },
-    { optionalFeatures: ["hand-tracking"] },
-    {}
-  ];
-
-  let currentSession = null;
-
-  async function bindSession(session) {
-    session.addEventListener("end", onSessionEnded);
-    let lastErr;
-    for (const space of ["local-floor", "unbounded", "local"]) {
-      renderer.xr.setReferenceSpaceType(space);
-      try {
-        await renderer.xr.setSession(session);
-        return;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    throw lastErr || new Error("No XR reference space");
-  }
-
-  async function onSessionStarted(session) {
-    await bindSession(session);
-    arButton.textContent = "STOP AR";
-    currentSession = session;
-    controls.enabled = false;
-    statusEl.textContent = "Tracking pose · walking should appear on other devices";
-    publishPlayer(true).catch(console.error);
-  }
-
-  function onSessionEnded() {
-    currentSession = null;
-    arButton.textContent = "START AR";
-    controls.enabled = true;
-    statusEl.textContent = "AR stopped · pose is no longer broadcasting";
-    if (uid && roomId && db) {
-      setDoc(doc(db, "rooms", roomId, "players", uid), { presenting: false }, { merge: true }).catch(() => {});
-    }
-  }
-
-  tryEnterAR = async () => {
-    if (!navigator.xr || currentSession) return;
-    const supported = await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
-    if (!supported) return;
-    let lastErr;
-    for (const sessionInit of sessionAttempts) {
-      try {
-        const session = await navigator.xr.requestSession("immersive-ar", sessionInit);
-        await onSessionStarted(session);
-        return;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    if (lastErr) console.warn("AR session not started", lastErr);
-  };
-
   arButton.onclick = async () => {
-    if (currentSession) {
-      currentSession.end();
+    if (currentXRSession) {
+      currentXRSession.end();
       return;
     }
     try {
-      await tryEnterAR();
-      if (!renderer.xr.isPresenting) {
-        statusEl.textContent = "Could not start AR on this device";
-      }
+      const session = await beginXRSessionFromGesture();
+      if (session) await enterXRSession(session);
+      else statusEl.textContent = "Could not start XR on this device";
     } catch (err) {
       console.error(err);
-      statusEl.textContent = err.message || "Failed to start AR";
+      statusEl.textContent = err.message || "Failed to start XR";
     }
   };
 
   if (!navigator.xr) {
-    arButton.textContent = "AR NOT SUPPORTED";
+    arButton.textContent = "XR NOT SUPPORTED";
     arButton.disabled = true;
     document.getElementById("desktopHint").classList.remove("hidden");
-  } else {
-    navigator.xr.isSessionSupported("immersive-ar").then(supported => {
-      if (!supported) {
-        arButton.textContent = "AR NOT SUPPORTED";
-        arButton.disabled = true;
-        document.getElementById("desktopHint").classList.remove("hidden");
-      }
-    }).catch(() => {
-      arButton.textContent = "AR NOT ALLOWED";
-      arButton.disabled = true;
-    });
   }
 
-  renderer.xr.addEventListener("sessionstart", () => setPassthrough(true));
   renderer.xr.addEventListener("sessionend", () => {
     setPassthrough(false);
     controls.enabled = true;
