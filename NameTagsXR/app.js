@@ -34,7 +34,7 @@ const POSE_MS = 80;
 const HEARTBEAT_MS = 2000;
 const STALE_MS = 8000;
 const CLOUD_HEARTBEAT_MS = 20000;
-const CLOUD_POSE_MS = 1500;
+const CLOUD_POSE_MS = 400;
 const CLOUD_STALE_MS = 45000;
 const HAND_JOINTS = [
   "wrist",
@@ -114,6 +114,7 @@ const outgoingAnswers = {};
 const outgoingIce = {};
 let icePublishTimer = null;
 let lastPoseFallbackSend = 0;
+let lastHandsPayload = null;
 const localHands = [];
 const _handPos = new THREE.Vector3();
 const _handQuat = new THREE.Quaternion();
@@ -920,7 +921,8 @@ async function publishPresence(force = false) {
     ice: outgoingIce
   };
   fillHeadPose(data);
-  await setDoc(doc(db, "rooms", roomId, "players", uid), data);
+  if (renderer.xr.isPresenting && lastHandsPayload) data.hands = lastHandsPayload;
+  await setDoc(doc(db, "rooms", roomId, "players", uid), data, { merge: true });
 }
 
 async function publishCloudPoseFallback() {
@@ -930,6 +932,7 @@ async function publishCloudPoseFallback() {
   if (now - lastPoseFallbackSend < CLOUD_POSE_MS) return;
   const data = { presenting: true, updatedAt: serverTimestamp() };
   if (!fillHeadPose(data)) return;
+  data.hands = lastHandsPayload || captureHands(lastXRFrame);
   lastPoseFallbackSend = now;
   await setDoc(doc(db, "rooms", roomId, "players", uid), data, { merge: true });
 }
@@ -1608,6 +1611,23 @@ function captureHandJoints(hand, frame, refSpace) {
 function captureHands(frame) {
   const out = { left: null, right: null };
   if (!renderer.xr.isPresenting) return out;
+
+  for (const hand of localHands) {
+    const side = hand.userData.handedness;
+    if (side !== "left" && side !== "right") continue;
+    const joints = hand.joints;
+    if (!joints) continue;
+    const packed = {};
+    let any = false;
+    for (const name of HAND_JOINTS) {
+      const joint = joints[name];
+      if (!joint || !joint.visible) continue;
+      packed[name] = worldToRoomPose(joint);
+      any = true;
+    }
+    if (any) out[side] = packed;
+  }
+
   const session = renderer.xr.getSession();
   const refSpace = renderer.xr.getReferenceSpace();
   if (session && refSpace && frame) {
@@ -1618,6 +1638,7 @@ function captureHands(frame) {
         side = unnamed === 0 ? "left" : "right";
         unnamed++;
       }
+      if (hasHandData(out[side])) continue;
       if (source.hand) {
         const joints = captureHandJoints(source.hand, frame, refSpace);
         if (joints) out[side] = joints;
@@ -1633,21 +1654,6 @@ function captureHands(frame) {
     }
   }
 
-  for (const hand of localHands) {
-    const side = hand.userData.handedness;
-    if ((side !== "left" && side !== "right") || hasHandData(out[side])) continue;
-    const joints = hand.joints;
-    if (!joints) continue;
-    const packed = {};
-    let any = false;
-    for (const name of HAND_JOINTS) {
-      const joint = joints[name];
-      if (!joint || !joint.visible) continue;
-      packed[name] = worldToRoomPose(joint);
-      any = true;
-    }
-    if (any) out[side] = packed;
-  }
   for (const c of controllers) {
     const side = c.userData.handedness;
     if ((side !== "left" && side !== "right") || hasHandData(out[side])) continue;
@@ -1753,9 +1759,10 @@ async function publishPlayer(force = false) {
     updatedAt: Date.now()
   };
 
-  if (renderer.xr.isPresenting && (syncing || connectionMode === "cloud")) {
+  if (renderer.xr.isPresenting) {
     fillHeadPose(payload);
-    if (syncing) payload.hands = captureHands(lastXRFrame);
+    lastHandsPayload = captureHands(lastXRFrame);
+    payload.hands = lastHandsPayload;
   }
 
   if (connectionMode === "local") {
