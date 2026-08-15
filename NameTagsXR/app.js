@@ -95,6 +95,7 @@ const remotePlayers = new Map();
 
 const setup = document.getElementById("setup");
 const hud = document.getElementById("hud");
+const hudToggle = document.getElementById("hudToggle");
 const statusEl = document.getElementById("status");
 const setupError = document.getElementById("setupError");
 const roomLabel = document.getElementById("roomLabel");
@@ -177,6 +178,13 @@ function persistNamePreference() {
 
 restoreSavedName();
 rememberName.addEventListener("change", persistNamePreference);
+
+hudToggle.onclick = () => {
+  const minimized = hud.classList.toggle("minimized");
+  hudToggle.textContent = minimized ? "+" : "−";
+  hudToggle.setAttribute("aria-label", minimized ? "Expand info" : "Minimize info");
+  hudToggle.title = minimized ? "Expand" : "Minimize";
+};
 
 const startButton = document.getElementById("start");
 startButton.onclick = start;

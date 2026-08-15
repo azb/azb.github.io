@@ -97,6 +97,36 @@ button.primary-xl {
 .red { color: #ff4040; }
 .blue { color: #4090ff; }
 #desktopHint { bottom: 16px; top: auto; }
+#hud {
+  padding-top: 18px;
+  padding-right: 56px;
+}
+#hud.minimized {
+  padding: 8px;
+  width: auto;
+  max-width: none;
+}
+#hud.minimized #hudBody {
+  display: none;
+}
+#hud.minimized #hudToggle {
+  position: static;
+  margin: 0;
+}
+.icon-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 28px;
+  line-height: 1;
+  background: #444;
+  color: #fff;
+}
 #ARButton {
   position: fixed;
   right: 16px;
