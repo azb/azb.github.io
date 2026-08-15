@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.error
+import urllib.request
 import uuid
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +27,9 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CERT_PATH = os.path.join(ROOT, "lan-cert.pem")
 KEY_PATH = os.path.join(ROOT, "lan-key.pem")
 IP_META = os.path.join(ROOT, "lan-ip.txt")
+CDN_CACHE = os.path.join(ROOT, "vendor-cdn")
+THREE_CDN = "https://cdn.jsdelivr.net/npm/three@0.180.0"
+THREE_LOCAL = "/cdn/three"
 WS_MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 rooms_lock = threading.Lock()
@@ -288,6 +293,14 @@ class LanHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def guess_type(self, path):
+        lowered = path.lower()
+        if lowered.endswith(".js") or lowered.endswith(".mjs"):
+            return "text/javascript"
+        if lowered.endswith(".wasm"):
+            return "application/wasm"
+        return SimpleHTTPRequestHandler.guess_type(self, path)
+
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
         if path == "/__lan":
@@ -296,7 +309,64 @@ class LanHandler(SimpleHTTPRequestHandler):
         if path == "/ws":
             self._websocket()
             return
+        if path == "/" or path == "/index.html":
+            self._serve_index()
+            return
+        if path.startswith(THREE_LOCAL + "/"):
+            self._proxy_three(path[len(THREE_LOCAL) + 1 :])
+            return
         super().do_GET()
+
+    def _serve_index(self) -> None:
+        index_path = os.path.join(ROOT, "index.html")
+        with open(index_path, encoding="utf-8") as fh:
+            html = fh.read()
+        html = html.replace(
+            f"{THREE_CDN}/build/three.module.js",
+            f"{THREE_LOCAL}/build/three.module.js",
+        )
+        html = html.replace(
+            f"{THREE_CDN}/examples/jsm/",
+            f"{THREE_LOCAL}/examples/jsm/",
+        )
+        raw = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _proxy_three(self, rel: str) -> None:
+        rel = rel.lstrip("/")
+        if not rel or ".." in rel.split("/"):
+            self.send_error(400, "Bad path")
+            return
+        os.makedirs(CDN_CACHE, exist_ok=True)
+        cache_path = os.path.join(CDN_CACHE, rel.replace("/", os.sep))
+        data = None
+        if os.path.isfile(cache_path):
+            with open(cache_path, "rb") as fh:
+                data = fh.read()
+        else:
+            url = f"{THREE_CDN}/{rel}"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "NameTagsXR"})
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    data = resp.read()
+            except (urllib.error.URLError, TimeoutError, OSError) as err:
+                self.send_error(502, f"Could not fetch {rel}: {err}")
+                return
+            os.makedirs(os.path.dirname(cache_path) or CDN_CACHE, exist_ok=True)
+            with open(cache_path, "wb") as fh:
+                fh.write(data)
+        ctype = "text/javascript" if rel.endswith(".js") else "application/octet-stream"
+        if rel.endswith(".css"):
+            ctype = "text/css"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _websocket(self) -> None:
         if (self.headers.get("Upgrade") or "").lower() != "websocket":
@@ -356,23 +426,28 @@ class LanHandler(SimpleHTTPRequestHandler):
                 pass
 
 
-class RedirectHandler(SimpleHTTPRequestHandler):
-    def do_GET(self) -> None:
-        host = (self.headers.get("Host") or lan_ip).split(":")[0] or lan_ip
-        loc = f"https://{host}:{HTTPS_PORT}{self.path}"
-        self.send_response(301)
-        self.send_header("Location", loc)
-        self.end_headers()
-
-    def log_message(self, fmt: str, *args) -> None:
-        pass
-
-
 def serve(httpd: ThreadingHTTPServer) -> None:
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+
+
+def print_urls() -> None:
+    print()
+    print("NameTagsXR local network")
+    print(f"  This PC:              http://localhost:{HTTP_PORT}/")
+    print(f"  Headset over USB:     http://127.0.0.1:{HTTP_PORT}/")
+    print("    1. Enable USB debugging on the headset")
+    print("    2. Run start-quest.bat  (or: adb reverse tcp:8080 tcp:8080)")
+    print("    3. Open the USB URL in the headset browser")
+    print(f"  Other devices Wi-Fi:  http://{lan_ip}:{HTTP_PORT}/")
+    if using_https:
+        print(f"                        https://{lan_ip}:{HTTPS_PORT}/")
+        print("    Self-signed HTTPS often blocks headset XR. USB localhost is more reliable.")
+    print("  Choose Local network, then Enter Room.")
+    print("  Press Ctrl+C to stop.")
+    print()
 
 
 def main() -> None:
@@ -386,44 +461,26 @@ def main() -> None:
     lan_ip = lan_address()
     using_https = generate_cert(lan_ip)
 
-    if using_https:
-        httpd = ThreadingHTTPServer(("0.0.0.0", HTTPS_PORT), LanHandler)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(CERT_PATH, KEY_PATH)
-        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
-        try:
-            redirect = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), RedirectHandler)
-            threading.Thread(target=serve, args=(redirect,), daemon=True).start()
-        except OSError:
-            print(f"(Could not bind HTTP redirect on port {HTTP_PORT})")
-        local_url = f"https://localhost:{HTTPS_PORT}/"
-        lan_url = f"https://{lan_ip}:{HTTPS_PORT}/"
-        print()
-        print("NameTagsXR local network")
-        print(f"  This PC:        {local_url}")
-        print(f"  Other devices:  {lan_url}")
-        print("  Accept the certificate warning once on each device.")
-        print("  Choose Local network, then Enter Room.")
-        print("  Press Ctrl+C to stop.")
-        print()
-        threading.Thread(target=lambda: webbrowser.open(local_url), daemon=True).start()
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nServer stopped.")
-        return
+    try:
+        httpd = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), LanHandler)
+    except OSError as err:
+        print(f"Could not bind HTTP on port {HTTP_PORT}: {err}")
+        sys.exit(1)
 
-    httpd = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), LanHandler)
-    local_url = f"http://localhost:{HTTP_PORT}/"
-    lan_url = f"http://{lan_ip}:{HTTP_PORT}/"
-    print()
-    print("NameTagsXR local network (HTTP only — no openssl, so no HTTPS)")
-    print(f"  This PC:        {local_url}")
-    print(f"  Other devices:  {lan_url}")
-    print("  XR headsets need HTTPS. Install Git for Windows (includes openssl) and re-run.")
-    print("  Press Ctrl+C to stop.")
-    print()
-    threading.Thread(target=lambda: webbrowser.open(local_url), daemon=True).start()
+    if using_https:
+        try:
+            httpsd = ThreadingHTTPServer(("0.0.0.0", HTTPS_PORT), LanHandler)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.load_cert_chain(CERT_PATH, KEY_PATH)
+            httpsd.socket = ctx.wrap_socket(httpsd.socket, server_side=True)
+            threading.Thread(target=serve, args=(httpsd,), daemon=True).start()
+        except OSError as err:
+            using_https = False
+            print(f"HTTPS unavailable on {HTTPS_PORT}: {err}")
+
+    print_urls()
+    threading.Thread(target=lambda: webbrowser.open(f"http://localhost:{HTTP_PORT}/"), daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

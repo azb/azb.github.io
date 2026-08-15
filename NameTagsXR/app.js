@@ -1,12 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
-import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-import { initializeAuth, getAuth, inMemoryPersistence, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
-import {
-  getFirestore, doc, setDoc, onSnapshot, collection, serverTimestamp,
-  deleteDoc
-} from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
+let initializeApp, getApps, getApp;
+let initializeAuth, getAuth, inMemoryPersistence, signInAnonymously;
+let getFirestore, doc, setDoc, onSnapshot, collection, serverTimestamp, deleteDoc;
 
 const firebaseConfig = {
   apiKey: "AIzaSyD9wx0VS7oZLUqB4v5-XEBHGVHom4f7dZM",
@@ -27,12 +26,23 @@ let localPeerMap = {};
 let calibrated = false;
 let calibration = null;
 let lastNetworkSend = 0;
+let lastPresenceSend = 0;
 let sessionStarted = false;
 let pruneTimer = null;
 let otherPlayerCount = 0;
 const POSE_MS = 80;
 const HEARTBEAT_MS = 2000;
 const STALE_MS = 8000;
+const CLOUD_HEARTBEAT_MS = 20000;
+const CLOUD_STALE_MS = 45000;
+const RTC_CONFIG = {
+  iceCandidatePoolSize: 4,
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }]
+};
+const rtcPeers = new Map();
+const cloudPresence = new Map();
+const outgoingOffers = {};
+const outgoingAnswers = {};
 const localHands = [];
 const _handPos = new THREE.Vector3();
 const handModelFactory = new XRHandModelFactory();
@@ -119,28 +129,38 @@ let xrDetectDone = false;
   }
 })();
 
-function beginXRSessionFromGesture() {
-  if (!navigator.xr || currentXRSession || !xrSupportedMode) return Promise.resolve(null);
+function xrInitsFor(mode) {
   const overlay = document.getElementById("overlay");
-  const mode = xrSupportedMode;
-  const inits = mode === "immersive-ar"
-    ? [
+  if (mode === "immersive-ar") {
+    return [
       { optionalFeatures: ["local-floor", "unbounded", "hand-tracking", "dom-overlay"], domOverlay: { root: overlay } },
       { optionalFeatures: ["local-floor", "unbounded", "hand-tracking"] },
       { optionalFeatures: ["hand-tracking"] },
       {}
-    ]
-    : [
-      { optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"] },
-      { optionalFeatures: ["hand-tracking"] },
-      {}
     ];
+  }
+  return [
+    { optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"] },
+    { optionalFeatures: ["hand-tracking"] },
+    {}
+  ];
+}
+
+function requestXRMode(mode) {
+  const inits = xrInitsFor(mode);
   let chain = navigator.xr.requestSession(mode, inits[0]);
   for (let i = 1; i < inits.length; i++) {
     const init = inits[i];
     chain = chain.catch(() => navigator.xr.requestSession(mode, init));
   }
   return chain.catch(() => null);
+}
+
+function beginXRSessionFromGesture() {
+  if (!navigator.xr || currentXRSession) return Promise.resolve(null);
+  const first = xrSupportedMode || "immersive-vr";
+  const second = first === "immersive-ar" ? "immersive-vr" : null;
+  return requestXRMode(first).then(session => session || (second ? requestXRMode(second) : null));
 }
 
 const NAME_STORE = "nametagsxr.playerName";
@@ -191,17 +211,19 @@ function updateConnectionHint() {
   connectionMode = selectedConnection();
   writeStore(CONN_STORE, connectionMode);
   if (connectionMode !== "local") {
-    localHint.classList.add("hidden");
-    localHint.textContent = "";
+    localHint.classList.remove("hidden");
+    localHint.textContent = "No PC needed. Open this same HTTPS site on each headset. Tracking goes headset-to-headset; Firebase is only used to join, so it should stay within free limits.";
     startButton.disabled = false;
     return;
   }
   localHint.classList.remove("hidden");
   if (lanReady) {
-    localHint.textContent = "This page is served on your Wi-Fi. Open this same URL on every device and use the same Room ID.";
+    localHint.textContent = window.isSecureContext
+      ? "This page is served on your Wi-Fi. Open this same URL on every device and use the same Room ID."
+      : "This page is not a secure origin, so the headset session will not start. On a USB-connected headset run start-quest.bat and open http://127.0.0.1:8080/ — or add this origin in chrome://flags/#unsafely-treat-insecure-origin-as-secure";
     startButton.disabled = false;
   } else {
-    localHint.textContent = "On a computer on this Wi-Fi, run python server.py (or start-server.bat) in the NameTagsXR folder, then open the HTTPS address it prints on every device — not the GitHub Pages site.";
+    localHint.textContent = "On a computer on this Wi-Fi, run start-server.bat (or start-quest.bat with a USB headset). Open the address it prints on every device — not the GitHub Pages site.";
     startButton.disabled = true;
   }
 }
@@ -225,6 +247,9 @@ async function probeLanServer() {
   const radio = document.querySelector(`input[name="conn"][value="${connectionMode}"]`);
   if (radio) radio.checked = true;
   updateConnectionHint();
+  if (!window.isSecureContext) {
+    setupError.textContent = "Not a secure origin — headset XR will not start. Plug in USB, run start-quest.bat, and open http://127.0.0.1:8080/ in the headset browser.";
+  }
 })();
 
 connRadios.forEach(radio => radio.addEventListener("change", updateConnectionHint));
@@ -471,7 +496,8 @@ function playerUpdatedAt(p) {
 
 function isPlayerStale(p) {
   const t = playerUpdatedAt(p);
-  return t > 0 && Date.now() - t > STALE_MS;
+  const limit = connectionMode === "cloud" ? CLOUD_STALE_MS : STALE_MS;
+  return t > 0 && Date.now() - t > limit;
 }
 
 function removeRemote(id) {
@@ -490,7 +516,7 @@ function pruneStalePlayers(snap) {
       if (d.id === uid) return;
       if (isPlayerStale(d.data())) staleIds.push(d.id);
     });
-  } else {
+  } else if (connectionMode !== "cloud") {
     const now = Date.now();
     for (const [id, obj] of remotePlayers) {
       if (now - (obj.userData.lastSeen || 0) > STALE_MS) staleIds.push(id);
@@ -498,6 +524,8 @@ function pruneStalePlayers(snap) {
   }
   for (const id of staleIds) {
     removeRemote(id);
+    closeRtcPeer(id);
+    cloudPresence.delete(id);
     if (connectionMode === "cloud" && db && roomId) {
       deleteDoc(doc(db, "rooms", roomId, "players", id)).catch(() => {});
     }
@@ -515,6 +543,187 @@ function closeLocalSocket() {
   localWs = null;
 }
 
+function waitIceGathering(pc) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise(resolve => {
+    const t = setTimeout(resolve, 3000);
+    const onChange = () => {
+      if (pc.iceGatheringState !== "complete") return;
+      pc.removeEventListener("icegatheringstatechange", onChange);
+      clearTimeout(t);
+      resolve();
+    };
+    pc.addEventListener("icegatheringstatechange", onChange);
+  });
+}
+
+function rtcOpenCount() {
+  let n = 0;
+  for (const peer of rtcPeers.values()) {
+    if (peer.channel && peer.channel.readyState === "open") n++;
+  }
+  return n;
+}
+
+function rtcBroadcast(payload) {
+  const msg = JSON.stringify({ type: "state", data: payload });
+  for (const peer of rtcPeers.values()) {
+    if (peer.channel && peer.channel.readyState === "open") {
+      try { peer.channel.send(msg); } catch {}
+    }
+  }
+}
+
+function bindRtcChannel(remoteId, channel) {
+  const peer = rtcPeers.get(remoteId);
+  if (!peer) return;
+  peer.channel = channel;
+  channel.onmessage = ev => {
+    let msg;
+    try { msg = JSON.parse(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data)); } catch { return; }
+    if (!msg || msg.type !== "state" || !msg.data) return;
+    updateRemotePlayer(remoteId, msg.data);
+    const obj = remotePlayers.get(remoteId);
+    if (obj) obj.userData.lastSeen = Date.now();
+    describeCloudPlayers();
+  };
+  channel.onopen = () => {
+    delete outgoingOffers[remoteId];
+    delete outgoingAnswers[remoteId];
+    publishPresence(true).catch(() => {});
+    publishPlayer(true).catch(() => {});
+    describeCloudPlayers();
+    if (renderer.xr.isPresenting) {
+      statusEl.textContent = "Tracking pose · walking should appear on other devices";
+    }
+  };
+  channel.onclose = () => describeCloudPlayers();
+}
+
+function closeRtcPeer(remoteId) {
+  const peer = rtcPeers.get(remoteId);
+  if (!peer) return;
+  try { if (peer.channel) peer.channel.close(); } catch {}
+  try { peer.pc.close(); } catch {}
+  rtcPeers.delete(remoteId);
+  delete outgoingOffers[remoteId];
+  delete outgoingAnswers[remoteId];
+}
+
+function ensureRtcPeer(remoteId) {
+  if (!uid || remoteId === uid || rtcPeers.has(remoteId) || typeof RTCPeerConnection !== "function") return;
+  const offerer = uid < remoteId;
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  const peer = { pc, channel: null, offerer, appliedRemote: "" };
+  rtcPeers.set(remoteId, peer);
+
+  pc.ondatachannel = ev => bindRtcChannel(remoteId, ev.channel);
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState !== "failed") return;
+    closeRtcPeer(remoteId);
+    setTimeout(() => {
+      if (sessionStarted && cloudPresence.has(remoteId)) ensureRtcPeer(remoteId);
+    }, 1200);
+  };
+
+  if (!offerer) return;
+  bindRtcChannel(remoteId, pc.createDataChannel("pose"));
+  (async () => {
+    await pc.setLocalDescription(await pc.createOffer());
+    await waitIceGathering(pc);
+    outgoingOffers[remoteId] = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
+    await publishPresence(true);
+  })().catch(err => console.warn("RTC offer failed", err));
+}
+
+async function handleIncomingSignal(remoteId, p) {
+  const peer = rtcPeers.get(remoteId);
+  if (!peer) return;
+  const pc = peer.pc;
+  const theirOffer = p.offers && p.offers[uid];
+  const theirAnswer = p.answers && p.answers[uid];
+  try {
+    if (theirOffer && !peer.offerer && peer.appliedRemote !== theirOffer.sdp) {
+      peer.appliedRemote = theirOffer.sdp;
+      await pc.setRemoteDescription(theirOffer);
+      await pc.setLocalDescription(await pc.createAnswer());
+      await waitIceGathering(pc);
+      outgoingAnswers[remoteId] = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
+      await publishPresence(true);
+    }
+    if (theirAnswer && peer.offerer && peer.appliedRemote !== theirAnswer.sdp && pc.signalingState === "have-local-offer") {
+      peer.appliedRemote = theirAnswer.sdp;
+      await pc.setRemoteDescription(theirAnswer);
+    }
+  } catch (err) {
+    console.warn("RTC signal failed", err);
+  }
+}
+
+function describeCloudPlayers() {
+  const others = [];
+  for (const [id, p] of cloudPresence) {
+    const obj = remotePlayers.get(id);
+    const tracking = obj && obj.visible && obj.userData.tracking;
+    const peer = rtcPeers.get(id);
+    const linking = peer && (!peer.channel || peer.channel.readyState !== "open");
+    others.push(`${p.name || "Player"}${tracking ? "" : linking ? " (linking…)" : " (not tracking)"}`);
+  }
+  if (!others.length) {
+    playerListEl.textContent = renderer.xr.isPresenting
+      ? "Broadcasting your pose · no other players yet."
+      : "No other players yet. On another XR device, enter the room, then walk.";
+    return;
+  }
+  playerListEl.textContent = others.join(" · ");
+}
+
+function applyCloudPresence(docs) {
+  const seen = new Set();
+  for (const d of docs) {
+    if (d.id === uid) continue;
+    const p = d.data;
+    if (isPlayerStale(p)) continue;
+    seen.add(d.id);
+    cloudPresence.set(d.id, p);
+    ensureRtcPeer(d.id);
+    handleIncomingSignal(d.id, p);
+  }
+  for (const id of [...cloudPresence.keys()]) {
+    if (!seen.has(id)) cloudPresence.delete(id);
+  }
+  for (const id of [...rtcPeers.keys()]) {
+    if (!seen.has(id)) closeRtcPeer(id);
+  }
+  for (const [id] of remotePlayers) {
+    if (!seen.has(id)) removeRemote(id);
+  }
+  otherPlayerCount = seen.size;
+  describeCloudPlayers();
+}
+
+async function publishPresence(force = false) {
+  if (connectionMode !== "cloud" || !db || !uid || !roomId) return;
+  const now = performance.now();
+  if (!force && now - lastPresenceSend < CLOUD_HEARTBEAT_MS) return;
+  lastPresenceSend = now;
+  await setDoc(doc(db, "rooms", roomId, "players", uid), {
+    name: playerName,
+    presenting: renderer.xr.isPresenting,
+    calibrated,
+    updatedAt: serverTimestamp(),
+    offers: outgoingOffers,
+    answers: outgoingAnswers
+  });
+}
+
+function closeAllRtc() {
+  for (const id of [...rtcPeers.keys()]) closeRtcPeer(id);
+  cloudPresence.clear();
+  for (const key of Object.keys(outgoingOffers)) delete outgoingOffers[key];
+  for (const key of Object.keys(outgoingAnswers)) delete outgoingAnswers[key];
+}
+
 function leaveRoom(reload) {
   if (pruneTimer) {
     clearInterval(pruneTimer);
@@ -527,6 +736,7 @@ function leaveRoom(reload) {
   sessionStarted = false;
   otherPlayerCount = 0;
   closeLocalSocket();
+  closeAllRtc();
   if (connectionMode === "cloud" && uid && roomId && db) {
     deleteDoc(doc(db, "rooms", roomId, "players", uid)).catch(() => {});
   }
@@ -635,6 +845,29 @@ function connectLocalRoom() {
   });
 }
 
+async function loadFirebase() {
+  if (initializeApp) return;
+  const [appMod, authMod, fsMod] = await Promise.all([
+    import(`${FB_BASE}/firebase-app.js`),
+    import(`${FB_BASE}/firebase-auth.js`),
+    import(`${FB_BASE}/firebase-firestore.js`)
+  ]);
+  initializeApp = appMod.initializeApp;
+  getApps = appMod.getApps;
+  getApp = appMod.getApp;
+  initializeAuth = authMod.initializeAuth;
+  getAuth = authMod.getAuth;
+  inMemoryPersistence = authMod.inMemoryPersistence;
+  signInAnonymously = authMod.signInAnonymously;
+  getFirestore = fsMod.getFirestore;
+  doc = fsMod.doc;
+  setDoc = fsMod.setDoc;
+  onSnapshot = fsMod.onSnapshot;
+  collection = fsMod.collection;
+  serverTimestamp = fsMod.serverTimestamp;
+  deleteDoc = fsMod.deleteDoc;
+}
+
 function startFirebase(config) {
   firebaseApp = getApps().length ? getApp() : initializeApp(config);
   try {
@@ -672,7 +905,7 @@ async function start() {
   roomId = document.getElementById("room").value.trim() || "demo-room";
   connectionMode = selectedConnection();
 
-  const xrPromise = xrSupportedMode ? beginXRSessionFromGesture() : Promise.resolve(null);
+  const xrPromise = navigator.xr ? beginXRSessionFromGesture() : Promise.resolve(null);
   setupXR();
   const xrAttach = xrPromise.then(session => session && enterXRSession(session)).catch(err => {
     console.warn("XR session not started", err);
@@ -687,6 +920,7 @@ async function start() {
       }
       await connectLocalRoom();
     } else {
+      await loadFirebase();
       startFirebase(firebaseConfig);
       const cred = await signInAnonymously(auth);
       uid = cred.user.uid;
@@ -700,7 +934,7 @@ async function start() {
       playersUnsub = onSnapshot(collection(db, "rooms", roomId, "players"), snap => {
         const docs = [];
         snap.forEach(d => docs.push({ id: d.id, data: d.data() }));
-        applyRemoteDocs(docs);
+        applyCloudPresence(docs);
         pruneStalePlayers(snap);
       });
     }
@@ -709,10 +943,10 @@ async function start() {
     hud.classList.remove("hidden");
     roomLabel.textContent = connectionMode === "local"
       ? `Room: ${roomId} · local`
-      : `Room: ${roomId}`;
+      : `Room: ${roomId} · p2p`;
     sessionStarted = true;
     statusEl.textContent = "Connected";
-    pruneTimer = setInterval(() => pruneStalePlayers(), HEARTBEAT_MS);
+    pruneTimer = setInterval(() => pruneStalePlayers(), connectionMode === "cloud" ? CLOUD_HEARTBEAT_MS : HEARTBEAT_MS);
     await publishPlayer(true);
     try {
       await xrAttach;
@@ -728,6 +962,7 @@ async function start() {
     console.error(e);
     if (currentXRSession) currentXRSession.end();
     closeLocalSocket();
+    closeAllRtc();
     setupError.textContent = connectionMode === "local"
       ? (e && e.message) || "Local network connection failed."
       : firebaseErrorMessage(e);
@@ -1132,8 +1367,11 @@ function updateDoneButton() {
 async function publishPlayer(force = false) {
   if (!sessionStarted || !uid) return;
   const now = performance.now();
-  const syncing = otherPlayerCount > 0;
-  const interval = syncing && renderer.xr.isPresenting ? POSE_MS : HEARTBEAT_MS;
+  const rtcOpen = connectionMode === "cloud" ? rtcOpenCount() : 0;
+  const syncing = connectionMode === "cloud" ? rtcOpen > 0 : otherPlayerCount > 0;
+  const interval = syncing && renderer.xr.isPresenting
+    ? POSE_MS
+    : connectionMode === "cloud" ? CLOUD_HEARTBEAT_MS : HEARTBEAT_MS;
   if (!force && now - lastNetworkSend < interval) return;
   lastNetworkSend = now;
 
@@ -1141,7 +1379,7 @@ async function publishPlayer(force = false) {
     name: playerName,
     presenting: renderer.xr.isPresenting,
     calibrated,
-    updatedAt: connectionMode === "local" ? Date.now() : serverTimestamp()
+    updatedAt: Date.now()
   };
 
   if (syncing && renderer.xr.isPresenting) {
@@ -1162,8 +1400,8 @@ async function publishPlayer(force = false) {
     return;
   }
 
-  if (!db || !roomId) return;
-  await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: !syncing || !renderer.xr.isPresenting });
+  if (syncing) rtcBroadcast(payload);
+  await publishPresence(force);
 }
 
 function render(time, frame) {
