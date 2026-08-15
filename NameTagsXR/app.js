@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "22";
+const APP_VERSION = "23";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -117,6 +117,15 @@ const outgoingIce = {};
 let icePublishTimer = null;
 let lastPoseFallbackSend = 0;
 let lastHandsPayload = null;
+const HAND_STILL_FRAMES = 15;
+const HAND_STILL_MS = 200;
+const HAND_STILL_M = 0.01;
+const HAND_RECOVER_M = 0.03;
+const localHandLost = { left: false, right: false };
+const localHandStill = {
+  left: { pos: new THREE.Vector3(), frames: 0, t: 0, has: false },
+  right: { pos: new THREE.Vector3(), frames: 0, t: 0, has: false }
+};
 const localHands = [];
 const _handPos = new THREE.Vector3();
 const _handQuat = new THREE.Quaternion();
@@ -1613,7 +1622,7 @@ function captureHandJoints(hand, frame, refSpace) {
       const jointSpace = hand.get(name);
       if (!jointSpace) continue;
       const pose = frame.getJointPose(jointSpace, refSpace);
-      if (!pose) continue;
+      if (!pose || pose.emulatedPosition) continue;
       const p = pose.transform.position;
       const o = pose.transform.orientation;
       packed[name] = packPose(p.x, p.y, p.z, o.x, o.y, o.z, o.w);
@@ -1623,6 +1632,87 @@ function captureHandJoints(hand, frame, refSpace) {
   return any ? packed : null;
 }
 
+function readWristSample(side, frame) {
+  const session = renderer.xr.isPresenting && renderer.xr.getSession();
+  const refSpace = session && renderer.xr.getReferenceSpace();
+  if (session && refSpace && frame) {
+    for (const source of session.inputSources) {
+      if (source.handedness !== side || !source.hand) continue;
+      const space = source.hand.get && source.hand.get("wrist");
+      if (!space) continue;
+      const pose = frame.getJointPose(space, refSpace);
+      if (!pose) return { found: false, emulated: false };
+      return {
+        found: true,
+        emulated: !!pose.emulatedPosition,
+        x: pose.transform.position.x,
+        y: pose.transform.position.y,
+        z: pose.transform.position.z
+      };
+    }
+  }
+  for (const hand of localHands) {
+    if (hand.userData.handedness !== side) continue;
+    const joint = hand.joints && hand.joints.wrist;
+    if (!joint || !joint.visible) continue;
+    joint.getWorldPosition(_handPos);
+    return { found: true, emulated: false, x: _handPos.x, y: _handPos.y, z: _handPos.z };
+  }
+  return { found: false, emulated: false };
+}
+
+function updateLocalHandLost(frame) {
+  const now = performance.now();
+  if (!renderer.xr.isPresenting) {
+    localHandLost.left = localHandLost.right = false;
+    localHandStill.left.has = localHandStill.right.has = false;
+    return;
+  }
+
+  for (const side of ["left", "right"]) {
+    const sample = readWristSample(side, frame);
+    const st = localHandStill[side];
+    if (!sample.found || sample.emulated) {
+      localHandLost[side] = true;
+      st.has = false;
+      st.frames = 0;
+      continue;
+    }
+    if (!st.has) {
+      st.pos.set(sample.x, sample.y, sample.z);
+      st.t = now;
+      st.frames = 0;
+      st.has = true;
+      localHandLost[side] = false;
+      continue;
+    }
+    const dist = Math.hypot(sample.x - st.pos.x, sample.y - st.pos.y, sample.z - st.pos.z);
+    if (localHandLost[side]) {
+      if (dist >= HAND_RECOVER_M) {
+        localHandLost[side] = false;
+        st.pos.set(sample.x, sample.y, sample.z);
+        st.t = now;
+        st.frames = 0;
+      }
+      continue;
+    }
+    if (dist < HAND_STILL_M) {
+      st.frames++;
+      if (st.frames >= HAND_STILL_FRAMES && now - st.t >= HAND_STILL_MS) localHandLost[side] = true;
+    } else {
+      st.pos.set(sample.x, sample.y, sample.z);
+      st.t = now;
+      st.frames = 0;
+    }
+  }
+
+  for (const hand of localHands) {
+    const side = hand.userData.handedness;
+    if (side !== "left" && side !== "right") continue;
+    hand.visible = !localHandLost[side];
+  }
+}
+
 function captureHands(frame) {
   const out = { left: null, right: null };
   if (!renderer.xr.isPresenting) return out;
@@ -1630,6 +1720,7 @@ function captureHands(frame) {
   for (const hand of localHands) {
     const side = hand.userData.handedness;
     if (side !== "left" && side !== "right") continue;
+    if (localHandLost[side]) continue;
     const joints = hand.joints;
     if (!joints) continue;
     const packed = {};
@@ -1653,7 +1744,7 @@ function captureHands(frame) {
         side = unnamed === 0 ? "left" : "right";
         unnamed++;
       }
-      if (hasHandData(out[side])) continue;
+      if (localHandLost[side] || hasHandData(out[side])) continue;
       if (source.hand) {
         const joints = captureHandJoints(source.hand, frame, refSpace);
         if (joints) out[side] = joints;
@@ -1662,7 +1753,7 @@ function captureHands(frame) {
       const space = source.gripSpace || source.targetRaySpace;
       if (!space) continue;
       const pose = frame.getPose(space, refSpace);
-      if (!pose) continue;
+      if (!pose || pose.emulatedPosition) continue;
       const p = pose.transform.position;
       const o = pose.transform.orientation;
       out[side] = { wrist: packPose(p.x, p.y, p.z, o.x, o.y, o.z, o.w) };
@@ -1671,7 +1762,7 @@ function captureHands(frame) {
 
   for (const c of controllers) {
     const side = c.userData.handedness;
-    if ((side !== "left" && side !== "right") || hasHandData(out[side])) continue;
+    if ((side !== "left" && side !== "right") || localHandLost[side] || hasHandData(out[side])) continue;
     out[side] = { wrist: worldToRoomPose(c) };
   }
   return fillRestHands(out);
@@ -1798,6 +1889,7 @@ function render(time, frame) {
   updateGrab();
   renderer.render(scene, camera);
   if (!renderer.xr.isPresenting) controls.update();
+  updateLocalHandLost(lastXRFrame);
   updateRemoteVisuals();
   publishPlayer(false).catch(console.error);
 }
