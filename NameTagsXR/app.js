@@ -99,6 +99,7 @@ redDot.position.set(-0.5, 1, -1.5);
 blueDot.position.set(0.5, 1, -1.5);
 const doneButton = makeDoneButton();
 scene.add(redDot, blueDot, doneButton);
+redDot.visible = blueDot.visible = doneButton.visible = false;
 
 const tempMatrix = new THREE.Matrix4();
 const _pointerOrigin = new THREE.Vector3();
@@ -278,7 +279,7 @@ document.getElementById("recalibrate").onclick = () => {
   calibrated = false;
   calibration = null;
   statusEl.textContent = "Recalibration: place red + blue again";
-  redDot.visible = blueDot.visible = doneButton.visible = true;
+  syncCalibrationUi();
 };
 document.getElementById("exit").onclick = () => leaveRoom(true);
 
@@ -990,6 +991,7 @@ async function start() {
       : `Room: ${roomId} · p2p`;
     sessionStarted = true;
     statusEl.textContent = "Connected";
+    syncCalibrationUi();
     pruneTimer = setInterval(() => pruneStalePlayers(), connectionMode === "cloud" ? CLOUD_HEARTBEAT_MS : HEARTBEAT_MS);
     await publishPlayer(true);
     try {
@@ -997,6 +999,7 @@ async function start() {
     } catch (err) {
       console.warn("XR session not started", err);
     }
+    syncCalibrationUi();
     if (renderer.xr.isPresenting) {
       statusEl.textContent = "Tracking pose · walking should appear on other devices";
     } else {
@@ -1016,7 +1019,13 @@ async function start() {
   }
 }
 
-function setPassthrough(on) {
+function syncCalibrationUi(forceMarkers) {
+  const xr = renderer.xr.isPresenting;
+  const ui = document.getElementById("xrCalibrateUi");
+  if (ui) ui.classList.toggle("hidden", !xr);
+  const showMarkers = xr && (forceMarkers != null ? forceMarkers : !calibrated);
+  redDot.visible = blueDot.visible = doneButton.visible = showMarkers;
+}
   if (on) {
     scene.background = null;
     renderer.setClearColor(0x000000, 0);
@@ -1055,6 +1064,7 @@ async function enterXRSession(session) {
   if (arButton) arButton.textContent = "STOP XR";
   controls.enabled = false;
   statusEl.textContent = "Tracking pose · walking should appear on other devices";
+  syncCalibrationUi();
   publishPlayer(true).catch(console.error);
 }
 
@@ -1064,6 +1074,7 @@ function onXRSessionEnded() {
   controls.enabled = true;
   setPassthrough(false);
   statusEl.textContent = "XR stopped · pose is no longer broadcasting";
+  syncCalibrationUi();
   publishPlayer(true).catch(() => {});
 }
 
@@ -1400,16 +1411,14 @@ function calibrate() {
 
   redDot.position.set(0, 1, -1.5);
   blueDot.position.set(1, 1, -1.5);
-  // Once calibrated, show canonical dots as a visual reference.
-  redDot.visible = blueDot.visible = false;
-  doneButton.visible = false;
+  syncCalibrationUi();
 
   statusEl.textContent = "Calibrated · looking for other players";
   publishPlayer(true);
 }
 
 function hideCalibrationDots() {
-  redDot.visible = blueDot.visible = doneButton.visible = false;
+  syncCalibrationUi(false);
   for (const c of controllers) {
     if (c.userData.grabbed === redDot || c.userData.grabbed === blueDot) {
       c.userData.grabbed = null;
