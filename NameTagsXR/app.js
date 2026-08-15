@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
 import { initializeAuth, getAuth, inMemoryPersistence, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
 import {
@@ -44,6 +45,8 @@ const FINGER_CHAINS = [
 ];
 const localHands = [];
 const _handPos = new THREE.Vector3();
+const handModelFactory = new XRHandModelFactory();
+let lastXRFrame = null;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101015);
@@ -117,11 +120,11 @@ function beginXRSessionFromGesture() {
   const arInits = [
     { optionalFeatures: ["local-floor", "unbounded", "hand-tracking", "dom-overlay"], domOverlay: { root: overlay } },
     { optionalFeatures: ["local-floor", "unbounded", "hand-tracking"] },
-    {}
+    { optionalFeatures: ["hand-tracking"] }
   ];
   const vrInits = [
     { optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"] },
-    {}
+    { optionalFeatures: ["hand-tracking"] }
   ];
   const tries = [];
   if (xrSupportedMode !== "immersive-vr") {
@@ -261,9 +264,15 @@ function createNameTag(name) {
 function createRemoteHand(color) {
   const group = new THREE.Group();
   group.userData.points = {};
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .85 });
+  const mat = new THREE.MeshStandardMaterial({
+    color,
+    emissive: color,
+    emissiveIntensity: .8,
+    roughness: .4,
+    metalness: .1
+  });
   for (const name of HAND_JOINTS) {
-    const r = name === "wrist" ? .03 : name.endsWith("tip") ? .012 : .016;
+    const r = name === "wrist" ? .04 : name.endsWith("tip") ? .016 : .02;
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
     mesh.visible = false;
     mesh.userData.target = new THREE.Vector3();
@@ -276,7 +285,7 @@ function createRemoteHand(color) {
   lineGeo.setDrawRange(0, 0);
   const line = new THREE.LineSegments(
     lineGeo,
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: .65 })
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: .9 })
   );
   group.add(line);
   group.userData.line = line;
@@ -685,10 +694,12 @@ function setupXR() {
     hand.userData.handedness = null;
     hand.addEventListener("connected", e => {
       hand.userData.handedness = e.data.handedness;
+      hand.visible = true;
     });
     hand.addEventListener("disconnected", () => {
       hand.userData.handedness = null;
     });
+    hand.add(handModelFactory.createHandModel(hand, "spheres"));
     scene.add(hand);
     localHands.push(hand);
   }
@@ -766,18 +777,54 @@ function worldToRoomArray(obj) {
   return [compact(room.x), compact(room.y), compact(room.z)];
 }
 
-function captureHands() {
+function captureHands(frame) {
   const out = { left: null, right: null };
+  if (!renderer.xr.isPresenting) return out;
+  const session = renderer.xr.getSession();
+  const refSpace = renderer.xr.getReferenceSpace();
+  if (session && refSpace && frame) {
+    let unnamed = 0;
+    for (const source of session.inputSources) {
+      let side = source.handedness;
+      if (side !== "left" && side !== "right") {
+        side = unnamed === 0 ? "left" : "right";
+        unnamed++;
+      }
+      if (source.hand) {
+        const packed = {};
+        for (const name of HAND_JOINTS) {
+          const jointSpace = source.hand.get ? source.hand.get(name) : null;
+          if (!jointSpace) continue;
+          const pose = frame.getJointPose(jointSpace, refSpace);
+          if (!pose) continue;
+          const p = pose.transform.position;
+          const room = localToRoom(_handPos.set(p.x, p.y, p.z));
+          packed[name] = [compact(room.x), compact(room.y), compact(room.z)];
+        }
+        if (packed.wrist) out[side] = packed;
+        continue;
+      }
+      const space = source.gripSpace || source.targetRaySpace;
+      if (!space) continue;
+      const pose = frame.getPose(space, refSpace);
+      if (!pose) continue;
+      const p = pose.transform.position;
+      const room = localToRoom(_handPos.set(p.x, p.y, p.z));
+      out[side] = { wrist: [compact(room.x), compact(room.y), compact(room.z)] };
+    }
+    if (out.left || out.right) return out;
+  }
+
   for (const hand of localHands) {
     const side = hand.userData.handedness;
     if (side !== "left" && side !== "right") continue;
     const joints = hand.joints;
     const wrist = joints && joints.wrist;
-    if (!wrist || (wrist.visible === false)) continue;
+    if (!wrist) continue;
     const packed = {};
     for (const name of HAND_JOINTS) {
       const joint = joints[name];
-      if (!joint || joint.visible === false) continue;
+      if (!joint) continue;
       packed[name] = worldToRoomArray(joint);
     }
     if (packed.wrist) out[side] = packed;
@@ -785,7 +832,6 @@ function captureHands() {
   for (const c of controllers) {
     const side = c.userData.handedness;
     if ((side !== "left" && side !== "right") || out[side]) continue;
-    if (!renderer.xr.isPresenting) continue;
     out[side] = { wrist: worldToRoomArray(c) };
   }
   return out;
@@ -856,13 +902,14 @@ async function publishPlayer(force = false) {
       payload.y = roomHead.y;
       payload.z = roomHead.z;
     }
-    payload.hands = captureHands();
+    payload.hands = captureHands(lastXRFrame);
   }
 
   await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: !renderer.xr.isPresenting });
 }
 
-function render() {
+function render(time, frame) {
+  lastXRFrame = frame || null;
   updateGrab();
   renderer.render(scene, camera);
   if (!renderer.xr.isPresenting) controls.update();
