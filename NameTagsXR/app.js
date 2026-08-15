@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "28";
+const APP_VERSION = "29";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -46,61 +46,9 @@ const HAND_JOINTS = [
   "ring-finger-metacarpal", "ring-finger-phalanx-proximal", "ring-finger-phalanx-intermediate", "ring-finger-phalanx-distal", "ring-finger-tip",
   "pinky-finger-metacarpal", "pinky-finger-phalanx-proximal", "pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal", "pinky-finger-tip"
 ];
-const JOINT_CHILD = {
-  wrist: "middle-finger-metacarpal",
-  "thumb-metacarpal": "thumb-phalanx-proximal",
-  "thumb-phalanx-proximal": "thumb-phalanx-distal",
-  "thumb-phalanx-distal": "thumb-tip",
-  "index-finger-metacarpal": "index-finger-phalanx-proximal",
-  "index-finger-phalanx-proximal": "index-finger-phalanx-intermediate",
-  "index-finger-phalanx-intermediate": "index-finger-phalanx-distal",
-  "index-finger-phalanx-distal": "index-finger-tip",
-  "middle-finger-metacarpal": "middle-finger-phalanx-proximal",
-  "middle-finger-phalanx-proximal": "middle-finger-phalanx-intermediate",
-  "middle-finger-phalanx-intermediate": "middle-finger-phalanx-distal",
-  "middle-finger-phalanx-distal": "middle-finger-tip",
-  "ring-finger-metacarpal": "ring-finger-phalanx-proximal",
-  "ring-finger-phalanx-proximal": "ring-finger-phalanx-intermediate",
-  "ring-finger-phalanx-intermediate": "ring-finger-phalanx-distal",
-  "ring-finger-phalanx-distal": "ring-finger-tip",
-  "pinky-finger-metacarpal": "pinky-finger-phalanx-proximal",
-  "pinky-finger-phalanx-proximal": "pinky-finger-phalanx-intermediate",
-  "pinky-finger-phalanx-intermediate": "pinky-finger-phalanx-distal",
-  "pinky-finger-phalanx-distal": "pinky-finger-tip"
-};
-const REST_JOINT_LOCAL = {
-  wrist: [0, 0, 0],
-  "thumb-metacarpal": [0.021, 0.025, 0.02],
-  "thumb-phalanx-proximal": [0.028, 0.055, 0.032],
-  "thumb-phalanx-distal": [0.03, 0.078, 0.038],
-  "thumb-tip": [0.03, 0.098, 0.04],
-  "index-finger-metacarpal": [0.012, 0.038, 0.008],
-  "index-finger-phalanx-proximal": [0.014, 0.082, 0.01],
-  "index-finger-phalanx-intermediate": [0.014, 0.108, 0.01],
-  "index-finger-phalanx-distal": [0.014, 0.126, 0.01],
-  "index-finger-tip": [0.014, 0.142, 0.01],
-  "middle-finger-metacarpal": [0.002, 0.04, 0.002],
-  "middle-finger-phalanx-proximal": [0.002, 0.088, 0.004],
-  "middle-finger-phalanx-intermediate": [0.002, 0.118, 0.004],
-  "middle-finger-phalanx-distal": [0.002, 0.138, 0.004],
-  "middle-finger-tip": [0.002, 0.155, 0.004],
-  "ring-finger-metacarpal": [-0.008, 0.036, 0],
-  "ring-finger-phalanx-proximal": [-0.01, 0.08, 0],
-  "ring-finger-phalanx-intermediate": [-0.01, 0.106, 0],
-  "ring-finger-phalanx-distal": [-0.01, 0.124, 0],
-  "ring-finger-tip": [-0.01, 0.14, 0],
-  "pinky-finger-metacarpal": [-0.018, 0.03, -0.004],
-  "pinky-finger-phalanx-proximal": [-0.022, 0.068, -0.004],
-  "pinky-finger-phalanx-intermediate": [-0.024, 0.09, -0.004],
-  "pinky-finger-phalanx-distal": [-0.024, 0.106, -0.004],
-  "pinky-finger-tip": [-0.024, 0.12, -0.004]
-};
-const _restX = new THREE.Vector3();
-const _restY = new THREE.Vector3();
-const _restZ = new THREE.Vector3();
-const _restPos = new THREE.Vector3();
-const _basis = new THREE.Matrix4();
 const _headEuler = new THREE.Euler();
+const _hipOff = new THREE.Vector3();
+const _xAxis = new THREE.Vector3(1, 0, 0);
 const RTC_CONFIG = {
   iceCandidatePoolSize: 8,
   iceServers: [
@@ -133,12 +81,18 @@ const localHands = [];
 const _handPos = new THREE.Vector3();
 const _handQuat = new THREE.Quaternion();
 const _qYaw = new THREE.Quaternion();
+const _qDelta = new THREE.Quaternion();
+const _jointScale = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
 const handModelFactory = new XRHandModelFactory(null, obj => {
   obj.traverse(o => {
     if (o.isMesh && o.material) {
       o.material.side = THREE.DoubleSide;
       o.frustumCulled = false;
+    }
+    if (o.isBone && !o.userData.bindPos) {
+      o.userData.bindPos = o.position.clone();
+      o.userData.bindQuat = o.quaternion.clone();
     }
   });
 });
@@ -485,6 +439,7 @@ function createRemoteHand(handedness) {
     hand.add(joint);
   }
   const model = handModelFactory.createHandModel(hand, "mesh");
+  hand.userData.model = model;
   hand.add(model);
   hand.dispatchEvent({
     type: "connected",
@@ -564,8 +519,9 @@ function updateRemotePlayer(id, p) {
   const hands = restHandsForPlayer(p);
   obj.userData.hands = hands;
   obj.visible = true;
-  applyHandJoints(obj.userData.leftHand, hands && hands.left);
-  applyHandJoints(obj.userData.rightHand, hands && hands.right);
+  const yaw = typeof p.yaw === "number" ? p.yaw : 0;
+  applyHandJoints(obj.userData.leftHand, hands && hands.left, { side: "left", head: local, yaw });
+  applyHandJoints(obj.userData.rightHand, hands && hands.right, { side: "right", head: local, yaw });
   if (gainedTracking) frameSpectatorOn(obj);
 }
 
@@ -584,7 +540,7 @@ function flipQuat(q) {
   return q;
 }
 
-function applyJointPose(joint, arr) {
+function applyJointPose(joint, arr, snap) {
   const pos = roomToLocal(new THREE.Vector3(arr[0], arr[1], arr[2]));
   joint.userData.target.copy(pos);
   if (arr.length >= 7) {
@@ -599,7 +555,7 @@ function applyJointPose(joint, arr) {
   } else {
     joint.userData.targetQuat.identity();
   }
-  const far = !joint.userData.placed || joint.position.distanceToSquared(pos) > 0.12;
+  const far = snap || !joint.userData.placed || joint.position.distanceToSquared(pos) > 0.04;
   if (far) {
     joint.position.copy(joint.userData.target);
     joint.quaternion.copy(joint.userData.targetQuat);
@@ -619,48 +575,154 @@ function countPackedJoints(packed) {
   return n;
 }
 
-function applyHandJoints(hand, data) {
-  if (!hand) return;
-  let packed = packedJoints(data);
+function fillPackedHoles(packed, fallback) {
+  if (!packed || !fallback) return packed;
+  const wrist = packed.wrist;
+  const fbWrist = fallback.wrist;
+  const wristLive = Array.isArray(wrist) && wrist.length >= 7;
+  const fbWristOk = Array.isArray(fbWrist) && fbWrist.length >= 7;
+  for (const name of HAND_JOINTS) {
+    const arr = packed[name];
+    if (Array.isArray(arr) && arr.length >= 7) continue;
+    const fb = fallback[name];
+    if (!Array.isArray(fb) || fb.length < 7) continue;
+    if (wristLive && fbWristOk) {
+      _qYaw.set(fbWrist[3], fbWrist[4], fbWrist[5], fbWrist[6]).normalize().invert();
+      _qDelta.set(wrist[3], wrist[4], wrist[5], wrist[6]).normalize().multiply(_qYaw);
+      _handPos.set(fb[0] - fbWrist[0], fb[1] - fbWrist[1], fb[2] - fbWrist[2]).applyQuaternion(_qDelta);
+      _handQuat.set(fb[3], fb[4], fb[5], fb[6]).normalize();
+      _qYaw.copy(_qDelta).multiply(_handQuat);
+      packed[name] = [
+        wrist[0] + _handPos.x, wrist[1] + _handPos.y, wrist[2] + _handPos.z,
+        _qYaw.x, _qYaw.y, _qYaw.z, _qYaw.w
+      ];
+    } else {
+      packed[name] = fb;
+    }
+  }
+  return packed;
+}
+
+function resetHandGroup(hand) {
+  hand.position.set(0, 0, 0);
+  hand.quaternion.identity();
+  hand.scale.set(1, 1, 1);
+  hand.updateMatrix();
+  hand.matrixWorldNeedsUpdate = true;
+}
+
+function hideHandJoints(hand) {
   const joints = hand.joints;
-  if (!packed || !joints) {
+  if (!joints) return;
+  for (const name of HAND_JOINTS) {
+    const joint = joints[name];
+    if (!joint) continue;
+    joint.visible = false;
+    joint.userData.placed = false;
+  }
+}
+
+function resetHandBonesToBind(hand) {
+  const model = hand.userData.model;
+  if (!model) return;
+  const apply = bone => {
+    if (!bone || !bone.userData.bindPos) return;
+    bone.position.copy(bone.userData.bindPos);
+    bone.quaternion.copy(bone.userData.bindQuat);
+  };
+  model.traverse(o => {
+    if (o.isBone) apply(o);
+  });
+  const bones = model.motionController && model.motionController.bones;
+  if (bones) {
+    for (const bone of bones) apply(bone);
+  }
+}
+
+function applyBindPoseHandAtHip(hand, ctx) {
+  hideHandJoints(hand);
+  resetHandBonesToBind(hand);
+  const side = ctx && ctx.side;
+  const head = ctx && ctx.head;
+  if (!head || (side !== "left" && side !== "right")) {
     hand.visible = false;
     return;
   }
-  const n = countPackedJoints(packed);
-  if (n < MIN_HAND_JOINTS) {
+  const yaw = calibration
+    ? (ctx.yaw || 0) - calibration.yaw
+    : (ctx.yaw || 0);
+  const sign = side === "left" ? -1 : 1;
+  _hipOff.set(sign * 0.22, -0.72, 0.04).applyAxisAngle(_yAxis, yaw).add(head);
+  hand.position.copy(_hipOff);
+  hand.quaternion.setFromAxisAngle(_yAxis, yaw);
+  _qYaw.setFromAxisAngle(_xAxis, Math.PI / 2);
+  hand.quaternion.multiply(_qYaw);
+  hand.scale.set(1, 1, 1);
+  hand.updateMatrix();
+  hand.matrixWorldNeedsUpdate = true;
+  hand.userData.bindPose = true;
+  hand.visible = true;
+}
+
+function applyHandJoints(hand, data, ctx) {
+  if (!hand) return;
+  if (data && data.rest) {
+    applyBindPoseHandAtHip(hand, ctx);
+    return;
+  }
+  let packed = packedJoints(data);
+  const joints = hand.joints;
+  if (!packed || !joints) {
+    hideHandJoints(hand);
+    resetHandGroup(hand);
+    hand.userData.bindPose = false;
+    hand.visible = false;
+    return;
+  }
+  packed = fillPackedHoles(packed, hand.userData.lastComplete);
+  let n = countPackedJoints(packed);
+  if (n < HAND_JOINTS.length) {
     packed = hand.userData.lastComplete;
-    if (!packed) {
-      hand.visible = false;
-      return;
-    }
-  } else {
-    hand.userData.lastComplete = packed;
+    n = countPackedJoints(packed);
+  }
+  if (n < HAND_JOINTS.length) {
+    applyBindPoseHandAtHip(hand, ctx);
+    return;
+  }
+  hand.userData.lastComplete = packed;
+  const snap = !!hand.userData.bindPose;
+  if (snap) {
+    resetHandGroup(hand);
+    hand.userData.bindPose = false;
   }
   let any = false;
   for (const name of HAND_JOINTS) {
     const joint = joints[name];
     const arr = packed[name];
     if (!joint) continue;
-    if (!Array.isArray(arr) || arr.length < 3) {
+    if (!Array.isArray(arr) || arr.length < 7) {
       joint.visible = false;
       continue;
     }
     any = true;
-    applyJointPose(joint, arr);
+    applyJointPose(joint, arr, snap);
   }
   hand.visible = any;
 }
 
 function updateHandVisual(hand) {
-  if (!hand || !hand.visible || !hand.joints) return;
+  if (!hand || !hand.visible || !hand.joints || hand.userData.bindPose) return;
   for (const name of HAND_JOINTS) {
     const joint = hand.joints[name];
     if (!joint || !joint.visible) continue;
     if (joint.userData.target) joint.position.lerp(joint.userData.target, 0.55);
     if (joint.userData.targetQuat) {
       if (joint.quaternion.dot(joint.userData.targetQuat) < 0) flipQuat(joint.userData.targetQuat);
-      joint.quaternion.slerp(joint.userData.targetQuat, 0.55);
+      if (joint.quaternion.dot(joint.userData.targetQuat) < 0.35) {
+        joint.quaternion.copy(joint.userData.targetQuat);
+      } else {
+        joint.quaternion.slerp(joint.userData.targetQuat, 0.55);
+      }
       joint.quaternion.normalize();
     }
     joint.scale.set(1, 1, 1);
@@ -1559,15 +1621,9 @@ function localYawToRoom(yaw) {
   return calibration ? yaw + calibration.yaw : yaw;
 }
 
-function packRoomPose(pos, quat) {
-  return [
-    compact(pos.x), compact(pos.y), compact(pos.z),
-    compact4(quat.x), compact4(quat.y), compact4(quat.z), compact4(quat.w)
-  ];
-}
-
 function hasHandData(data) {
   if (!data) return false;
+  if (data.rest) return true;
   if (Array.isArray(data) && data.length >= 3) return true;
   if (typeof data !== "object") return false;
   for (const name of HAND_JOINTS) {
@@ -1576,69 +1632,53 @@ function hasHandData(data) {
   return false;
 }
 
-function makeRestHand(head, yaw, side) {
+function translateHandToHip(src, head, yaw, side) {
+  const wristArr = src && src.wrist;
+  if (!Array.isArray(wristArr) || wristArr.length < 7) return { rest: true };
   const sign = side === "left" ? -1 : 1;
-  const wristPos = new THREE.Vector3(sign * 0.23, -0.7, 0.06).applyAxisAngle(_yAxis, yaw).add(head);
-  _restY.set(0, -1, 0);
-  _restZ.set(sign, 0, 0).applyAxisAngle(_yAxis, yaw);
-  _restX.crossVectors(_restY, _restZ).normalize();
-  _restZ.crossVectors(_restX, _restY).normalize();
-  const palmBack = _restZ.clone();
-  const wristQuat = new THREE.Quaternion().setFromRotationMatrix(_basis.makeBasis(_restX, _restY, _restZ));
-  if (wristQuat.w < 0) flipQuat(wristQuat);
-
-  const positions = {};
-  for (const name of HAND_JOINTS) {
-    const off = REST_JOINT_LOCAL[name] || [0, 0, 0];
-    _restPos.set(sign * off[0], off[1], off[2]).applyQuaternion(wristQuat).add(wristPos);
-    positions[name] = _restPos.clone();
-  }
-
+  _hipOff.set(sign * 0.23, -0.7, 0.06).applyAxisAngle(_yAxis, yaw).add(head);
+  const dx = _hipOff.x - wristArr[0];
+  const dy = _hipOff.y - wristArr[1];
+  const dz = _hipOff.z - wristArr[2];
   const packed = {};
-  const q = new THREE.Quaternion();
   for (const name of HAND_JOINTS) {
-    const from = positions[name];
-    const child = JOINT_CHILD[name];
-    const to = child && positions[child];
-    if (to) {
-      _restY.copy(to).sub(from);
-      if (_restY.lengthSq() > 1e-8) {
-        _restY.normalize();
-        _restX.crossVectors(_restY, palmBack);
-        if (_restX.lengthSq() > 1e-8) {
-          _restX.normalize();
-          _restZ.crossVectors(_restX, _restY).normalize();
-          q.setFromRotationMatrix(_basis.makeBasis(_restX, _restY, _restZ));
-        } else {
-          q.copy(wristQuat);
-        }
-      } else {
-        q.copy(wristQuat);
-      }
-    } else {
-      q.copy(wristQuat);
-    }
-    if (q.w < 0) flipQuat(q);
-    packed[name] = packRoomPose(from, q);
+    const arr = src[name];
+    if (!Array.isArray(arr) || arr.length < 7) continue;
+    packed[name] = [
+      compact(arr[0] + dx), compact(arr[1] + dy), compact(arr[2] + dz),
+      arr[3], arr[4], arr[5], arr[6]
+    ];
   }
-  return packed;
+  return countPackedJoints(packed) >= MIN_HAND_JOINTS ? packed : { rest: true };
+}
+
+function lastPackedForSide(side) {
+  for (const hand of localHands) {
+    if (hand.userData.handedness === side && hand.userData.lastPacked) {
+      return hand.userData.lastPacked;
+    }
+  }
+  const src = lastHandsPayload && lastHandsPayload[side];
+  if (src && !src.rest && countPackedJoints(src) >= MIN_HAND_JOINTS) return src;
+  return null;
 }
 
 function restHandsForPlayer(p) {
-  const head = new THREE.Vector3(p.x, p.y, p.z);
-  const yaw = typeof p.yaw === "number" ? p.yaw : 0;
   const src = p.hands || {};
   return {
-    left: hasHandData(src.left) ? src.left : makeRestHand(head, yaw, "left"),
-    right: hasHandData(src.right) ? src.right : makeRestHand(head, yaw, "right")
+    left: hasHandData(src.left) ? src.left : { rest: true },
+    right: hasHandData(src.right) ? src.right : { rest: true }
   };
 }
 
 function fillRestHands(out) {
   const head = localToRoom(getLocalHeadPosition());
   const yaw = localYawToRoom(getLocalHeadYaw());
-  if (!hasHandData(out.left) && handAbandoned("left")) out.left = makeRestHand(head, yaw, "left");
-  if (!hasHandData(out.right) && handAbandoned("right")) out.right = makeRestHand(head, yaw, "right");
+  for (const side of ["left", "right"]) {
+    if (hasHandData(out[side]) || !handAbandoned(side)) continue;
+    const last = lastPackedForSide(side);
+    out[side] = last ? translateHandToHip(last, head, yaw, side) : { rest: true };
+  }
   return out;
 }
 
@@ -1733,6 +1773,89 @@ function setLocalHandMeshVisible(hand, on) {
   });
 }
 
+function ensureJointSnap(hand) {
+  let snap = hand.userData.lastJoints;
+  if (snap) return snap;
+  snap = { abs: {}, rel: {} };
+  for (const name of HAND_JOINTS) {
+    snap.abs[name] = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
+    snap.rel[name] = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
+  }
+  return snap;
+}
+
+function snapshotHandJoints(hand) {
+  const wrist = hand.joints.wrist;
+  if (!wrist || !wrist.visible) return null;
+  const snap = ensureJointSnap(hand);
+  _handQuat.copy(wrist.quaternion).invert();
+  for (const name of HAND_JOINTS) {
+    const j = hand.joints[name];
+    if (!j || !j.visible) return null;
+    snap.abs[name].p.copy(j.position);
+    snap.abs[name].q.copy(j.quaternion);
+    snap.rel[name].p.copy(j.position).sub(wrist.position).applyQuaternion(_handQuat);
+    snap.rel[name].q.copy(_handQuat).multiply(j.quaternion);
+  }
+  return snap;
+}
+
+function writeJointSnap(joint, p, q) {
+  joint.position.copy(p);
+  joint.quaternion.copy(q);
+  joint.scale.set(1, 1, 1);
+  joint.visible = true;
+  joint.updateMatrix();
+}
+
+function restoreHandJointsAbs(hand, snap) {
+  for (const name of HAND_JOINTS) {
+    const j = hand.joints[name];
+    const s = snap.abs[name];
+    if (j && s) writeJointSnap(j, s.p, s.q);
+  }
+}
+
+function restoreMissingHandJointsRel(hand, snap) {
+  const wrist = hand.joints.wrist;
+  for (const name of HAND_JOINTS) {
+    const j = hand.joints[name];
+    const s = snap.rel[name];
+    if (!j || !s || j.visible) continue;
+    _handPos.copy(s.p).applyQuaternion(wrist.quaternion).add(wrist.position);
+    _handQuat.copy(wrist.quaternion).multiply(s.q);
+    writeJointSnap(j, _handPos, _handQuat);
+  }
+}
+
+function stabilizeLocalHands() {
+  if (!renderer.xr.isPresenting) return;
+  for (const hand of localHands) {
+    const joints = hand.joints;
+    if (!joints) continue;
+    let n = 0;
+    let wristVisible = false;
+    for (const name of HAND_JOINTS) {
+      const joint = joints[name];
+      if (!joint || !joint.visible) continue;
+      n++;
+      if (name === "wrist") wristVisible = true;
+      joint.matrix.decompose(joint.position, joint.quaternion, _jointScale);
+      joint.scale.set(1, 1, 1);
+      if (joint.quaternion.w < 0) flipQuat(joint.quaternion);
+      joint.updateMatrix();
+    }
+    const snap = hand.userData.lastJoints;
+    if (n >= HAND_JOINTS.length) {
+      const next = snapshotHandJoints(hand);
+      if (next) hand.userData.lastJoints = next;
+    } else if (snap) {
+      if (n < MIN_HAND_JOINTS || !wristVisible) restoreHandJointsAbs(hand, snap);
+      else restoreMissingHandJointsRel(hand, snap);
+    }
+  }
+}
+
 function updateLocalHandLost(frame) {
   const now = performance.now();
   if (!renderer.xr.isPresenting) {
@@ -1816,7 +1939,10 @@ function captureHands(frame) {
     }
     if (any) {
       const complete = countPackedJoints(packed) >= MIN_HAND_JOINTS ? packed : null;
-      if (complete) out[side] = complete;
+      if (complete) {
+        out[side] = complete;
+        hand.userData.lastPacked = complete;
+      }
     }
   }
 
@@ -1833,7 +1959,12 @@ function captureHands(frame) {
       if (handAbandoned(side) || hasHandData(out[side])) continue;
       if (source.hand) {
         const joints = captureHandJoints(source.hand, frame, refSpace);
-        if (joints && countPackedJoints(joints) >= MIN_HAND_JOINTS) out[side] = joints;
+        if (joints && countPackedJoints(joints) >= MIN_HAND_JOINTS) {
+          out[side] = joints;
+          for (const hand of localHands) {
+            if (hand.userData.handedness === side) hand.userData.lastPacked = joints;
+          }
+        }
       }
     }
   }
@@ -1959,6 +2090,7 @@ async function publishPlayer(force = false) {
 function render(time, frame) {
   lastXRFrame = frame || null;
   updateLocalHandLost(lastXRFrame);
+  stabilizeLocalHands();
   updateDoneButton();
   updateGrab();
   renderer.render(scene, camera);
