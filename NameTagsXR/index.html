@@ -18,7 +18,7 @@
 <body>
   <div id="overlay">
   <div id="setup" class="panel">
-    <h1>Room Name Tags</h1>
+    <h1>Room Name Tags <span class="appVersion"></span></h1>
     <p>Same-room AR passthrough multiplayer with two-point physical calibration.</p>
 
     <label>Your name
@@ -53,7 +53,7 @@
   <div id="hud" class="panel hidden">
     <button id="hudToggle" class="icon-btn" type="button" aria-label="Minimize info" title="Minimize">−</button>
     <div id="hudBody">
-    <div><b id="roomLabel"></b> · <span id="status">Connecting…</span></div>
+    <div><b id="roomLabel"></b> · <span id="status">Connecting…</span> · <span class="appVersion"></span></div>
     <div id="playerList" class="small">No other players yet.</div>
     <div id="xrCalibrateUi" class="hidden">
     <div id="instructions">
@@ -72,7 +72,7 @@
   </div>
 
   <script type="module">
-    import("./app.js?v=21").catch(err => {
+    import("./app.js?v=22").catch(err => {
       const el = document.getElementById("setupError");
       el.textContent = "Failed to load app: " + (err && err.message ? err.message : err);
     });

@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
+const APP_VERSION = "22";
+
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
 let initializeAuth, getAuth, inMemoryPersistence, signInAnonymously;
@@ -182,6 +184,9 @@ const statusEl = document.getElementById("status");
 const setupError = document.getElementById("setupError");
 const roomLabel = document.getElementById("roomLabel");
 const playerListEl = document.getElementById("playerList");
+document.querySelectorAll(".appVersion").forEach(el => {
+  el.textContent = "v" + APP_VERSION;
+});
 const startButton = document.getElementById("start");
 
 let arButton = null;
