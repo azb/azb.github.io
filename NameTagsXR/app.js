@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "24";
+const APP_VERSION = "25";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -121,7 +121,9 @@ const HAND_STILL_FRAMES = 8;
 const HAND_STILL_MS = 100;
 const HAND_STILL_M = 0.01;
 const HAND_RECOVER_M = 0.03;
+const HAND_NEAR_M = 1.15;
 const localHandLost = { left: false, right: false };
+const localHandNear = { left: true, right: true };
 const localHandStill = {
   left: { pos: new THREE.Vector3(), frames: 0, t: 0, has: false },
   right: { pos: new THREE.Vector3(), frames: 0, t: 0, has: false }
@@ -1664,6 +1666,11 @@ function readWristSample(side, frame) {
   return { found: false, emulated: false };
 }
 
+function wristNearPlayer(x, y, z) {
+  const head = getLocalHeadPosition();
+  return Math.hypot(x - head.x, y - head.y, z - head.z) <= HAND_NEAR_M;
+}
+
 function setLocalHandMeshVisible(hand, on) {
   const model = hand.userData.model;
   if (model) model.visible = on;
@@ -1676,6 +1683,7 @@ function updateLocalHandLost(frame) {
   const now = performance.now();
   if (!renderer.xr.isPresenting) {
     localHandLost.left = localHandLost.right = false;
+    localHandNear.left = localHandNear.right = true;
     localHandStill.left.has = localHandStill.right.has = false;
     return;
   }
@@ -1683,9 +1691,19 @@ function updateLocalHandLost(frame) {
   for (const side of ["left", "right"]) {
     const sample = readWristSample(side, frame);
     const st = localHandStill[side];
-    if (!sample.found || sample.emulated) {
+
+    if (!sample.found) {
       localHandLost[side] = true;
-      st.has = false;
+      st.frames = 0;
+      localHandNear[side] = st.has && wristNearPlayer(st.pos.x, st.pos.y, st.pos.z);
+      continue;
+    }
+
+    localHandNear[side] = wristNearPlayer(sample.x, sample.y, sample.z);
+    if (sample.emulated) {
+      localHandLost[side] = true;
+      st.pos.set(sample.x, sample.y, sample.z);
+      st.has = true;
       st.frames = 0;
       continue;
     }
@@ -1720,7 +1738,7 @@ function updateLocalHandLost(frame) {
   for (const hand of localHands) {
     const side = hand.userData.handedness;
     if (side !== "left" && side !== "right") continue;
-    setLocalHandMeshVisible(hand, !localHandLost[side]);
+    setLocalHandMeshVisible(hand, !localHandLost[side] || localHandNear[side]);
   }
 }
 
