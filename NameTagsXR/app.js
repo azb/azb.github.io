@@ -20,6 +20,10 @@ const firebaseConfig = {
 
 let firebaseApp, auth, db, roomRef, playersUnsub;
 let uid, roomId, playerName;
+let connectionMode = "cloud";
+let lanReady = false;
+let localWs = null;
+let localPeerMap = {};
 let calibrated = false;
 let calibration = null;
 let lastNetworkSend = 0;
@@ -92,6 +96,7 @@ const statusEl = document.getElementById("status");
 const setupError = document.getElementById("setupError");
 const roomLabel = document.getElementById("roomLabel");
 const playerListEl = document.getElementById("playerList");
+const startButton = document.getElementById("start");
 
 let arButton = null;
 let currentXRSession = null;
@@ -140,8 +145,11 @@ function beginXRSessionFromGesture() {
 
 const NAME_STORE = "nametagsxr.playerName";
 const REMEMBER_STORE = "nametagsxr.rememberName";
+const CONN_STORE = "nametagsxr.connection";
 const nameInput = document.getElementById("name");
 const rememberName = document.getElementById("rememberName");
+const localHint = document.getElementById("localHint");
+const connRadios = document.querySelectorAll('input[name="conn"]');
 
 function readStore(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -174,6 +182,53 @@ function persistNamePreference() {
 restoreSavedName();
 rememberName.addEventListener("change", persistNamePreference);
 
+function selectedConnection() {
+  const checked = document.querySelector('input[name="conn"]:checked');
+  return checked && checked.value === "local" ? "local" : "cloud";
+}
+
+function updateConnectionHint() {
+  connectionMode = selectedConnection();
+  writeStore(CONN_STORE, connectionMode);
+  if (connectionMode !== "local") {
+    localHint.classList.add("hidden");
+    localHint.textContent = "";
+    startButton.disabled = false;
+    return;
+  }
+  localHint.classList.remove("hidden");
+  if (lanReady) {
+    localHint.textContent = "This page is served on your Wi-Fi. Open this same URL on every device and use the same Room ID.";
+    startButton.disabled = false;
+  } else {
+    localHint.textContent = "On a computer on this Wi-Fi, run python server.py (or start-server.bat) in the NameTagsXR folder, then open the HTTPS address it prints on every device — not the GitHub Pages site.";
+    startButton.disabled = true;
+  }
+}
+
+async function probeLanServer() {
+  try {
+    const res = await fetch("/__lan", { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!(data && data.ok);
+  } catch {
+    return false;
+  }
+}
+
+(async function initConnectionPicker() {
+  lanReady = await probeLanServer();
+  const saved = readStore(CONN_STORE);
+  if (saved === "local" || saved === "cloud") connectionMode = saved;
+  else connectionMode = lanReady ? "local" : "cloud";
+  const radio = document.querySelector(`input[name="conn"][value="${connectionMode}"]`);
+  if (radio) radio.checked = true;
+  updateConnectionHint();
+})();
+
+connRadios.forEach(radio => radio.addEventListener("change", updateConnectionHint));
+
 hudToggle.onclick = () => {
   const minimized = hud.classList.toggle("minimized");
   hudToggle.textContent = minimized ? "+" : "−";
@@ -181,7 +236,6 @@ hudToggle.onclick = () => {
   hudToggle.title = minimized ? "Expand" : "Minimize";
 };
 
-const startButton = document.getElementById("start");
 startButton.onclick = start;
 document.getElementById("calibrate").onclick = calibrate;
 document.getElementById("recalibrate").onclick = () => {
@@ -409,7 +463,9 @@ function updateRemoteVisuals() {
 }
 
 function playerUpdatedAt(p) {
-  if (p && p.updatedAt && typeof p.updatedAt.toMillis === "function") return p.updatedAt.toMillis();
+  if (!p || p.updatedAt == null) return 0;
+  if (typeof p.updatedAt === "number") return p.updatedAt;
+  if (typeof p.updatedAt.toMillis === "function") return p.updatedAt.toMillis();
   return 0;
 }
 
@@ -442,8 +498,21 @@ function pruneStalePlayers(snap) {
   }
   for (const id of staleIds) {
     removeRemote(id);
-    if (db && roomId) deleteDoc(doc(db, "rooms", roomId, "players", id)).catch(() => {});
+    if (connectionMode === "cloud" && db && roomId) {
+      deleteDoc(doc(db, "rooms", roomId, "players", id)).catch(() => {});
+    }
   }
+}
+
+function closeLocalSocket() {
+  if (!localWs) return;
+  try {
+    if (localWs.readyState === WebSocket.OPEN && uid && roomId) {
+      localWs.send(JSON.stringify({ type: "leave", room: roomId, id: uid }));
+    }
+  } catch {}
+  try { localWs.close(); } catch {}
+  localWs = null;
 }
 
 function leaveRoom(reload) {
@@ -457,21 +526,22 @@ function leaveRoom(reload) {
   }
   sessionStarted = false;
   otherPlayerCount = 0;
-  if (uid && roomId && db) {
+  closeLocalSocket();
+  if (connectionMode === "cloud" && uid && roomId && db) {
     deleteDoc(doc(db, "rooms", roomId, "players", uid)).catch(() => {});
   }
   if (reload) location.reload();
 }
 
-function describePlayers(snap) {
+function describePlayers(docs) {
   const others = [];
-  snap.forEach(d => {
-    if (d.id === uid) return;
-    const p = d.data();
-    if (isPlayerStale(p)) return;
+  for (const d of docs) {
+    if (d.id === uid) continue;
+    const p = d.data;
+    if (isPlayerStale(p)) continue;
     const tracking = typeof p.x === "number" && p.presenting;
     others.push(`${p.name || "Player"}${tracking ? "" : " (not tracking)"}`);
-  });
+  }
   if (!others.length) {
     playerListEl.textContent = renderer.xr.isPresenting
       ? "Broadcasting your pose · no other players yet."
@@ -479,6 +549,90 @@ function describePlayers(snap) {
     return;
   }
   playerListEl.textContent = others.join(" · ");
+}
+
+function applyRemoteDocs(docs) {
+  const seen = new Set();
+  for (const d of docs) {
+    if (d.id === uid) continue;
+    const p = d.data;
+    if (isPlayerStale(p)) continue;
+    seen.add(d.id);
+    updateRemotePlayer(d.id, p);
+    const obj = remotePlayers.get(d.id);
+    if (obj) obj.userData.lastSeen = playerUpdatedAt(p) || Date.now();
+  }
+  for (const [id] of remotePlayers) {
+    if (!seen.has(id)) removeRemote(id);
+  }
+  describePlayers(docs);
+  const nextCount = seen.size;
+  const gainedPeer = otherPlayerCount === 0 && nextCount > 0;
+  otherPlayerCount = nextCount;
+  if (gainedPeer) publishPlayer(true).catch(console.error);
+}
+
+function applyLocalPeerMap() {
+  applyRemoteDocs(Object.entries(localPeerMap).map(([id, data]) => ({ id, data })));
+}
+
+function newLocalId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return "p-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function connectLocalRoom() {
+  return new Promise((resolve, reject) => {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${location.host}/ws`);
+    localWs = ws;
+    localPeerMap = {};
+    uid = newLocalId();
+    let settled = false;
+    const fail = err => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "join", room: roomId, id: uid, name: playerName }));
+    };
+    ws.onmessage = ev => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (!msg || !msg.type) return;
+      if (msg.type === "peers") {
+        localPeerMap = msg.peers && typeof msg.peers === "object" ? msg.peers : {};
+        applyLocalPeerMap();
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+        return;
+      }
+      if (msg.type === "state" && msg.id && msg.data) {
+        localPeerMap[msg.id] = msg.data;
+        applyLocalPeerMap();
+        return;
+      }
+      if (msg.type === "leave" && msg.id) {
+        delete localPeerMap[msg.id];
+        applyLocalPeerMap();
+        return;
+      }
+      if (msg.type === "error") {
+        fail(new Error(msg.message || "Local room error."));
+      }
+    };
+    ws.onerror = () => fail(new Error("Local network connection failed."));
+    ws.onclose = () => {
+      if (!settled) {
+        fail(new Error("Local network connection closed."));
+        return;
+      }
+      if (sessionStarted) statusEl.textContent = "Local connection lost";
+    };
+  });
 }
 
 function startFirebase(config) {
@@ -516,6 +670,7 @@ async function start() {
   playerName = nameInput.value.trim() || "Player";
   persistNamePreference();
   roomId = document.getElementById("room").value.trim() || "demo-room";
+  connectionMode = selectedConnection();
 
   const xrPromise = xrSupportedMode ? beginXRSessionFromGesture() : Promise.resolve(null);
   setupXR();
@@ -525,41 +680,36 @@ async function start() {
   });
 
   try {
-    startFirebase(firebaseConfig);
-    const cred = await signInAnonymously(auth);
-    uid = cred.user.uid;
-
-    roomRef = doc(db, "rooms", roomId);
-    await setDoc(roomRef, {
-      updatedAt: serverTimestamp(),
-      lastJoiner: uid
-    }, { merge: true });
-
-    playersUnsub = onSnapshot(collection(db, "rooms", roomId, "players"), snap => {
-      const seen = new Set();
-      snap.forEach(d => {
-        if (d.id === uid) return;
-        const p = d.data();
-        if (isPlayerStale(p)) return;
-        seen.add(d.id);
-        updateRemotePlayer(d.id, p);
-        const obj = remotePlayers.get(d.id);
-        if (obj) obj.userData.lastSeen = playerUpdatedAt(p) || Date.now();
-      });
-      for (const [id, obj] of remotePlayers) {
-        if (!seen.has(id)) removeRemote(id);
+    if (connectionMode === "local") {
+      lanReady = await probeLanServer();
+      if (!lanReady) {
+        throw new Error("Local network needs the LAN server. Run python server.py in the NameTagsXR folder and open the HTTPS URL it prints on every device.");
       }
-      pruneStalePlayers(snap);
-      describePlayers(snap);
-      const nextCount = seen.size;
-      const gainedPeer = otherPlayerCount === 0 && nextCount > 0;
-      otherPlayerCount = nextCount;
-      if (gainedPeer) publishPlayer(true).catch(console.error);
-    });
+      await connectLocalRoom();
+    } else {
+      startFirebase(firebaseConfig);
+      const cred = await signInAnonymously(auth);
+      uid = cred.user.uid;
+
+      roomRef = doc(db, "rooms", roomId);
+      await setDoc(roomRef, {
+        updatedAt: serverTimestamp(),
+        lastJoiner: uid
+      }, { merge: true });
+
+      playersUnsub = onSnapshot(collection(db, "rooms", roomId, "players"), snap => {
+        const docs = [];
+        snap.forEach(d => docs.push({ id: d.id, data: d.data() }));
+        applyRemoteDocs(docs);
+        pruneStalePlayers(snap);
+      });
+    }
 
     setup.classList.add("hidden");
     hud.classList.remove("hidden");
-    roomLabel.textContent = `Room: ${roomId}`;
+    roomLabel.textContent = connectionMode === "local"
+      ? `Room: ${roomId} · local`
+      : `Room: ${roomId}`;
     sessionStarted = true;
     statusEl.textContent = "Connected";
     pruneTimer = setInterval(() => pruneStalePlayers(), HEARTBEAT_MS);
@@ -577,9 +727,13 @@ async function start() {
   } catch (e) {
     console.error(e);
     if (currentXRSession) currentXRSession.end();
-    setupError.textContent = firebaseErrorMessage(e);
+    closeLocalSocket();
+    setupError.textContent = connectionMode === "local"
+      ? (e && e.message) || "Local network connection failed."
+      : firebaseErrorMessage(e);
     startButton.disabled = false;
     startButton.textContent = "Enter Room";
+    updateConnectionHint();
   }
 }
 
@@ -631,9 +785,7 @@ function onXRSessionEnded() {
   controls.enabled = true;
   setPassthrough(false);
   statusEl.textContent = "XR stopped · pose is no longer broadcasting";
-  if (uid && roomId && db) {
-    setDoc(doc(db, "rooms", roomId, "players", uid), { presenting: false }, { merge: true }).catch(() => {});
-  }
+  publishPlayer(true).catch(() => {});
 }
 
 function setupXR() {
@@ -989,7 +1141,7 @@ async function publishPlayer(force = false) {
     name: playerName,
     presenting: renderer.xr.isPresenting,
     calibrated,
-    updatedAt: serverTimestamp()
+    updatedAt: connectionMode === "local" ? Date.now() : serverTimestamp()
   };
 
   if (syncing && renderer.xr.isPresenting) {
@@ -1003,6 +1155,14 @@ async function publishPlayer(force = false) {
     payload.hands = captureHands(lastXRFrame);
   }
 
+  if (connectionMode === "local") {
+    if (localWs && localWs.readyState === WebSocket.OPEN) {
+      localWs.send(JSON.stringify({ type: "state", room: roomId, id: uid, data: payload }));
+    }
+    return;
+  }
+
+  if (!db || !roomId) return;
   await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: !syncing || !renderer.xr.isPresenting });
 }
 

@@ -54,6 +54,19 @@ label.check input {
   margin: 0;
   accent-color: #fff;
 }
+fieldset.conn {
+  border: 1px solid #444;
+  border-radius: 10px;
+  margin: 12px 0 8px;
+  padding: 4px 12px 8px;
+}
+fieldset.conn legend {
+  padding: 0 6px;
+  font-size: 14px;
+  opacity: .85;
+}
+fieldset.conn .check { margin: 8px 0; }
+#localHint { margin: 0 0 8px; }
 input, textarea {
   box-sizing: border-box;
   display: block;

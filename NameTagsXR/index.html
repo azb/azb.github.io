@@ -32,6 +32,19 @@
       <input id="room" maxlength="48" placeholder="demo-room" value="demo-room" />
     </label>
 
+    <fieldset class="conn">
+      <legend>Connection</legend>
+      <label class="check">
+        <input type="radio" name="conn" value="cloud" checked />
+        Cloud
+      </label>
+      <label class="check">
+        <input type="radio" name="conn" value="local" />
+        Local network
+      </label>
+    </fieldset>
+    <p id="localHint" class="small hidden"></p>
+
     <button id="start" class="primary-xl">Enter Room</button>
     <p id="setupError" class="error"></p>
   </div>
