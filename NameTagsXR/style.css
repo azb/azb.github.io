@@ -82,6 +82,15 @@ button:disabled {
   cursor: wait;
 }
 button.secondary { background: #444; color: #fff; }
+button.primary-xl {
+  display: block;
+  width: 100%;
+  margin: 12px 0 0;
+  padding: 20px 28px;
+  border-radius: 16px;
+  font-size: 2em;
+  line-height: 1.1;
+}
 .small { font-size: 12px; opacity: .8; }
 .error { color: #ff8080; min-height: 1.2em; }
 .hidden { display: none; }
