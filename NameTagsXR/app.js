@@ -450,7 +450,7 @@ function createRemoteHand(handedness) {
   hand.add(model);
   hand.dispatchEvent({
     type: "connected",
-    data: { handedness, hand: { handedness } }
+    data: { handedness: handedness, hand: { handedness: handedness } }
   });
   hand.visible = false;
   scene.add(hand);
@@ -768,7 +768,7 @@ function describeCloudPlayers() {
     const tracking = obj && obj.visible && obj.userData.tracking;
     const peer = rtcPeers.get(id);
     const linking = peer && (!peer.channel || peer.channel.readyState !== "open");
-    others.push(`${p.name || "Player"}${tracking ? "" : linking ? " (linking…)" : " (not tracking)"}`);
+    others.push((p.name || "Player") + (tracking ? "" : linking ? " (linking…)" : " (not tracking)"));
   }
   if (!others.length) {
     playerListEl.textContent = renderer.xr.isPresenting
@@ -851,7 +851,7 @@ function describePlayers(docs) {
     const p = d.data;
     if (isPlayerStale(p)) continue;
     const tracking = typeof p.x === "number" && p.presenting;
-    others.push(`${p.name || "Player"}${tracking ? "" : " (not tracking)"}`);
+    others.push((p.name || "Player") + (tracking ? "" : " (not tracking)"));
   }
   if (!others.length) {
     playerListEl.textContent = renderer.xr.isPresenting

@@ -71,7 +71,7 @@
   </div>
 
   <script type="module">
-    import("./app.js").catch(err => {
+    import("./app.js?v=15").catch(err => {
       const el = document.getElementById("setupError");
       el.textContent = "Failed to load app: " + (err && err.message ? err.message : err);
     });
