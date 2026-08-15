@@ -30,6 +30,8 @@ IP_META = os.path.join(ROOT, "lan-ip.txt")
 CDN_CACHE = os.path.join(ROOT, "vendor-cdn")
 THREE_CDN = "https://cdn.jsdelivr.net/npm/three@0.180.0"
 THREE_LOCAL = "/cdn/three"
+HAND_CDN = "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/generic-hand"
+HAND_LOCAL = "/cdn/hands"
 WS_MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 rooms_lock = threading.Lock()
@@ -313,7 +315,10 @@ class LanHandler(SimpleHTTPRequestHandler):
             self._serve_index()
             return
         if path.startswith(THREE_LOCAL + "/"):
-            self._proxy_three(path[len(THREE_LOCAL) + 1 :])
+            self._proxy_cdn(THREE_CDN, path[len(THREE_LOCAL) + 1 :], "three")
+            return
+        if path.startswith(HAND_LOCAL + "/"):
+            self._proxy_cdn(HAND_CDN, path[len(HAND_LOCAL) + 1 :], "hands")
             return
         super().do_GET()
 
@@ -336,19 +341,20 @@ class LanHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def _proxy_three(self, rel: str) -> None:
+    def _proxy_cdn(self, base: str, rel: str, folder: str) -> None:
         rel = rel.lstrip("/")
         if not rel or ".." in rel.split("/"):
             self.send_error(400, "Bad path")
             return
-        os.makedirs(CDN_CACHE, exist_ok=True)
-        cache_path = os.path.join(CDN_CACHE, rel.replace("/", os.sep))
+        cache_root = os.path.join(CDN_CACHE, folder)
+        os.makedirs(cache_root, exist_ok=True)
+        cache_path = os.path.join(cache_root, rel.replace("/", os.sep))
         data = None
         if os.path.isfile(cache_path):
             with open(cache_path, "rb") as fh:
                 data = fh.read()
         else:
-            url = f"{THREE_CDN}/{rel}"
+            url = f"{base.rstrip('/')}/{rel}"
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "NameTagsXR"})
                 with urllib.request.urlopen(req, timeout=25) as resp:
@@ -356,12 +362,20 @@ class LanHandler(SimpleHTTPRequestHandler):
             except (urllib.error.URLError, TimeoutError, OSError) as err:
                 self.send_error(502, f"Could not fetch {rel}: {err}")
                 return
-            os.makedirs(os.path.dirname(cache_path) or CDN_CACHE, exist_ok=True)
+            os.makedirs(os.path.dirname(cache_path) or cache_root, exist_ok=True)
             with open(cache_path, "wb") as fh:
                 fh.write(data)
-        ctype = "text/javascript" if rel.endswith(".js") else "application/octet-stream"
-        if rel.endswith(".css"):
+        lowered = rel.lower()
+        if lowered.endswith(".js") or lowered.endswith(".mjs"):
+            ctype = "text/javascript"
+        elif lowered.endswith(".glb"):
+            ctype = "model/gltf-binary"
+        elif lowered.endswith(".gltf"):
+            ctype = "model/gltf+json"
+        elif lowered.endswith(".css"):
             ctype = "text/css"
+        else:
+            ctype = "application/octet-stream"
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
