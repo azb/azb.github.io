@@ -88,8 +88,13 @@ redDot.position.set(-0.5, 1, -1.5);
 blueDot.position.set(0.5, 1, -1.5);
 scene.add(redDot, blueDot);
 
-const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
+const _pointerOrigin = new THREE.Vector3();
+const _pointerDir = new THREE.Vector3();
+const _oc = new THREE.Vector3();
+const GRAB_NEAR = .22;
+const GRAB_RADIUS = .28;
+const GRAB_FAR = 12;
 const controllers = [];
 const remotePlayers = new Map();
 
@@ -710,60 +715,112 @@ function setupXR() {
     hand.add(handModelFactory.createHandModel(hand, "spheres"));
     scene.add(hand);
     localHands.push(hand);
+
+    const grabFromController = { target: controller };
+    hand.addEventListener("pinchstart", () => onSelectStart(grabFromController));
+    hand.addEventListener("pinchend", () => onSelectEnd(grabFromController));
   }
 
-  // Pointer-like controller rays.
   controllers.forEach(c => {
     const ray = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]),
-      new THREE.LineBasicMaterial({ color: 0xffffff })
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .85 })
     );
-    ray.scale.z = 4;
+    ray.scale.z = GRAB_FAR;
     c.add(ray);
+    c.userData.rayLine = ray;
   });
 
   renderer.setAnimationLoop(render);
 }
 
-function findGrabbable(controller) {
-  const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-  for (const dot of [redDot, blueDot]) {
-    if (dot.visible && origin.distanceTo(dot.position) < .18) return dot;
-  }
-
+function pointerFrom(controller, origin, dir) {
+  origin.setFromMatrixPosition(controller.matrixWorld);
   tempMatrix.identity().extractRotation(controller.matrixWorld);
-  raycaster.ray.origin.copy(origin);
-  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-  const hits = raycaster.intersectObjects([redDot, blueDot], true);
-  if (!hits.length) return null;
-  let root = hits[0].object;
-  while (root.parent && !root.userData.grabbable) root = root.parent;
-  return root.userData.grabbable ? root : null;
+  dir.set(0, 0, -1).applyMatrix4(tempMatrix);
+}
+
+function rayHitSphere(origin, dir, center, radius, maxDist) {
+  _oc.copy(origin).sub(center);
+  const b = _oc.dot(dir);
+  const c = _oc.dot(_oc) - radius * radius;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const s = Math.sqrt(disc);
+  let t = -b - s;
+  if (t < .03) t = -b + s;
+  if (t < .03 || t > maxDist) return null;
+  return t;
+}
+
+function findGrabbable(controller) {
+  pointerFrom(controller, _pointerOrigin, _pointerDir);
+
+  let near = null;
+  let nearDist = GRAB_NEAR;
+  for (const dot of [redDot, blueDot]) {
+    if (!dot.visible) continue;
+    const d = _pointerOrigin.distanceTo(dot.position);
+    if (d < nearDist) {
+      nearDist = d;
+      near = dot;
+    }
+  }
+  if (near) return { target: near, mode: "near" };
+
+  let best = null;
+  let bestT = GRAB_FAR;
+  for (const dot of [redDot, blueDot]) {
+    if (!dot.visible) continue;
+    const t = rayHitSphere(_pointerOrigin, _pointerDir, dot.position, GRAB_RADIUS, GRAB_FAR);
+    if (t != null && t < bestT) {
+      bestT = t;
+      best = dot;
+    }
+  }
+  if (best) return { target: best, mode: "ray", distance: bestT };
+  return null;
 }
 
 function onSelectStart(e) {
   const controller = e.target;
   controller.userData.selecting = true;
-  const grabbed = findGrabbable(controller);
-  if (!grabbed) return;
-  const cp = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-  controller.userData.grabbed = grabbed;
-  controller.userData.grabOffset = grabbed.position.clone().sub(cp);
+  const hit = findGrabbable(controller);
+  if (!hit) return;
+  controller.userData.grabbed = hit.target;
+  controller.userData.grabMode = hit.mode;
+  if (hit.mode === "ray") {
+    controller.userData.grabDistance = hit.distance;
+  } else {
+    const cp = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+    controller.userData.grabOffset = hit.target.position.clone().sub(cp);
+  }
 }
 
 function onSelectEnd(e) {
   const controller = e.target;
   controller.userData.selecting = false;
   controller.userData.grabbed = null;
+  controller.userData.grabMode = null;
 }
 
 function updateGrab() {
   for (const c of controllers) {
+    const hover = c.userData.grabbed ? { target: c.userData.grabbed } : findGrabbable(c);
+    if (c.userData.rayLine) {
+      const aiming = hover && (c.userData.grabbed || hover.mode === "ray");
+      c.userData.rayLine.material.color.set(aiming ? 0xffff66 : 0xffffff);
+    }
+
     const g = c.userData.grabbed;
     if (!g) continue;
-    // Controller position is in the renderer's XR reference space.
-    const p = new THREE.Vector3().setFromMatrixPosition(c.matrixWorld);
-    g.position.copy(p.add(c.userData.grabOffset));
+    if (c.userData.grabMode === "ray") {
+      pointerFrom(c, _pointerOrigin, _pointerDir);
+      g.position.copy(_pointerOrigin).addScaledVector(_pointerDir, c.userData.grabDistance);
+    } else {
+      const p = new THREE.Vector3().setFromMatrixPosition(c.matrixWorld);
+      g.position.copy(p.add(c.userData.grabOffset));
+    }
     g.position.y = Math.max(.01, g.position.y);
   }
 }
