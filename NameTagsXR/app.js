@@ -86,7 +86,8 @@ const redDot = makeDot(0xff3030, "RED");
 const blueDot = makeDot(0x3080ff, "BLUE");
 redDot.position.set(-0.5, 1, -1.5);
 blueDot.position.set(0.5, 1, -1.5);
-scene.add(redDot, blueDot);
+const doneButton = makeDoneButton();
+scene.add(redDot, blueDot, doneButton);
 
 const tempMatrix = new THREE.Matrix4();
 const _pointerOrigin = new THREE.Vector3();
@@ -198,7 +199,7 @@ document.getElementById("recalibrate").onclick = () => {
   calibrated = false;
   calibration = null;
   statusEl.textContent = "Recalibration: place red + blue again";
-  redDot.visible = blueDot.visible = true;
+  redDot.visible = blueDot.visible = doneButton.visible = true;
 };
 document.getElementById("exit").onclick = () => leaveRoom(true);
 
@@ -235,6 +236,23 @@ function makeDot(color, text) {
 
   group.userData.grabbable = true;
   group.userData.radius = .14;
+  return group;
+}
+
+function makeDoneButton() {
+  const group = new THREE.Group();
+  const plate = new THREE.Mesh(
+    new THREE.BoxGeometry(.36, .14, .05),
+    new THREE.MeshStandardMaterial({ color: 0x3ddc84, emissive: 0x145c32, emissiveIntensity: .55 })
+  );
+  group.add(plate);
+  group.userData.plate = plate;
+  const label = makeTextSprite("DONE");
+  label.position.z = .04;
+  label.scale.set(.5, .16, 1);
+  group.add(label);
+  group.userData.pressable = true;
+  group.userData.radius = .22;
   return group;
 }
 
@@ -753,6 +771,13 @@ function rayHitSphere(origin, dir, center, radius, maxDist) {
   return t;
 }
 
+function findDoneHit(controller) {
+  if (!doneButton.visible) return null;
+  pointerFrom(controller, _pointerOrigin, _pointerDir);
+  if (_pointerOrigin.distanceTo(doneButton.position) < GRAB_NEAR) return true;
+  return rayHitSphere(_pointerOrigin, _pointerDir, doneButton.position, .24, GRAB_FAR) != null;
+}
+
 function findGrabbable(controller) {
   pointerFrom(controller, _pointerOrigin, _pointerDir);
 
@@ -785,6 +810,10 @@ function findGrabbable(controller) {
 function onSelectStart(e) {
   const controller = e.target;
   controller.userData.selecting = true;
+  if (findDoneHit(controller)) {
+    hideCalibrationDots();
+    return;
+  }
   const hit = findGrabbable(controller);
   if (!hit) return;
   controller.userData.grabbed = hit.target;
@@ -805,11 +834,14 @@ function onSelectEnd(e) {
 }
 
 function updateGrab() {
+  let aimingDoneAny = false;
   for (const c of controllers) {
     const hover = c.userData.grabbed ? { target: c.userData.grabbed } : findGrabbable(c);
+    const aimingDone = !c.userData.grabbed && findDoneHit(c);
+    if (aimingDone) aimingDoneAny = true;
     if (c.userData.rayLine) {
-      const aiming = hover && (c.userData.grabbed || hover.mode === "ray");
-      c.userData.rayLine.material.color.set(aiming ? 0xffff66 : 0xffffff);
+      const aiming = aimingDone || (hover && (c.userData.grabbed || hover.mode === "ray"));
+      c.userData.rayLine.material.color.set(aimingDone ? 0x3ddc84 : aiming ? 0xffff66 : 0xffffff);
     }
 
     const g = c.userData.grabbed;
@@ -822,6 +854,9 @@ function updateGrab() {
       g.position.copy(p.add(c.userData.grabOffset));
     }
     g.position.y = Math.max(.01, g.position.y);
+  }
+  if (doneButton.userData.plate) {
+    doneButton.userData.plate.material.emissiveIntensity = aimingDoneAny ? 1.1 : .55;
   }
 }
 
@@ -940,9 +975,42 @@ function calibrate() {
   blueDot.position.set(1, 1, -1.5);
   // Once calibrated, show canonical dots as a visual reference.
   redDot.visible = blueDot.visible = false;
+  doneButton.visible = false;
 
   statusEl.textContent = "Calibrated · looking for other players";
   publishPlayer(true);
+}
+
+function hideCalibrationDots() {
+  redDot.visible = blueDot.visible = doneButton.visible = false;
+  for (const c of controllers) {
+    if (c.userData.grabbed === redDot || c.userData.grabbed === blueDot) {
+      c.userData.grabbed = null;
+      c.userData.grabMode = null;
+    }
+  }
+  const red = redDot.position.clone();
+  const blue = blueDot.position.clone();
+  const flat = new THREE.Vector3(blue.x - red.x, 0, blue.z - red.z);
+  if (flat.length() >= .15) {
+    const localAngle = Math.atan2(flat.z, flat.x);
+    calibration = { origin: red, yaw: -localAngle };
+    calibrated = true;
+    statusEl.textContent = "Calibrated · looking for other players";
+    publishPlayer(true);
+  } else {
+    statusEl.textContent = "Markers hidden";
+  }
+}
+
+function updateDoneButton() {
+  if (!doneButton.visible) return;
+  doneButton.position.lerpVectors(redDot.position, blueDot.position, .5);
+  doneButton.position.y += .16;
+  const look = new THREE.Vector3();
+  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(look);
+  else camera.getWorldPosition(look);
+  doneButton.lookAt(look);
 }
 
 async function publishPlayer(force = false) {
@@ -975,6 +1043,7 @@ async function publishPlayer(force = false) {
 
 function render(time, frame) {
   lastXRFrame = frame || null;
+  updateDoneButton();
   updateGrab();
   renderer.render(scene, camera);
   if (!renderer.xr.isPresenting) controls.update();
