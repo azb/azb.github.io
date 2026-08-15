@@ -64,8 +64,8 @@ scene.add(floor);
 // Canonical room coordinates are red=(0,0,0), blue=(1,0,0).
 const redDot = makeDot(0xff3030, "RED");
 const blueDot = makeDot(0x3080ff, "BLUE");
-redDot.position.set(-0.5, 0.02, -1.5);
-blueDot.position.set(0.5, 0.02, -1.5);
+redDot.position.set(-0.5, 1, -1.5);
+blueDot.position.set(0.5, 1, -1.5);
 scene.add(redDot, blueDot);
 
 const raycaster = new THREE.Raycaster();
@@ -610,8 +610,8 @@ function calibrate() {
   };
   calibrated = true;
 
-  redDot.position.set(0, .02, -1.5);
-  blueDot.position.set(1, .02, -1.5);
+  redDot.position.set(0, 1, -1.5);
+  blueDot.position.set(1, 1, -1.5);
   // Once calibrated, show canonical dots as a visual reference.
   redDot.visible = blueDot.visible = false;
 
