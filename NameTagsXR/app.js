@@ -498,6 +498,15 @@ function createRemotePlayer(id, name) {
 
 function updateRemotePlayer(id, p) {
   let obj = remotePlayers.get(id);
+  if (!p.presenting) {
+    if (!obj) return;
+    obj.visible = false;
+    obj.userData.tracking = false;
+    applyHandJoints(obj.userData.leftHand, null);
+    applyHandJoints(obj.userData.rightHand, null);
+    return;
+  }
+
   if (!obj) {
     obj = createRemotePlayer(id, p.name || "Player");
     remotePlayers.set(id, obj);
@@ -512,9 +521,8 @@ function updateRemotePlayer(id, p) {
       obj.userData.placed = true;
       frameSpectatorOn(obj);
     }
-    const rest = restHandsForPlayer({ x: 0, y: 1.2, z: 0, yaw: 0 });
-    applyHandJoints(obj.userData.leftHand, rest.left);
-    applyHandJoints(obj.userData.rightHand, rest.right);
+    applyHandJoints(obj.userData.leftHand, null);
+    applyHandJoints(obj.userData.rightHand, null);
     return;
   }
 
@@ -525,13 +533,13 @@ function updateRemotePlayer(id, p) {
     obj.position.copy(local);
     obj.userData.placed = true;
   }
-  obj.userData.tracking = !!p.presenting;
-  const hands = p.presenting ? restHandsForPlayer(p) : null;
+  obj.userData.tracking = true;
+  const hands = restHandsForPlayer(p);
   obj.userData.hands = hands;
   obj.visible = true;
   applyHandJoints(obj.userData.leftHand, hands && hands.left);
   applyHandJoints(obj.userData.rightHand, hands && hands.right);
-  if (gainedTracking && obj.userData.tracking) frameSpectatorOn(obj);
+  if (gainedTracking) frameSpectatorOn(obj);
 }
 
 function packedJoints(data) {
@@ -1313,12 +1321,14 @@ function setupXR() {
 
     const hand = renderer.xr.getHand(i);
     hand.userData.handedness = null;
+    hand.visible = false;
     hand.addEventListener("connected", e => {
       hand.userData.handedness = e.data.handedness;
       hand.visible = true;
     });
     hand.addEventListener("disconnected", () => {
       hand.userData.handedness = null;
+      hand.visible = false;
     });
     hand.add(handModelFactory.createHandModel(hand, "mesh"));
     scene.add(hand);
