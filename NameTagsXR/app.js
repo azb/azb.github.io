@@ -25,24 +25,10 @@ let calibration = null;
 let lastNetworkSend = 0;
 let sessionStarted = false;
 let pruneTimer = null;
+let otherPlayerCount = 0;
 const POSE_MS = 80;
 const HEARTBEAT_MS = 2000;
 const STALE_MS = 8000;
-const HAND_JOINTS = [
-  "wrist",
-  "thumb-phalanx-proximal", "thumb-tip",
-  "index-finger-phalanx-proximal", "index-finger-tip",
-  "middle-finger-phalanx-proximal", "middle-finger-tip",
-  "ring-finger-phalanx-proximal", "ring-finger-tip",
-  "pinky-finger-phalanx-proximal", "pinky-finger-tip"
-];
-const FINGER_CHAINS = [
-  ["wrist", "thumb-phalanx-proximal", "thumb-tip"],
-  ["wrist", "index-finger-phalanx-proximal", "index-finger-tip"],
-  ["wrist", "middle-finger-phalanx-proximal", "middle-finger-tip"],
-  ["wrist", "ring-finger-phalanx-proximal", "ring-finger-tip"],
-  ["wrist", "pinky-finger-phalanx-proximal", "pinky-finger-tip"]
-];
 const localHands = [];
 const _handPos = new THREE.Vector3();
 const handModelFactory = new XRHandModelFactory();
@@ -242,17 +228,26 @@ function makeDot(color, text) {
 function makeDoneButton() {
   const group = new THREE.Group();
   const plate = new THREE.Mesh(
-    new THREE.BoxGeometry(.36, .14, .05),
-    new THREE.MeshStandardMaterial({ color: 0x3ddc84, emissive: 0x145c32, emissiveIntensity: .55 })
+    new THREE.SphereGeometry(.11, 24, 16),
+    new THREE.MeshBasicMaterial({ color: 0x3ddc84 })
   );
   group.add(plate);
   group.userData.plate = plate;
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(.13, .16, 32),
+    new THREE.MeshBasicMaterial({ color: 0x9effc2, side: THREE.DoubleSide, transparent: true, opacity: .95 })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+
   const label = makeTextSprite("DONE");
-  label.position.z = .04;
-  label.scale.set(.5, .16, 1);
+  label.position.y = .22;
+  label.scale.set(.7, .22, 1);
   group.add(label);
+
   group.userData.pressable = true;
-  group.userData.radius = .22;
+  group.userData.radius = .28;
   return group;
 }
 
@@ -294,33 +289,19 @@ function createNameTag(name) {
 
 function createRemoteHand(color) {
   const group = new THREE.Group();
-  group.userData.points = {};
-  const mat = new THREE.MeshStandardMaterial({
-    color,
-    emissive: color,
-    emissiveIntensity: .8,
-    roughness: .4,
-    metalness: .1
-  });
-  for (const name of HAND_JOINTS) {
-    const r = name === "wrist" ? .04 : name.endsWith("tip") ? .016 : .02;
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
-    mesh.visible = false;
-    mesh.userData.target = new THREE.Vector3();
-    group.add(mesh);
-    group.userData.points[name] = mesh;
-  }
-  const positions = new Float32Array(FINGER_CHAINS.length * 4 * 3);
-  const lineGeo = new THREE.BufferGeometry();
-  lineGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  lineGeo.setDrawRange(0, 0);
-  const line = new THREE.LineSegments(
-    lineGeo,
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: .9 })
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(.045, 12, 10),
+    new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: .8,
+      roughness: .4,
+      metalness: .1
+    })
   );
-  group.add(line);
-  group.userData.line = line;
-  group.userData.linePos = positions;
+  mesh.userData.target = new THREE.Vector3();
+  group.add(mesh);
+  group.userData.mesh = mesh;
   group.visible = false;
   scene.add(group);
   return group;
@@ -381,55 +362,33 @@ function updateRemotePlayer(id, p) {
   applyHandJoints(obj.userData.rightHand, obj.userData.hands && obj.userData.hands.right);
 }
 
-function applyHandJoints(hand, joints) {
+function handPosition(data) {
+  if (!data) return null;
+  if (Array.isArray(data) && data.length >= 3) return data;
+  if (Array.isArray(data.wrist) && data.wrist.length >= 3) return data.wrist;
+  return null;
+}
+
+function applyHandJoints(hand, data) {
   if (!hand) return;
-  if (!joints || !joints.wrist) {
+  const arr = handPosition(data);
+  const mesh = hand.userData.mesh;
+  if (!arr || !mesh) {
     hand.visible = false;
     return;
   }
   hand.visible = true;
-  for (const name of HAND_JOINTS) {
-    const mesh = hand.userData.points[name];
-    const arr = joints[name];
-    if (!mesh) continue;
-    if (!Array.isArray(arr) || arr.length < 3) {
-      mesh.visible = false;
-      continue;
-    }
-    mesh.userData.target.copy(roomToLocal(new THREE.Vector3(arr[0], arr[1], arr[2])));
-    if (!mesh.userData.placed) {
-      mesh.position.copy(mesh.userData.target);
-      mesh.userData.placed = true;
-    }
-    mesh.visible = true;
+  mesh.userData.target.copy(roomToLocal(new THREE.Vector3(arr[0], arr[1], arr[2])));
+  if (!mesh.userData.placed) {
+    mesh.position.copy(mesh.userData.target);
+    mesh.userData.placed = true;
   }
 }
 
 function updateHandVisual(hand) {
   if (!hand || !hand.visible) return;
-  let segs = 0;
-  const pos = hand.userData.linePos;
-  for (const name of HAND_JOINTS) {
-    const mesh = hand.userData.points[name];
-    if (mesh && mesh.visible && mesh.userData.target) mesh.position.lerp(mesh.userData.target, 0.4);
-  }
-  for (const chain of FINGER_CHAINS) {
-    for (let i = 0; i < chain.length - 1; i++) {
-      const a = hand.userData.points[chain[i]];
-      const b = hand.userData.points[chain[i + 1]];
-      if (!a || !b || !a.visible || !b.visible) continue;
-      pos[segs * 6] = a.position.x;
-      pos[segs * 6 + 1] = a.position.y;
-      pos[segs * 6 + 2] = a.position.z;
-      pos[segs * 6 + 3] = b.position.x;
-      pos[segs * 6 + 4] = b.position.y;
-      pos[segs * 6 + 5] = b.position.z;
-      segs++;
-    }
-  }
-  const line = hand.userData.line;
-  line.geometry.attributes.position.needsUpdate = true;
-  line.geometry.setDrawRange(0, segs * 2);
+  const mesh = hand.userData.mesh;
+  if (mesh && mesh.userData.target) mesh.position.lerp(mesh.userData.target, 0.4);
 }
 
 function updateRemoteVisuals() {
@@ -494,6 +453,7 @@ function leaveRoom(reload) {
     playersUnsub = null;
   }
   sessionStarted = false;
+  otherPlayerCount = 0;
   if (uid && roomId && db) {
     deleteDoc(doc(db, "rooms", roomId, "players", uid)).catch(() => {});
   }
@@ -588,6 +548,10 @@ async function start() {
       }
       pruneStalePlayers(snap);
       describePlayers(snap);
+      const nextCount = seen.size;
+      const gainedPeer = otherPlayerCount === 0 && nextCount > 0;
+      otherPlayerCount = nextCount;
+      if (gainedPeer) publishPlayer(true).catch(console.error);
     });
 
     setup.classList.add("hidden");
@@ -775,7 +739,7 @@ function findDoneHit(controller) {
   if (!doneButton.visible) return null;
   pointerFrom(controller, _pointerOrigin, _pointerDir);
   if (_pointerOrigin.distanceTo(doneButton.position) < GRAB_NEAR) return true;
-  return rayHitSphere(_pointerOrigin, _pointerDir, doneButton.position, .24, GRAB_FAR) != null;
+  return rayHitSphere(_pointerOrigin, _pointerDir, doneButton.position, .28, GRAB_FAR) != null;
 }
 
 function findGrabbable(controller) {
@@ -856,7 +820,7 @@ function updateGrab() {
     g.position.y = Math.max(.01, g.position.y);
   }
   if (doneButton.userData.plate) {
-    doneButton.userData.plate.material.emissiveIntensity = aimingDoneAny ? 1.1 : .55;
+    doneButton.userData.plate.material.color.set(aimingDoneAny ? 0xb6ffd4 : 0x3ddc84);
   }
 }
 
@@ -891,17 +855,15 @@ function captureHands(frame) {
         unnamed++;
       }
       if (source.hand) {
-        const packed = {};
-        for (const name of HAND_JOINTS) {
-          const jointSpace = source.hand.get ? source.hand.get(name) : null;
-          if (!jointSpace) continue;
+        const jointSpace = source.hand.get ? source.hand.get("wrist") : null;
+        if (jointSpace) {
           const pose = frame.getJointPose(jointSpace, refSpace);
-          if (!pose) continue;
-          const p = pose.transform.position;
-          const room = localToRoom(_handPos.set(p.x, p.y, p.z));
-          packed[name] = [compact(room.x), compact(room.y), compact(room.z)];
+          if (pose) {
+            const p = pose.transform.position;
+            const room = localToRoom(_handPos.set(p.x, p.y, p.z));
+            out[side] = [compact(room.x), compact(room.y), compact(room.z)];
+          }
         }
-        if (packed.wrist) out[side] = packed;
         continue;
       }
       const space = source.gripSpace || source.targetRaySpace;
@@ -910,7 +872,7 @@ function captureHands(frame) {
       if (!pose) continue;
       const p = pose.transform.position;
       const room = localToRoom(_handPos.set(p.x, p.y, p.z));
-      out[side] = { wrist: [compact(room.x), compact(room.y), compact(room.z)] };
+      out[side] = [compact(room.x), compact(room.y), compact(room.z)];
     }
     if (out.left || out.right) return out;
   }
@@ -921,18 +883,12 @@ function captureHands(frame) {
     const joints = hand.joints;
     const wrist = joints && joints.wrist;
     if (!wrist) continue;
-    const packed = {};
-    for (const name of HAND_JOINTS) {
-      const joint = joints[name];
-      if (!joint) continue;
-      packed[name] = worldToRoomArray(joint);
-    }
-    if (packed.wrist) out[side] = packed;
+    out[side] = worldToRoomArray(wrist);
   }
   for (const c of controllers) {
     const side = c.userData.handedness;
     if ((side !== "left" && side !== "right") || out[side]) continue;
-    out[side] = { wrist: worldToRoomArray(c) };
+    out[side] = worldToRoomArray(c);
   }
   return out;
 }
@@ -1006,17 +962,21 @@ function hideCalibrationDots() {
 function updateDoneButton() {
   if (!doneButton.visible) return;
   doneButton.position.lerpVectors(redDot.position, blueDot.position, .5);
-  doneButton.position.y += .16;
-  const look = new THREE.Vector3();
-  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(look);
-  else camera.getWorldPosition(look);
-  doneButton.lookAt(look);
+  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(_oc);
+  else camera.getWorldPosition(_oc);
+  _oc.sub(doneButton.position);
+  _oc.y = 0;
+  if (_oc.lengthSq() < 1e-6) _oc.set(0, 0, 1);
+  else _oc.normalize();
+  doneButton.position.addScaledVector(_oc, .15);
+  doneButton.position.y += .2;
 }
 
 async function publishPlayer(force = false) {
   if (!sessionStarted || !uid) return;
   const now = performance.now();
-  const interval = renderer.xr.isPresenting ? POSE_MS : HEARTBEAT_MS;
+  const syncing = otherPlayerCount > 0;
+  const interval = syncing && renderer.xr.isPresenting ? POSE_MS : HEARTBEAT_MS;
   if (!force && now - lastNetworkSend < interval) return;
   lastNetworkSend = now;
 
@@ -1027,7 +987,7 @@ async function publishPlayer(force = false) {
     updatedAt: serverTimestamp()
   };
 
-  if (renderer.xr.isPresenting) {
+  if (syncing && renderer.xr.isPresenting) {
     const localHead = getLocalHeadPosition();
     if (Number.isFinite(localHead.x + localHead.y + localHead.z)) {
       const roomHead = localToRoom(localHead);
@@ -1038,7 +998,7 @@ async function publishPlayer(force = false) {
     payload.hands = captureHands(lastXRFrame);
   }
 
-  await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: !renderer.xr.isPresenting });
+  await setDoc(doc(db, "rooms", roomId, "players", uid), payload, { merge: !syncing || !renderer.xr.isPresenting });
 }
 
 function render(time, frame) {
