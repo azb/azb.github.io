@@ -289,7 +289,7 @@ function describePlayers(snap) {
   if (!others.length) {
     playerListEl.textContent = renderer.xr.isPresenting
       ? "Broadcasting your pose · no other players yet."
-      : "No other players yet. On Spectacles, enter the room and start AR, then walk.";
+      : "No other players yet. On another XR device, enter the room and start AR, then walk.";
     return;
   }
   playerListEl.textContent = others.join(" · ");
@@ -363,7 +363,7 @@ async function start() {
     hud.classList.remove("hidden");
     roomLabel.textContent = `Room: ${roomId}`;
     sessionStarted = true;
-    statusEl.textContent = "Connected · start AR on Spectacles to broadcast walking";
+    statusEl.textContent = "Connected · start AR to broadcast walking";
     pruneTimer = setInterval(() => pruneStalePlayers(), HEARTBEAT_MS);
     await publishPlayer(true);
 
