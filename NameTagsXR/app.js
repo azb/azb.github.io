@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "25";
+const APP_VERSION = "26";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -1584,11 +1584,10 @@ function restHandsForPlayer(p) {
 }
 
 function fillRestHands(out) {
-  if (hasHandData(out.left) && hasHandData(out.right)) return out;
   const head = localToRoom(getLocalHeadPosition());
   const yaw = localYawToRoom(getLocalHeadYaw());
-  if (!hasHandData(out.left)) out.left = makeRestHand(head, yaw, "left");
-  if (!hasHandData(out.right)) out.right = makeRestHand(head, yaw, "right");
+  if (!hasHandData(out.left) && handAbandoned("left")) out.left = makeRestHand(head, yaw, "left");
+  if (!hasHandData(out.right) && handAbandoned("right")) out.right = makeRestHand(head, yaw, "right");
   return out;
 }
 
@@ -1671,6 +1670,10 @@ function wristNearPlayer(x, y, z) {
   return Math.hypot(x - head.x, y - head.y, z - head.z) <= HAND_NEAR_M;
 }
 
+function handAbandoned(side) {
+  return localHandLost[side] && !localHandNear[side];
+}
+
 function setLocalHandMeshVisible(hand, on) {
   const model = hand.userData.model;
   if (model) model.visible = on;
@@ -1749,7 +1752,7 @@ function captureHands(frame) {
   for (const hand of localHands) {
     const side = hand.userData.handedness;
     if (side !== "left" && side !== "right") continue;
-    if (localHandLost[side]) continue;
+    if (handAbandoned(side)) continue;
     const joints = hand.joints;
     if (!joints) continue;
     const packed = {};
@@ -1773,7 +1776,7 @@ function captureHands(frame) {
         side = unnamed === 0 ? "left" : "right";
         unnamed++;
       }
-      if (localHandLost[side] || hasHandData(out[side])) continue;
+      if (handAbandoned(side) || hasHandData(out[side])) continue;
       if (source.hand) {
         const joints = captureHandJoints(source.hand, frame, refSpace);
         if (joints) out[side] = joints;
@@ -1791,7 +1794,7 @@ function captureHands(frame) {
 
   for (const c of controllers) {
     const side = c.userData.handedness;
-    if ((side !== "left" && side !== "right") || localHandLost[side] || hasHandData(out[side])) continue;
+    if ((side !== "left" && side !== "right") || handAbandoned(side) || hasHandData(out[side])) continue;
     out[side] = { wrist: worldToRoomPose(c) };
   }
   return fillRestHands(out);
