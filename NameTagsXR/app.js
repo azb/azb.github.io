@@ -34,6 +34,7 @@ const POSE_MS = 80;
 const HEARTBEAT_MS = 2000;
 const STALE_MS = 8000;
 const CLOUD_HEARTBEAT_MS = 20000;
+const CLOUD_POSE_MS = 1500;
 const CLOUD_STALE_MS = 45000;
 const HAND_JOINTS = [
   "wrist",
@@ -99,13 +100,20 @@ const _restPos = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
 const _headEuler = new THREE.Euler();
 const RTC_CONFIG = {
-  iceCandidatePoolSize: 4,
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }]
+  iceCandidatePoolSize: 8,
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun.cloudflare.com:3478" }
+  ]
 };
 const rtcPeers = new Map();
 const cloudPresence = new Map();
 const outgoingOffers = {};
 const outgoingAnswers = {};
+const outgoingIce = {};
+let icePublishTimer = null;
+let lastPoseFallbackSend = 0;
 const localHands = [];
 const _handPos = new THREE.Vector3();
 const _handQuat = new THREE.Quaternion();
@@ -225,9 +233,10 @@ function requestXRMode(mode) {
 
 function beginXRSessionFromGesture() {
   if (!navigator.xr || currentXRSession) return Promise.resolve(null);
-  const first = xrSupportedMode || "immersive-vr";
-  const second = first === "immersive-ar" ? "immersive-vr" : null;
-  return requestXRMode(first).then(session => session || (second ? requestXRMode(second) : null));
+  if (xrDetectDone && !xrSupportedMode) return Promise.resolve(null);
+  const first = xrSupportedMode || "immersive-ar";
+  const second = first === "immersive-ar" ? "immersive-vr" : "immersive-ar";
+  return requestXRMode(first).then(session => session || requestXRMode(second));
 }
 
 const NAME_STORE = "nametagsxr.playerName";
@@ -296,8 +305,9 @@ function updateConnectionHint() {
 }
 
 async function probeLanServer() {
+  if (/\.github\.io$/i.test(location.hostname)) return false;
   try {
-    const res = await fetch("/__lan", { cache: "no-store" });
+    const res = await fetch(new URL("__lan", location.href), { cache: "no-store" });
     if (!res.ok) return false;
     const data = await res.json();
     return !!(data && data.ok);
@@ -693,6 +703,11 @@ function rtcBroadcast(payload) {
   }
 }
 
+function queueIcePublish() {
+  clearTimeout(icePublishTimer);
+  icePublishTimer = setTimeout(() => publishPresence(true).catch(() => {}), 180);
+}
+
 function bindRtcChannel(remoteId, channel) {
   const peer = rtcPeers.get(remoteId);
   if (!peer) return;
@@ -709,6 +724,7 @@ function bindRtcChannel(remoteId, channel) {
   channel.onopen = () => {
     delete outgoingOffers[remoteId];
     delete outgoingAnswers[remoteId];
+    delete outgoingIce[remoteId];
     publishPresence(true).catch(() => {});
     publishPlayer(true).catch(() => {});
     describeCloudPlayers();
@@ -727,20 +743,49 @@ function closeRtcPeer(remoteId) {
   rtcPeers.delete(remoteId);
   delete outgoingOffers[remoteId];
   delete outgoingAnswers[remoteId];
+  delete outgoingIce[remoteId];
 }
 
 function ensureRtcPeer(remoteId) {
   if (!uid || remoteId === uid || rtcPeers.has(remoteId) || typeof RTCPeerConnection !== "function") return;
   const offerer = uid < remoteId;
   const pc = new RTCPeerConnection(RTC_CONFIG);
-  const peer = { pc, channel: null, offerer, appliedRemote: "" };
+  const peer = {
+    pc,
+    channel: null,
+    offerer,
+    appliedRemote: "",
+    seenIce: new Set(),
+    pendingIce: []
+  };
   rtcPeers.set(remoteId, peer);
-
-  if (offerer) {
-    try { pc.addTransceiver("video", { direction: "inactive" }); } catch {}
+  try {
+    bindRtcChannel(remoteId, pc.createDataChannel("pose", { negotiated: true, id: 1, ordered: true }));
+  } catch {
+    if (offerer) bindRtcChannel(remoteId, pc.createDataChannel("pose"));
+    else pc.ondatachannel = ev => bindRtcChannel(remoteId, ev.channel);
   }
-  pc.ondatachannel = ev => bindRtcChannel(remoteId, ev.channel);
+  pc.onicecandidate = ev => {
+    if (!ev.candidate) {
+      if (pc.localDescription) {
+        const blob = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
+        if (offerer) outgoingOffers[remoteId] = blob;
+        else outgoingAnswers[remoteId] = blob;
+      }
+      queueIcePublish();
+      return;
+    }
+    if (!outgoingIce[remoteId]) outgoingIce[remoteId] = [];
+    if (outgoingIce[remoteId].length >= 24) return;
+    outgoingIce[remoteId].push({
+      candidate: ev.candidate.candidate,
+      sdpMid: ev.candidate.sdpMid == null ? null : ev.candidate.sdpMid,
+      sdpMLineIndex: ev.candidate.sdpMLineIndex == null ? 0 : ev.candidate.sdpMLineIndex
+    });
+    queueIcePublish();
+  };
   pc.onconnectionstatechange = () => {
+    describeCloudPlayers();
     if (pc.connectionState !== "failed") return;
     closeRtcPeer(remoteId);
     setTimeout(() => {
@@ -749,13 +794,38 @@ function ensureRtcPeer(remoteId) {
   };
 
   if (!offerer) return;
-  bindRtcChannel(remoteId, pc.createDataChannel("pose"));
   (async () => {
     await pc.setLocalDescription(await pc.createOffer());
+    outgoingOffers[remoteId] = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
+    await publishPresence(true);
     await waitIceGathering(pc);
     outgoingOffers[remoteId] = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
     await publishPresence(true);
   })().catch(err => console.warn("RTC offer failed", err));
+}
+
+async function flushPendingIce(peer) {
+  if (!peer || !peer.pc.remoteDescription) return;
+  while (peer.pendingIce.length) {
+    const c = peer.pendingIce.shift();
+    try { await peer.pc.addIceCandidate(c); } catch {}
+  }
+}
+
+async function applyRemoteIce(remoteId, p) {
+  const peer = rtcPeers.get(remoteId);
+  if (!peer) return;
+  const list = p.ice && p.ice[uid];
+  if (!Array.isArray(list)) return;
+  for (const c of list) {
+    if (!c || !c.candidate || peer.seenIce.has(c.candidate)) continue;
+    peer.seenIce.add(c.candidate);
+    if (!peer.pc.remoteDescription) {
+      peer.pendingIce.push(c);
+      continue;
+    }
+    try { await peer.pc.addIceCandidate(c); } catch {}
+  }
 }
 
 async function handleIncomingSignal(remoteId, p) {
@@ -765,19 +835,27 @@ async function handleIncomingSignal(remoteId, p) {
   const theirOffer = p.offers && p.offers[uid];
   const theirAnswer = p.answers && p.answers[uid];
   try {
-    if (theirOffer && !peer.offerer && peer.appliedRemote !== theirOffer.sdp) {
-      peer.appliedRemote = theirOffer.sdp;
+    if (theirOffer && !peer.offerer && peer.appliedRemote !== theirOffer.sdp && !peer.busy) {
+      peer.busy = true;
       await pc.setRemoteDescription(theirOffer);
+      peer.appliedRemote = theirOffer.sdp;
+      await flushPendingIce(peer);
       await pc.setLocalDescription(await pc.createAnswer());
+      outgoingAnswers[remoteId] = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
+      await publishPresence(true);
       await waitIceGathering(pc);
       outgoingAnswers[remoteId] = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
       await publishPresence(true);
+      peer.busy = false;
     }
     if (theirAnswer && peer.offerer && peer.appliedRemote !== theirAnswer.sdp && pc.signalingState === "have-local-offer") {
-      peer.appliedRemote = theirAnswer.sdp;
       await pc.setRemoteDescription(theirAnswer);
+      peer.appliedRemote = theirAnswer.sdp;
+      await flushPendingIce(peer);
     }
+    await applyRemoteIce(remoteId, p);
   } catch (err) {
+    peer.busy = false;
     console.warn("RTC signal failed", err);
   }
 }
@@ -810,8 +888,9 @@ function applyCloudPresence(docs) {
     cloudPresence.set(d.id, p);
     ensureRtcPeer(d.id);
     handleIncomingSignal(d.id, p);
-    const obj = remotePlayers.get(d.id);
-    if (!obj || !obj.userData.tracking) updateRemotePlayer(d.id, p);
+    const peer = rtcPeers.get(d.id);
+    const live = peer && peer.channel && peer.channel.readyState === "open";
+    if (!live) updateRemotePlayer(d.id, p);
   }
   for (const id of [...cloudPresence.keys()]) {
     if (!seen.has(id)) cloudPresence.delete(id);
@@ -837,10 +916,22 @@ async function publishPresence(force = false) {
     calibrated,
     updatedAt: serverTimestamp(),
     offers: outgoingOffers,
-    answers: outgoingAnswers
+    answers: outgoingAnswers,
+    ice: outgoingIce
   };
   fillHeadPose(data);
   await setDoc(doc(db, "rooms", roomId, "players", uid), data);
+}
+
+async function publishCloudPoseFallback() {
+  if (connectionMode !== "cloud" || !db || !uid || !roomId) return;
+  if (!renderer.xr.isPresenting || rtcOpenCount() > 0) return;
+  const now = performance.now();
+  if (now - lastPoseFallbackSend < CLOUD_POSE_MS) return;
+  const data = { presenting: true, updatedAt: serverTimestamp() };
+  if (!fillHeadPose(data)) return;
+  lastPoseFallbackSend = now;
+  await setDoc(doc(db, "rooms", roomId, "players", uid), data, { merge: true });
 }
 
 function closeAllRtc() {
@@ -848,6 +939,7 @@ function closeAllRtc() {
   cloudPresence.clear();
   for (const key of Object.keys(outgoingOffers)) delete outgoingOffers[key];
   for (const key of Object.keys(outgoingAnswers)) delete outgoingAnswers[key];
+  for (const key of Object.keys(outgoingIce)) delete outgoingIce[key];
 }
 
 function leaveRoom(reload) {
@@ -1648,7 +1740,9 @@ async function publishPlayer(force = false) {
   const syncing = connectionMode === "cloud" ? rtcOpen > 0 : otherPlayerCount > 0;
   const interval = syncing && renderer.xr.isPresenting
     ? POSE_MS
-    : connectionMode === "cloud" ? CLOUD_HEARTBEAT_MS : HEARTBEAT_MS;
+    : renderer.xr.isPresenting && connectionMode === "cloud"
+      ? CLOUD_POSE_MS
+      : connectionMode === "cloud" ? CLOUD_HEARTBEAT_MS : HEARTBEAT_MS;
   if (!force && now - lastNetworkSend < interval) return;
   lastNetworkSend = now;
 
@@ -1659,9 +1753,9 @@ async function publishPlayer(force = false) {
     updatedAt: Date.now()
   };
 
-  if (syncing && renderer.xr.isPresenting) {
+  if (renderer.xr.isPresenting && (syncing || connectionMode === "cloud")) {
     fillHeadPose(payload);
-    payload.hands = captureHands(lastXRFrame);
+    if (syncing) payload.hands = captureHands(lastXRFrame);
   }
 
   if (connectionMode === "local") {
@@ -1672,6 +1766,7 @@ async function publishPlayer(force = false) {
   }
 
   if (syncing) rtcBroadcast(payload);
+  else await publishCloudPoseFallback();
   await publishPresence(force);
 }
 
