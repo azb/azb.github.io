@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "29";
+const APP_VERSION = "30";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -462,6 +462,7 @@ function createRemotePlayer(id, name) {
   );
   body.position.y = -.75;
   obj.add(body);
+  obj.userData.body = body;
 
   const tag = createNameTag(name);
   tag.position.y = .28;
@@ -472,6 +473,8 @@ function createRemotePlayer(id, name) {
     new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .85 })
   );
   obj.add(head);
+  obj.userData.head = head;
+  syncSpectatorAvatarMeshes(obj);
   obj.userData.leftHand = createRemoteHand("left");
   obj.userData.rightHand = createRemoteHand("right");
   scene.add(obj);
@@ -730,12 +733,19 @@ function updateHandVisual(hand) {
   }
 }
 
+function syncSpectatorAvatarMeshes(obj) {
+  const show = !renderer.xr.isPresenting;
+  if (obj.userData.body) obj.userData.body.visible = show;
+  if (obj.userData.head) obj.userData.head.visible = show;
+}
+
 function updateRemoteVisuals() {
   const lookAt = new THREE.Vector3();
   if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(lookAt);
   else camera.getWorldPosition(lookAt);
 
   for (const obj of remotePlayers.values()) {
+    syncSpectatorAvatarMeshes(obj);
     if (obj.userData.target) obj.position.lerp(obj.userData.target, 0.35);
     const tag = obj.children.find(c => c.type === "Group");
     if (tag) tag.lookAt(lookAt);
