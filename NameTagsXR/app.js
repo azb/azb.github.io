@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "23";
+const APP_VERSION = "24";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -117,8 +117,8 @@ const outgoingIce = {};
 let icePublishTimer = null;
 let lastPoseFallbackSend = 0;
 let lastHandsPayload = null;
-const HAND_STILL_FRAMES = 15;
-const HAND_STILL_MS = 200;
+const HAND_STILL_FRAMES = 8;
+const HAND_STILL_MS = 100;
 const HAND_STILL_M = 0.01;
 const HAND_RECOVER_M = 0.03;
 const localHandLost = { left: false, right: false };
@@ -1335,16 +1335,19 @@ function setupXR() {
 
     const hand = renderer.xr.getHand(i);
     hand.userData.handedness = null;
-    hand.visible = false;
+    const handModel = handModelFactory.createHandModel(hand, "mesh");
+    hand.userData.model = handModel;
+    hand.add(handModel);
     hand.addEventListener("connected", e => {
       hand.userData.handedness = e.data.handedness;
-      hand.visible = true;
+      setLocalHandMeshVisible(hand, !localHandLost[e.data.handedness]);
     });
     hand.addEventListener("disconnected", () => {
+      const side = hand.userData.handedness;
+      if (side === "left" || side === "right") localHandLost[side] = true;
       hand.userData.handedness = null;
-      hand.visible = false;
+      setLocalHandMeshVisible(hand, false);
     });
-    hand.add(handModelFactory.createHandModel(hand, "mesh"));
     scene.add(hand);
     localHands.push(hand);
 
@@ -1661,6 +1664,14 @@ function readWristSample(side, frame) {
   return { found: false, emulated: false };
 }
 
+function setLocalHandMeshVisible(hand, on) {
+  const model = hand.userData.model;
+  if (model) model.visible = on;
+  hand.traverse(obj => {
+    if (obj.isSkinnedMesh || (obj.isMesh && obj !== model)) obj.visible = on;
+  });
+}
+
 function updateLocalHandLost(frame) {
   const now = performance.now();
   if (!renderer.xr.isPresenting) {
@@ -1709,7 +1720,7 @@ function updateLocalHandLost(frame) {
   for (const hand of localHands) {
     const side = hand.userData.handedness;
     if (side !== "left" && side !== "right") continue;
-    hand.visible = !localHandLost[side];
+    setLocalHandMeshVisible(hand, !localHandLost[side]);
   }
 }
 
@@ -1885,11 +1896,11 @@ async function publishPlayer(force = false) {
 
 function render(time, frame) {
   lastXRFrame = frame || null;
+  updateLocalHandLost(lastXRFrame);
   updateDoneButton();
   updateGrab();
   renderer.render(scene, camera);
   if (!renderer.xr.isPresenting) controls.update();
-  updateLocalHandLost(lastXRFrame);
   updateRemoteVisuals();
   publishPlayer(false).catch(console.error);
 }
