@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "26";
+const APP_VERSION = "27";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -122,6 +122,7 @@ const HAND_STILL_MS = 100;
 const HAND_STILL_M = 0.01;
 const HAND_RECOVER_M = 0.03;
 const HAND_NEAR_M = 1.15;
+const MIN_HAND_JOINTS = 20;
 const localHandLost = { left: false, right: false };
 const localHandNear = { left: true, right: true };
 const localHandStill = {
@@ -133,7 +134,14 @@ const _handPos = new THREE.Vector3();
 const _handQuat = new THREE.Quaternion();
 const _qYaw = new THREE.Quaternion();
 const _yAxis = new THREE.Vector3(0, 1, 0);
-const handModelFactory = new XRHandModelFactory();
+const handModelFactory = new XRHandModelFactory(null, obj => {
+  obj.traverse(o => {
+    if (o.isMesh && o.material) {
+      o.material.side = THREE.DoubleSide;
+      o.frustumCulled = false;
+    }
+  });
+});
 let lastXRFrame = null;
 
 const scene = new THREE.Scene();
@@ -465,13 +473,16 @@ function createNameTag(name) {
 
 function createRemoteHand(handedness) {
   const hand = new THREE.Group();
+  hand.matrixAutoUpdate = false;
   hand.joints = {};
   for (const name of HAND_JOINTS) {
     const joint = new THREE.Group();
+    joint.matrixAutoUpdate = false;
     joint.visible = false;
     joint.userData.target = new THREE.Vector3();
     joint.userData.targetQuat = new THREE.Quaternion();
     hand.joints[name] = joint;
+    hand.add(joint);
   }
   const model = handModelFactory.createHandModel(hand, "mesh");
   hand.add(model);
@@ -570,29 +581,53 @@ function applyJointPose(joint, arr) {
   joint.userData.target.copy(pos);
   if (arr.length >= 7) {
     _handQuat.set(arr[3], arr[4], arr[5], arr[6]).normalize();
+    if (_handQuat.w < 0) _handQuat.negate();
     if (calibration) {
       _qYaw.setFromAxisAngle(_yAxis, -calibration.yaw);
       _handQuat.premultiply(_qYaw);
+      _handQuat.normalize();
     }
     joint.userData.targetQuat.copy(_handQuat);
   } else {
     joint.userData.targetQuat.identity();
   }
-  if (!joint.userData.placed) {
+  const far = !joint.userData.placed || joint.position.distanceToSquared(pos) > 0.12;
+  if (far) {
     joint.position.copy(joint.userData.target);
     joint.quaternion.copy(joint.userData.targetQuat);
     joint.userData.placed = true;
   }
+  joint.scale.set(1, 1, 1);
+  joint.updateMatrix();
   joint.visible = true;
+}
+
+function countPackedJoints(packed) {
+  if (!packed || typeof packed !== "object") return 0;
+  let n = 0;
+  for (const name of HAND_JOINTS) {
+    if (Array.isArray(packed[name]) && packed[name].length >= 7) n++;
+  }
+  return n;
 }
 
 function applyHandJoints(hand, data) {
   if (!hand) return;
-  const packed = packedJoints(data);
+  let packed = packedJoints(data);
   const joints = hand.joints;
   if (!packed || !joints) {
     hand.visible = false;
     return;
+  }
+  const n = countPackedJoints(packed);
+  if (n < MIN_HAND_JOINTS) {
+    packed = hand.userData.lastComplete;
+    if (!packed) {
+      hand.visible = false;
+      return;
+    }
+  } else {
+    hand.userData.lastComplete = packed;
   }
   let any = false;
   for (const name of HAND_JOINTS) {
@@ -614,8 +649,14 @@ function updateHandVisual(hand) {
   for (const name of HAND_JOINTS) {
     const joint = hand.joints[name];
     if (!joint || !joint.visible) continue;
-    if (joint.userData.target) joint.position.lerp(joint.userData.target, 0.4);
-    if (joint.userData.targetQuat) joint.quaternion.slerp(joint.userData.targetQuat, 0.4);
+    if (joint.userData.target) joint.position.lerp(joint.userData.target, 0.55);
+    if (joint.userData.targetQuat) {
+      if (joint.quaternion.dot(joint.userData.targetQuat) < 0) joint.userData.targetQuat.negate();
+      joint.quaternion.slerp(joint.userData.targetQuat, 0.55);
+      joint.quaternion.normalize();
+    }
+    joint.scale.set(1, 1, 1);
+    joint.updateMatrix();
   }
 }
 
@@ -1536,6 +1577,7 @@ function makeRestHand(head, yaw, side) {
   _restZ.crossVectors(_restX, _restY).normalize();
   const palmBack = _restZ.clone();
   const wristQuat = new THREE.Quaternion().setFromRotationMatrix(_basis.makeBasis(_restX, _restY, _restZ));
+  if (wristQuat.w < 0) wristQuat.negate();
 
   const positions = {};
   for (const name of HAND_JOINTS) {
@@ -1568,6 +1610,7 @@ function makeRestHand(head, yaw, side) {
     } else {
       q.copy(wristQuat);
     }
+    if (q.w < 0) q.negate();
     packed[name] = packRoomPose(from, q);
   }
   return packed;
@@ -1763,7 +1806,10 @@ function captureHands(frame) {
       packed[name] = worldToRoomPose(joint);
       any = true;
     }
-    if (any) out[side] = packed;
+    if (any) {
+      const complete = countPackedJoints(packed) >= MIN_HAND_JOINTS ? packed : null;
+      if (complete) out[side] = complete;
+    }
   }
 
   const session = renderer.xr.getSession();
@@ -1779,24 +1825,11 @@ function captureHands(frame) {
       if (handAbandoned(side) || hasHandData(out[side])) continue;
       if (source.hand) {
         const joints = captureHandJoints(source.hand, frame, refSpace);
-        if (joints) out[side] = joints;
-        continue;
+        if (joints && countPackedJoints(joints) >= MIN_HAND_JOINTS) out[side] = joints;
       }
-      const space = source.gripSpace || source.targetRaySpace;
-      if (!space) continue;
-      const pose = frame.getPose(space, refSpace);
-      if (!pose || pose.emulatedPosition) continue;
-      const p = pose.transform.position;
-      const o = pose.transform.orientation;
-      out[side] = { wrist: packPose(p.x, p.y, p.z, o.x, o.y, o.z, o.w) };
     }
   }
 
-  for (const c of controllers) {
-    const side = c.userData.handedness;
-    if ((side !== "left" && side !== "right") || handAbandoned(side) || hasHandData(out[side])) continue;
-    out[side] = { wrist: worldToRoomPose(c) };
-  }
   return fillRestHands(out);
 }
 
