@@ -1082,6 +1082,8 @@ function syncCalibrationUi(forceMarkers) {
   const showMarkers = xr && (forceMarkers != null ? forceMarkers : !calibrated);
   redDot.visible = blueDot.visible = doneButton.visible = showMarkers;
 }
+
+function setPassthrough(on) {
   if (on) {
     scene.background = null;
     renderer.setClearColor(0x000000, 0);
