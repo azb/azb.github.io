@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "27";
+const APP_VERSION = "28";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -576,12 +576,20 @@ function packedJoints(data) {
   return null;
 }
 
+function flipQuat(q) {
+  q.x = -q.x;
+  q.y = -q.y;
+  q.z = -q.z;
+  q.w = -q.w;
+  return q;
+}
+
 function applyJointPose(joint, arr) {
   const pos = roomToLocal(new THREE.Vector3(arr[0], arr[1], arr[2]));
   joint.userData.target.copy(pos);
   if (arr.length >= 7) {
     _handQuat.set(arr[3], arr[4], arr[5], arr[6]).normalize();
-    if (_handQuat.w < 0) _handQuat.negate();
+    if (_handQuat.w < 0) flipQuat(_handQuat);
     if (calibration) {
       _qYaw.setFromAxisAngle(_yAxis, -calibration.yaw);
       _handQuat.premultiply(_qYaw);
@@ -651,7 +659,7 @@ function updateHandVisual(hand) {
     if (!joint || !joint.visible) continue;
     if (joint.userData.target) joint.position.lerp(joint.userData.target, 0.55);
     if (joint.userData.targetQuat) {
-      if (joint.quaternion.dot(joint.userData.targetQuat) < 0) joint.userData.targetQuat.negate();
+      if (joint.quaternion.dot(joint.userData.targetQuat) < 0) flipQuat(joint.userData.targetQuat);
       joint.quaternion.slerp(joint.userData.targetQuat, 0.55);
       joint.quaternion.normalize();
     }
@@ -1577,7 +1585,7 @@ function makeRestHand(head, yaw, side) {
   _restZ.crossVectors(_restX, _restY).normalize();
   const palmBack = _restZ.clone();
   const wristQuat = new THREE.Quaternion().setFromRotationMatrix(_basis.makeBasis(_restX, _restY, _restZ));
-  if (wristQuat.w < 0) wristQuat.negate();
+  if (wristQuat.w < 0) flipQuat(wristQuat);
 
   const positions = {};
   for (const name of HAND_JOINTS) {
@@ -1610,7 +1618,7 @@ function makeRestHand(head, yaw, side) {
     } else {
       q.copy(wristQuat);
     }
-    if (q.w < 0) q.negate();
+    if (q.w < 0) flipQuat(q);
     packed[name] = packRoomPose(from, q);
   }
   return packed;
