@@ -117,7 +117,7 @@ let lastXRFrame = null;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101015);
 
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 100);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 500);
 camera.position.set(0, 2.2, 6);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -493,13 +493,22 @@ function updateRemotePlayer(id, p) {
   }
 
   if (typeof p.x !== "number" || typeof p.y !== "number" || typeof p.z !== "number") {
-    obj.visible = false;
-    applyHandJoints(obj.userData.leftHand, null);
-    applyHandJoints(obj.userData.rightHand, null);
+    obj.visible = true;
+    obj.userData.tracking = false;
+    if (!obj.userData.placed) {
+      obj.position.set(0, 1.2, 0);
+      obj.userData.target.copy(obj.position);
+      obj.userData.placed = true;
+      frameSpectatorOn(obj);
+    }
+    const rest = restHandsForPlayer({ x: 0, y: 1.2, z: 0, yaw: 0 });
+    applyHandJoints(obj.userData.leftHand, rest.left);
+    applyHandJoints(obj.userData.rightHand, rest.right);
     return;
   }
 
   const local = roomToLocal(new THREE.Vector3(p.x, p.y, p.z));
+  const gainedTracking = !obj.userData.tracking;
   obj.userData.target.copy(local);
   if (!obj.userData.placed) {
     obj.position.copy(local);
@@ -511,6 +520,7 @@ function updateRemotePlayer(id, p) {
   obj.visible = true;
   applyHandJoints(obj.userData.leftHand, hands && hands.left);
   applyHandJoints(obj.userData.rightHand, hands && hands.right);
+  if (gainedTracking && obj.userData.tracking) frameSpectatorOn(obj);
 }
 
 function packedJoints(data) {
@@ -586,6 +596,14 @@ function updateRemoteVisuals() {
     updateHandVisual(obj.userData.leftHand);
     updateHandVisual(obj.userData.rightHand);
   }
+}
+
+function frameSpectatorOn(obj) {
+  if (renderer.xr.isPresenting || !obj) return;
+  const p = obj.position;
+  controls.target.set(p.x, p.y, p.z);
+  camera.position.set(p.x + 0.8, p.y + 1.6, p.z + 3.6);
+  controls.update();
 }
 
 function playerUpdatedAt(p) {
@@ -718,6 +736,9 @@ function ensureRtcPeer(remoteId) {
   const peer = { pc, channel: null, offerer, appliedRemote: "" };
   rtcPeers.set(remoteId, peer);
 
+  if (offerer) {
+    try { pc.addTransceiver("video", { direction: "inactive" }); } catch {}
+  }
   pc.ondatachannel = ev => bindRtcChannel(remoteId, ev.channel);
   pc.onconnectionstatechange = () => {
     if (pc.connectionState !== "failed") return;
@@ -789,6 +810,8 @@ function applyCloudPresence(docs) {
     cloudPresence.set(d.id, p);
     ensureRtcPeer(d.id);
     handleIncomingSignal(d.id, p);
+    const obj = remotePlayers.get(d.id);
+    if (!obj || !obj.userData.tracking) updateRemotePlayer(d.id, p);
   }
   for (const id of [...cloudPresence.keys()]) {
     if (!seen.has(id)) cloudPresence.delete(id);
@@ -808,14 +831,16 @@ async function publishPresence(force = false) {
   const now = performance.now();
   if (!force && now - lastPresenceSend < CLOUD_HEARTBEAT_MS) return;
   lastPresenceSend = now;
-  await setDoc(doc(db, "rooms", roomId, "players", uid), {
+  const data = {
     name: playerName,
     presenting: renderer.xr.isPresenting,
     calibrated,
     updatedAt: serverTimestamp(),
     offers: outgoingOffers,
     answers: outgoingAnswers
-  });
+  };
+  fillHeadPose(data);
+  await setDoc(doc(db, "rooms", roomId, "players", uid), data);
 }
 
 function closeAllRtc() {
@@ -1330,12 +1355,31 @@ function updateGrab() {
   }
 }
 
+function getLocalHeadPosition() {
+  const p = new THREE.Vector3();
+  if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(p);
+  else camera.getWorldPosition(p);
+  return p;
+}
+
 function getLocalHeadYaw() {
   const q = new THREE.Quaternion();
   if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldQuaternion(q);
   else camera.getWorldQuaternion(q);
   _headEuler.setFromQuaternion(q, "YXZ");
   return _headEuler.y;
+}
+
+function fillHeadPose(target) {
+  if (!renderer.xr.isPresenting) return false;
+  const localHead = getLocalHeadPosition();
+  if (!Number.isFinite(localHead.x + localHead.y + localHead.z)) return false;
+  const roomHead = localToRoom(localHead);
+  target.x = roomHead.x;
+  target.y = roomHead.y;
+  target.z = roomHead.z;
+  target.yaw = compact(localYawToRoom(getLocalHeadYaw()));
+  return true;
 }
 
 function localYawToRoom(yaw) {
@@ -1616,14 +1660,7 @@ async function publishPlayer(force = false) {
   };
 
   if (syncing && renderer.xr.isPresenting) {
-    const localHead = getLocalHeadPosition();
-    if (Number.isFinite(localHead.x + localHead.y + localHead.z)) {
-      const roomHead = localToRoom(localHead);
-      payload.x = roomHead.x;
-      payload.y = roomHead.y;
-      payload.z = roomHead.z;
-      payload.yaw = compact(localYawToRoom(getLocalHeadYaw()));
-    }
+    fillHeadPose(payload);
     payload.hands = captureHands(lastXRFrame);
   }
 
