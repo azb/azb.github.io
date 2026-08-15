@@ -122,6 +122,42 @@ function beginXRSessionFromGesture() {
   return chain.catch(() => null);
 }
 
+const NAME_STORE = "nametagsxr.playerName";
+const REMEMBER_STORE = "nametagsxr.rememberName";
+const nameInput = document.getElementById("name");
+const rememberName = document.getElementById("rememberName");
+
+function readStore(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function writeStore(key, value) {
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {}
+}
+
+function restoreSavedName() {
+  if (readStore(REMEMBER_STORE) !== "1") return;
+  rememberName.checked = true;
+  const saved = readStore(NAME_STORE);
+  if (saved) nameInput.value = saved;
+}
+
+function persistNamePreference() {
+  if (rememberName.checked) {
+    writeStore(REMEMBER_STORE, "1");
+    writeStore(NAME_STORE, nameInput.value.trim());
+  } else {
+    writeStore(REMEMBER_STORE, null);
+    writeStore(NAME_STORE, null);
+  }
+}
+
+restoreSavedName();
+rememberName.addEventListener("change", persistNamePreference);
+
 const startButton = document.getElementById("start");
 startButton.onclick = start;
 document.getElementById("calibrate").onclick = calibrate;
@@ -366,7 +402,8 @@ async function start() {
   setupError.textContent = "";
   startButton.disabled = true;
   startButton.textContent = "Connecting…";
-  playerName = document.getElementById("name").value.trim() || "Player";
+  playerName = nameInput.value.trim() || "Player";
+  persistNamePreference();
   roomId = document.getElementById("room").value.trim() || "demo-room";
 
   const xrPromise = beginXRSessionFromGesture();
