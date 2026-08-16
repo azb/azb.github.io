@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "30";
+const APP_VERSION = "31";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -467,6 +467,7 @@ function createRemotePlayer(id, name) {
   const tag = createNameTag(name);
   tag.position.y = .28;
   obj.add(tag);
+  obj.userData.tag = tag;
 
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(.14, 16, 12),
@@ -481,10 +482,36 @@ function createRemotePlayer(id, name) {
   return obj;
 }
 
+function trimmedName(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function resolvePlayerName(id, p) {
+  return trimmedName(p && p.name)
+    || trimmedName(cloudPresence.get(id) && cloudPresence.get(id).name)
+    || trimmedName(remotePlayers.get(id) && remotePlayers.get(id).userData.name);
+}
+
+function setRemotePlayerName(obj, name) {
+  if (!obj || !name || name === obj.userData.name) return;
+  obj.userData.name = name;
+  const tag = obj.userData.tag;
+  if (!tag) return;
+  const sprite = tag.children.find(child => child.isSprite);
+  if (!sprite || !sprite.material) return;
+  const next = makeTextSprite(name);
+  const oldMap = sprite.material.map;
+  sprite.material.map = next.material.map;
+  sprite.material.needsUpdate = true;
+  if (oldMap) oldMap.dispose();
+  next.material.dispose();
+}
+
 function updateRemotePlayer(id, p) {
   let obj = remotePlayers.get(id);
   if (!p.presenting) {
     if (!obj) return;
+    setRemotePlayerName(obj, resolvePlayerName(id, p));
     obj.visible = false;
     obj.userData.tracking = false;
     applyHandJoints(obj.userData.leftHand, null);
@@ -493,9 +520,10 @@ function updateRemotePlayer(id, p) {
   }
 
   if (!obj) {
-    obj = createRemotePlayer(id, p.name || "Player");
+    obj = createRemotePlayer(id, resolvePlayerName(id, p) || "Player");
     remotePlayers.set(id, obj);
   }
+  setRemotePlayerName(obj, resolvePlayerName(id, p) || obj.userData.name);
 
   if (typeof p.x !== "number" || typeof p.y !== "number" || typeof p.z !== "number") {
     obj.visible = true;
@@ -747,7 +775,7 @@ function updateRemoteVisuals() {
   for (const obj of remotePlayers.values()) {
     syncSpectatorAvatarMeshes(obj);
     if (obj.userData.target) obj.position.lerp(obj.userData.target, 0.35);
-    const tag = obj.children.find(c => c.type === "Group");
+    const tag = obj.userData.tag;
     if (tag) tag.lookAt(lookAt);
     updateHandVisual(obj.userData.leftHand);
     updateHandVisual(obj.userData.rightHand);
@@ -1013,7 +1041,7 @@ function describeCloudPlayers() {
     const tracking = obj && obj.visible && obj.userData.tracking;
     const peer = rtcPeers.get(id);
     const linking = peer && (!peer.channel || peer.channel.readyState !== "open");
-    others.push((p.name || "Player") + (tracking ? "" : linking ? " (linking…)" : " (not tracking)"));
+    others.push((resolvePlayerName(id, p) || "Player") + (tracking ? "" : linking ? " (linking…)" : " (not tracking)"));
   }
   if (!others.length) {
     playerListEl.textContent = renderer.xr.isPresenting
@@ -1037,6 +1065,7 @@ function applyCloudPresence(docs) {
     const peer = rtcPeers.get(d.id);
     const live = peer && peer.channel && peer.channel.readyState === "open";
     if (!live) updateRemotePlayer(d.id, p);
+    else setRemotePlayerName(remotePlayers.get(d.id), resolvePlayerName(d.id, p));
   }
   for (const id of [...cloudPresence.keys()]) {
     if (!seen.has(id)) cloudPresence.delete(id);
@@ -1075,7 +1104,7 @@ async function publishCloudPoseFallback() {
   if (!renderer.xr.isPresenting || rtcOpenCount() > 0) return;
   const now = performance.now();
   if (now - lastPoseFallbackSend < CLOUD_POSE_MS) return;
-  const data = { presenting: true, updatedAt: serverTimestamp() };
+  const data = { name: playerName, presenting: true, updatedAt: serverTimestamp() };
   if (!fillHeadPose(data)) return;
   data.hands = lastHandsPayload || captureHands(lastXRFrame);
   lastPoseFallbackSend = now;
@@ -1116,7 +1145,7 @@ function describePlayers(docs) {
     const p = d.data;
     if (isPlayerStale(p)) continue;
     const tracking = typeof p.x === "number" && p.presenting;
-    others.push((p.name || "Player") + (tracking ? "" : " (not tracking)"));
+    others.push((resolvePlayerName(d.id, p) || "Player") + (tracking ? "" : " (not tracking)"));
   }
   if (!others.length) {
     playerListEl.textContent = renderer.xr.isPresenting
