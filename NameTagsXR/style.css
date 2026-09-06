@@ -147,6 +147,15 @@ label.filePick {
   cursor: pointer;
 }
 label.filePick input { display: none; }
+#modelActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+#modelActions .filePick { margin: 0; }
+#modelActions button { margin: 0; }
 #hud {
   padding-top: 18px;
   padding-right: 56px;

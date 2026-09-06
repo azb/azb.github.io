@@ -8,7 +8,7 @@ import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "36";
+const APP_VERSION = "37";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -379,6 +379,21 @@ document.getElementById("recalibrate").onclick = () => {
   syncCalibrationUi();
 };
 document.getElementById("exit").onclick = () => leaveRoom(true);
+document.getElementById("clearModels").onclick = () => removeAllShared();
+
+window.addEventListener("keydown", e => {
+  if (e.key !== "Delete") return;
+  const el = e.target;
+  const tag = el && el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || (el && el.isContentEditable)) return;
+  if (!sessionStarted || renderer.xr.isPresenting || !selectedShared) return;
+  const rec = sharedObjects.get(selectedShared.userData.sharedId);
+  if (!rec) return;
+  e.preventDefault();
+  const name = rec.name || "model";
+  removeSharedById(rec.id);
+  statusEl.textContent = "Deleted " + name;
+});
 
 window.addEventListener("pagehide", () => leaveRoom(false));
 window.addEventListener("beforeunload", () => leaveRoom(false));
@@ -2098,6 +2113,23 @@ function clearSharedObjects() {
   incomingFiles.clear();
 }
 
+function removeSharedById(id) {
+  const rec = sharedObjects.get(id);
+  if (!rec) return false;
+  if (selectedShared === rec.root) deselectShared();
+  scene.remove(rec.root);
+  sharedObjects.delete(id);
+  incomingFiles.delete(id);
+  sendSharedMessage("remove", rec, true);
+  return true;
+}
+
+function removeAllShared() {
+  const ids = [...sharedObjects.keys()];
+  for (const id of ids) removeSharedById(id);
+  statusEl.textContent = ids.length ? "Cleared shared models" : "No models to clear";
+}
+
 function selectShared(root) {
   selectedShared = root;
   syncPcGizmos();
@@ -2126,10 +2158,12 @@ function sendSharedMessage(action, rec, persist) {
   }
   rtcSend({ type: "object", action, object });
   if (persist && db && roomId) {
-    setDoc(doc(db, "rooms", roomId, "objects", rec.id), {
-      ...object,
-      updatedAt: serverTimestamp()
-    }).catch(err => console.warn("object persist failed", err));
+    const ref = doc(db, "rooms", roomId, "objects", rec.id);
+    if (action === "remove") deleteDoc(ref).catch(err => console.warn("object delete failed", err));
+    else {
+      setDoc(ref, { ...object, updatedAt: serverTimestamp() })
+        .catch(err => console.warn("object persist failed", err));
+    }
   }
 }
 
@@ -2170,6 +2204,7 @@ function handleSharedMessage(msg) {
     if (selectedShared === rec.root) deselectShared();
     scene.remove(rec.root);
     sharedObjects.delete(msg.object.id);
+    incomingFiles.delete(msg.object.id);
     return;
   }
   const rec = ensureShared(msg.object.id, msg.object, true);
