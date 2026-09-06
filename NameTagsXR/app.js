@@ -8,7 +8,7 @@ import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "40";
+const APP_VERSION = "41";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -165,7 +165,7 @@ const GRAB_NEAR = .22;
 const GRAB_RADIUS = .28;
 const GRAB_FAR = 12;
 const DOT_SCALE_MINI = .38;
-const MAX_MODEL_BYTES = 20 * 1024 * 1024;
+const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 const FILE_CHUNK = 48 * 1024;
 const MODEL_FIT = .75;
 const controllers = [];
@@ -2547,7 +2547,7 @@ async function addSharedFromFile(file) {
     return;
   }
   if (file.size > MAX_MODEL_BYTES) {
-    statusEl.textContent = "Model is too large (max 20 MB)";
+    statusEl.textContent = "Model is too large (max 100 MB)";
     return;
   }
   const bytes = new Uint8Array(await file.arrayBuffer());

@@ -40,7 +40,7 @@ rooms_lock = threading.Lock()
 rooms: dict[str, dict[str, "Client"]] = {}
 # room_id -> { object_id: { meta, bytes } }
 room_models: dict[str, dict[str, dict]] = {}
-MAX_MODEL_BYTES = 20 * 1024 * 1024
+MAX_MODEL_BYTES = 100 * 1024 * 1024
 lan_ip = "127.0.0.1"
 using_https = False
 
