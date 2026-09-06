@@ -8,7 +8,7 @@ import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "38";
+const APP_VERSION = "39";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -1890,9 +1890,11 @@ function meshColor(mat) {
   return 0xc5cdd6;
 }
 
-function packSharedGeometry(object) {
+function packSharedGeometry(object, space) {
+  const root = space || object;
+  root.updateMatrixWorld(true);
   object.updateMatrixWorld(true);
-  const inv = new THREE.Matrix4().copy(object.matrixWorld).invert();
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
   const world = new THREE.Matrix4();
   const v = new THREE.Vector3();
   const parts = [];
@@ -2027,7 +2029,7 @@ function loadSharedMesh(rec) {
         reject(new Error("empty model"));
         return;
       }
-      if (!rec.fitted) fitSharedModel(object);
+      fitSharedModel(object);
       markSharedMeshes(object, rec.root);
       if (rec.placeholder) {
         rec.root.remove(rec.placeholder);
@@ -2091,7 +2093,7 @@ function loadSharedMesh(rec) {
 
 async function prepareSharedBytes(rec) {
   if (!rec.mesh) throw new Error("model has no mesh");
-  const packed = packSharedGeometry(rec.mesh);
+  const packed = packSharedGeometry(rec.mesh, rec.root);
   if (packed && packed.byteLength > 0 && packed.byteLength <= MAX_MODEL_BYTES) {
     rec.bytes = packed;
     rec.ext = "ntx";
