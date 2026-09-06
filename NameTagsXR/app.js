@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "42";
+const APP_VERSION = "43";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -2772,10 +2772,15 @@ function onSelectStart(e) {
   controller.userData.grabbed = hit.target;
   controller.userData.grabMode = hit.mode;
   if (hit.mode === "ray") {
-    controller.userData.grabDistance = hit.distance;
+    pointerFrom(controller, _pointerOrigin, _pointerDir);
+    _oc.copy(hit.target.position).sub(_pointerOrigin);
+    const along = _oc.dot(_pointerDir);
+    controller.userData.grabDistance = Math.max(.05, along);
+    controller.userData.grabRayOffset = _oc.addScaledVector(_pointerDir, -controller.userData.grabDistance).clone();
   } else {
     const cp = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
     controller.userData.grabOffset = hit.target.position.clone().sub(cp);
+    controller.userData.grabRayOffset = null;
   }
 }
 
@@ -2804,6 +2809,7 @@ function updateGrab() {
     if (c.userData.grabMode === "ray") {
       pointerFrom(c, _pointerOrigin, _pointerDir);
       g.position.copy(_pointerOrigin).addScaledVector(_pointerDir, c.userData.grabDistance);
+      if (c.userData.grabRayOffset) g.position.add(c.userData.grabRayOffset);
     } else {
       const p = new THREE.Vector3().setFromMatrixPosition(c.matrixWorld);
       g.position.copy(p.add(c.userData.grabOffset));
