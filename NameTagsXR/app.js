@@ -8,7 +8,7 @@ import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "35";
+const APP_VERSION = "36";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -1345,6 +1345,10 @@ function connectLocalRoom() {
         handleSharedMessage(msg);
         return;
       }
+      if (msg.type === "file-meta" || msg.type === "file-chunk" || msg.type === "file-request") {
+        handleRtcPayload(uid, msg);
+        return;
+      }
       if (msg.type === "objects" && Array.isArray(msg.objects)) {
         for (const meta of msg.objects) applySharedMeta(meta);
         return;
@@ -1782,9 +1786,12 @@ function cacheSharedRadius(rec) {
   rec.radius = Math.max(.08, _fitBox.getSize(_fitSize).length() * .5);
 }
 
-function ensureShared(id, meta = {}) {
+function ensureShared(id, meta = {}, fromNetwork = false) {
   let rec = sharedObjects.get(id);
-  if (rec) return rec;
+  if (rec) {
+    if (fromNetwork) rec.fromNetwork = true;
+    return rec;
+  }
   rec = {
     id,
     name: meta.name || "model",
@@ -1801,6 +1808,7 @@ function ensureShared(id, meta = {}) {
     seq: meta.seq || 0,
     size: meta.size || 0,
     fitted: !!meta.fitted,
+    fromNetwork,
     radius: .2
   };
   rec.root.userData.sharedId = id;
@@ -1839,10 +1847,105 @@ function markSharedMeshes(root, wrapper) {
 }
 
 function sniffModelExt(bytes, fallback) {
-  if (bytes && bytes.length >= 4 && bytes[0] === 0x67 && bytes[1] === 0x6C && bytes[2] === 0x54 && bytes[3] === 0x46) {
-    return "glb";
+  if (bytes && bytes.length >= 4) {
+    if (bytes[0] === 0x4E && bytes[1] === 0x54 && bytes[2] === 0x58 && bytes[3] === 0x31) return "ntx";
+    if (bytes[0] === 0x67 && bytes[1] === 0x6C && bytes[2] === 0x54 && bytes[3] === 0x46) return "glb";
   }
   return fallback;
+}
+
+function meshColor(mat) {
+  if (Array.isArray(mat)) mat = mat[0];
+  if (mat && mat.color && typeof mat.color.getHex === "function") return mat.color.getHex();
+  return 0xc5cdd6;
+}
+
+function packSharedGeometry(object) {
+  object.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(object.matrixWorld).invert();
+  const world = new THREE.Matrix4();
+  const v = new THREE.Vector3();
+  const parts = [];
+  object.traverse(o => {
+    if (!o.isMesh || !o.geometry) return;
+    const attr = o.geometry.attributes.position;
+    if (!attr || !attr.count) return;
+    world.multiplyMatrices(inv, o.matrixWorld);
+    const pos = new Float32Array(attr.count * 3);
+    for (let i = 0; i < attr.count; i++) {
+      v.fromBufferAttribute(attr, i).applyMatrix4(world);
+      pos[i * 3] = v.x;
+      pos[i * 3 + 1] = v.y;
+      pos[i * 3 + 2] = v.z;
+    }
+    const idx = o.geometry.index && o.geometry.index.count
+      ? Uint32Array.from(o.geometry.index.array)
+      : null;
+    parts.push({ pos, idx, color: meshColor(o.material) });
+  });
+  if (!parts.length) return null;
+  let size = 8;
+  for (const p of parts) size += 16 + p.pos.byteLength + (p.idx ? p.idx.byteLength : 0);
+  const buf = new ArrayBuffer(size);
+  const view = new DataView(buf);
+  const out = new Uint8Array(buf);
+  let o = 0;
+  out[0] = 0x4E; out[1] = 0x54; out[2] = 0x58; out[3] = 0x31;
+  o = 4;
+  view.setUint16(o, 1, true); o += 2;
+  view.setUint16(o, parts.length, true); o += 2;
+  for (const p of parts) {
+    view.setUint32(o, p.color >>> 0, true); o += 4;
+    view.setUint32(o, p.pos.length / 3, true); o += 4;
+    view.setUint32(o, p.idx ? p.idx.length : 0, true); o += 4;
+    view.setUint32(o, 0, true); o += 4;
+    out.set(new Uint8Array(p.pos.buffer, p.pos.byteOffset, p.pos.byteLength), o);
+    o += p.pos.byteLength;
+    if (p.idx && p.idx.length) {
+      out.set(new Uint8Array(p.idx.buffer, p.idx.byteOffset, p.idx.byteLength), o);
+      o += p.idx.byteLength;
+    }
+  }
+  return out.subarray(0, o);
+}
+
+function unpackSharedGeometry(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes[0] !== 0x4E || bytes[1] !== 0x54 || bytes[2] !== 0x58 || bytes[3] !== 0x31) {
+    throw new Error("not a packed mesh");
+  }
+  let o = 4;
+  view.getUint16(o, true); o += 2;
+  const n = view.getUint16(o, true); o += 2;
+  const group = new THREE.Group();
+  for (let p = 0; p < n; p++) {
+    const color = view.getUint32(o, true); o += 4;
+    const vtx = view.getUint32(o, true); o += 4;
+    const idxn = view.getUint32(o, true); o += 4;
+    o += 4;
+    const pos = new Float32Array(vtx * 3);
+    for (let i = 0; i < pos.length; i++) {
+      pos[i] = view.getFloat32(o, true);
+      o += 4;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    if (idxn) {
+      const idx = [];
+      for (let i = 0; i < idxn; i++) {
+        idx.push(view.getUint32(o, true));
+        o += 4;
+      }
+      geo.setIndex(idx);
+    }
+    geo.computeVertexNormals();
+    group.add(new THREE.Mesh(
+      geo,
+      new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })
+    ));
+  }
+  if (!group.children.length) throw new Error("packed mesh was empty");
+  return group;
 }
 
 function meshOnlyClone(object) {
@@ -1875,12 +1978,14 @@ function exportSharedGlb(object) {
 }
 
 function loadSharedMesh(rec) {
-  return new Promise((resolve, reject) => {
+  if (rec.loadPromise) return rec.loadPromise;
+  rec.loadPromise = new Promise((resolve, reject) => {
     if (rec.ready && rec.mesh) {
       resolve(rec.mesh);
       return;
     }
     if (!rec.bytes) {
+      rec.loadPromise = null;
       reject(new Error("no bytes"));
       return;
     }
@@ -1888,6 +1993,7 @@ function loadSharedMesh(rec) {
     rec.ext = ext;
     const onReady = object => {
       if (!object) {
+        rec.loadPromise = null;
         reject(new Error("empty model"));
         return;
       }
@@ -1906,11 +2012,22 @@ function loadSharedMesh(rec) {
       resolve(object);
     };
     const fail = err => {
-      console.warn("Shared model failed", rec.name, err);
-      statusEl.textContent = "Could not load " + (rec.name || "model");
+      rec.loadPromise = null;
+      console.warn("Shared model failed", rec.name, ext, err);
+      statusEl.textContent = rec.fromNetwork
+        ? "Headset could not rebuild " + (rec.name || "model") + " — drop it again on the PC"
+        : "Could not load " + (rec.name || "model");
       reject(err || new Error("parse failed"));
     };
     try {
+      if (ext === "ntx") {
+        onReady(unpackSharedGeometry(rec.bytes));
+        return;
+      }
+      if (rec.fromNetwork && ext === "fbx") {
+        fail(new Error("raw FBX cannot be parsed on headset"));
+        return;
+      }
       if (ext === "glb" || ext === "gltf") {
         gltfLoader.parse(asArrayBuffer(rec.bytes), "", gltf => {
           onReady(gltf.scene || (gltf.scenes && gltf.scenes[0]));
@@ -1924,7 +2041,7 @@ function loadSharedMesh(rec) {
       if (ext === "stl") {
         const geo = stlLoader.parse(asArrayBuffer(rec.bytes));
         geo.computeVertexNormals();
-        onReady(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: .05, roughness: .7 })));
+        onReady(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xcfd6de, side: THREE.DoubleSide })));
         return;
       }
       if (ext === "fbx") {
@@ -1936,16 +2053,19 @@ function loadSharedMesh(rec) {
       fail(err);
     }
   });
+  return rec.loadPromise;
 }
 
-async function prepareSharedBytes(rec, originalExt, originalBytes) {
-  if (originalExt === "glb" || sniffModelExt(originalBytes, "") === "glb") {
-    rec.bytes = originalBytes;
-    rec.ext = "glb";
-    rec.size = originalBytes.byteLength;
+async function prepareSharedBytes(rec) {
+  if (!rec.mesh) throw new Error("model has no mesh");
+  const packed = packSharedGeometry(rec.mesh);
+  if (packed && packed.byteLength > 0 && packed.byteLength <= MAX_MODEL_BYTES) {
+    rec.bytes = packed;
+    rec.ext = "ntx";
+    rec.size = packed.byteLength;
+    rec.fitted = true;
     return;
   }
-  if (!rec.mesh) return;
   try {
     const glb = await exportSharedGlb(rec.mesh);
     if (glb && glb.byteLength > 0 && glb.byteLength <= MAX_MODEL_BYTES) {
@@ -1958,9 +2078,7 @@ async function prepareSharedBytes(rec, originalExt, originalBytes) {
   } catch (err) {
     console.warn("GLB export failed", err);
   }
-  rec.bytes = originalBytes;
-  rec.ext = originalExt;
-  rec.size = originalBytes.byteLength;
+  throw new Error("could not pack model for headset");
 }
 
 function relocalizeSharedObjects() {
@@ -2054,7 +2172,7 @@ function handleSharedMessage(msg) {
     sharedObjects.delete(msg.object.id);
     return;
   }
-  const rec = ensureShared(msg.object.id, msg.object);
+  const rec = ensureShared(msg.object.id, msg.object, true);
   if (msg.object.fitted) rec.fitted = true;
   if (msg.object.ext) rec.ext = msg.object.ext;
   applySharedTransform(rec, msg.object, false);
@@ -2069,6 +2187,9 @@ function applySharedMeta(meta) {
 function requestSharedFile(id) {
   if (connectionMode === "local") {
     fetchLocalModel(id);
+    if (localWs && localWs.readyState === WebSocket.OPEN) {
+      try { localWs.send(JSON.stringify({ type: "file-request", id })); } catch {}
+    }
     return;
   }
   rtcSend({ type: "file-request", id });
@@ -2083,6 +2204,7 @@ async function fetchLocalModel(id) {
       if (!res.ok) throw new Error("missing");
       rec.bytes = new Uint8Array(await res.arrayBuffer());
       rec.ext = sniffModelExt(rec.bytes, rec.ext);
+      rec.loadPromise = null;
       statusEl.textContent = "Loading " + (rec.name || "model") + "…";
       await loadSharedMesh(rec);
       return;
@@ -2161,7 +2283,10 @@ function handleRtcPayload(remoteId, msg) {
   }
   if (msg.type === "file-request" && msg.id) {
     const rec = sharedObjects.get(msg.id);
-    if (rec && rec.bytes) rtcSendFileTo(remoteId, rec);
+    if (rec && rec.bytes && !rec.fromNetwork) {
+      if (connectionMode === "local") sendLocalFile(rec);
+      else rtcSendFileTo(remoteId, rec);
+    }
     return;
   }
   if (msg.type === "file-meta" && msg.id) {
@@ -2172,7 +2297,7 @@ function handleRtcPayload(remoteId, msg) {
       total: msg.total || 1,
       chunks: []
     });
-    ensureShared(msg.id, { name: msg.name, ext: msg.ext, size: msg.size });
+    ensureShared(msg.id, { name: msg.name, ext: msg.ext, size: msg.size }, true);
     return;
   }
   if (msg.type === "file-chunk" && msg.id && typeof msg.data === "string") {
@@ -2189,11 +2314,30 @@ function handleRtcPayload(remoteId, msg) {
       offset += part.length;
     }
     incomingFiles.delete(msg.id);
-    const rec = ensureShared(msg.id, { name: incoming.name, ext: incoming.ext, size });
+    const rec = ensureShared(msg.id, { name: incoming.name, ext: incoming.ext, size }, true);
+    if (rec.ready) return;
     rec.bytes = bytes;
     rec.ext = sniffModelExt(bytes, rec.ext || incoming.ext);
     rec.name = rec.name || incoming.name;
+    rec.loadPromise = null;
     loadSharedMesh(rec).catch(() => {});
+  }
+}
+
+async function sendLocalFile(rec) {
+  if (!localWs || localWs.readyState !== WebSocket.OPEN || !rec.bytes) return;
+  const bytes = rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
+  const total = Math.max(1, Math.ceil(bytes.byteLength / FILE_CHUNK));
+  const send = msg => localWs.send(JSON.stringify(msg));
+  send({ type: "file-meta", id: rec.id, name: rec.name, ext: rec.ext, size: bytes.byteLength, total });
+  for (let i = 0; i < total; i++) {
+    send({
+      type: "file-chunk",
+      id: rec.id,
+      i,
+      data: bytesToB64(bytes.subarray(i * FILE_CHUNK, (i + 1) * FILE_CHUNK))
+    });
+    if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
   }
 }
 
@@ -2274,7 +2418,7 @@ async function addSharedFromFile(file) {
   statusEl.textContent = "Loading " + file.name + "…";
   try {
     await loadSharedMesh(rec);
-    await prepareSharedBytes(rec, ext, bytes);
+    await prepareSharedBytes(rec);
   } catch (err) {
     console.warn(err);
     statusEl.textContent = "Could not load " + file.name;
@@ -2284,7 +2428,7 @@ async function addSharedFromFile(file) {
   statusEl.textContent = "Shared " + file.name + " · others can move it";
   if (connectionMode === "local") {
     try {
-      const q = `name=${encodeURIComponent(file.name)}&ext=${encodeURIComponent(rec.ext || ext)}`;
+      const q = `name=${encodeURIComponent(file.name)}&ext=${encodeURIComponent(rec.ext || "ntx")}`;
       const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}?${q}`, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
@@ -2295,6 +2439,7 @@ async function addSharedFromFile(file) {
       console.warn(err);
       statusEl.textContent = "Saved locally, but LAN upload failed";
     }
+    sendLocalFile(rec).catch(err => console.warn("local file push failed", err));
   }
   sendSharedMessage("add", rec, true);
   if (connectionMode === "cloud") {

@@ -319,7 +319,7 @@ def handle_message(client: Client, msg: dict) -> None:
             else:
                 prev = bucket.get(oid) or {}
                 meta = dict(prev.get("meta") or {})
-                for key in ("name", "ext", "x", "y", "z", "heldBy", "seq", "size"):
+                for key in ("name", "ext", "x", "y", "z", "heldBy", "seq", "size", "fitted"):
                     if key in obj:
                         meta[key] = obj[key]
                 meta["id"] = oid
@@ -330,6 +330,18 @@ def handle_message(client: Client, msg: dict) -> None:
         for other in others:
             try:
                 other.send_json(payload)
+            except OSError:
+                pass
+        return
+
+    if kind in ("file-meta", "file-chunk", "file-request"):
+        others = []
+        with rooms_lock:
+            room = rooms.get(client.room, {})
+            others = [c for cid, c in room.items() if cid != client.id]
+        for other in others:
+            try:
+                other.send_json(msg)
             except OSError:
                 pass
         return
