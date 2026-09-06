@@ -55,7 +55,7 @@
     <div id="hudBody">
     <div><b id="roomLabel"></b> · <span id="status">Connecting…</span> · <span class="appVersion"></span></div>
     <div id="playerList" class="small">No other players yet.</div>
-    <div id="shareHint" class="small">On this PC, drop a .glb / .gltf / .obj / .stl / .fbx file onto the page to share it, or add one here. Select a model: <b>W</b> move, <b>E</b> rotate, <b>R</b> scale, Ctrl+D to duplicate, Delete to remove. In a headset, pinch to grab.</div>
+    <div id="shareHint" class="small">On this PC, drop a .glb / .gltf / .obj / .stl / .fbx file onto the page to share it, or add one here. Select a model: <b>W</b> move, <b>E</b> rotate, <b>R</b> scale, Ctrl+D to duplicate, Delete to remove. The material panel edits color, texture, roughness, metalness, and opacity. In a headset, pinch to grab.</div>
     <div id="modelActions">
     <label class="filePick">
       Add 3D model
@@ -74,6 +74,32 @@
     </div>
   </div>
 
+  <div id="matEditor" class="panel hidden">
+    <h2>Material</h2>
+    <p class="small" id="matTarget">Select a model</p>
+    <label>Color
+      <input id="matColor" type="color" value="#c5cdd6" />
+    </label>
+    <div class="matTex">
+      <span>Texture</span>
+      <label class="filePick">
+        Choose image
+        <input id="matTexFile" type="file" accept="image/*" />
+      </label>
+      <button id="matTexClear" class="secondary" type="button">Clear</button>
+    </div>
+    <label>Roughness
+      <input id="matRough" type="range" min="0" max="1" step="0.01" value="0.55" />
+    </label>
+    <label>Metalness
+      <input id="matMetal" type="range" min="0" max="1" step="0.01" value="0.05" />
+    </label>
+    <label>Opacity
+      <input id="matOpac" type="range" min="0" max="1" step="0.01" value="1" />
+    </label>
+    <button id="matReset" class="secondary" type="button">Reset material</button>
+  </div>
+
   <div id="desktopHint" class="panel hidden">
     This PC is the spectator and model host. Drop a 3D file onto the page to share it. Headsets enter the same room, then pinch models to move them.
   </div>
@@ -81,7 +107,7 @@
   <div id="dropOverlay" class="hidden">Drop 3D model to share</div>
 
   <script type="module">
-    import("./app.js?v=44").catch(err => {
+    import("./app.js?v=45").catch(err => {
       const el = document.getElementById("setupError");
       el.textContent = "Failed to load app: " + (err && err.message ? err.message : err);
     });

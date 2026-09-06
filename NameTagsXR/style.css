@@ -15,7 +15,9 @@ body { touch-action: none; }
   pointer-events: none;
 }
 #overlay .panel,
-#overlay button {
+#overlay button,
+#overlay input,
+#overlay label {
   pointer-events: auto;
 }
 canvas {
@@ -194,3 +196,40 @@ label.filePick input { display: none; }
   pointer-events: auto;
   margin: 0;
 }
+#matEditor {
+  left: auto;
+  right: 16px;
+  top: 16px;
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  padding-top: 14px;
+}
+#matEditor h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+#matEditor #matTarget { margin: 0 0 10px; }
+#matEditor label { margin: 8px 0; font-size: 13px; }
+#matEditor input[type="color"] {
+  width: 100%;
+  height: 36px;
+  padding: 2px;
+  cursor: pointer;
+}
+#matEditor input[type="range"] {
+  width: 100%;
+  margin-top: 6px;
+  accent-color: #fff;
+  cursor: pointer;
+}
+#matEditor .matTex {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+#matEditor .matTex .filePick { margin: 0; }
+#matEditor .matTex button { margin: 0; }
+#matEditor #matReset { margin-top: 10px; }

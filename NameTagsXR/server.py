@@ -61,13 +61,18 @@ def room_object_list(room_id: str) -> list:
 
 def parse_model_path(path: str):
     parts = path.strip("/").split("/")
-    if len(parts) != 3 or parts[0] != "models":
+    if not parts or parts[0] != "models":
+        return None
+    kind = ""
+    if len(parts) == 4 and parts[3] == "tex":
+        kind = "tex"
+    elif len(parts) != 3:
         return None
     room = safe_token(urllib.parse.unquote(parts[1]), 48)
     oid = safe_token(urllib.parse.unquote(parts[2]), 80)
     if not room or not oid:
         return None
-    return room, oid
+    return room, oid, kind
 
 
 def lan_address() -> str:
@@ -305,7 +310,7 @@ def handle_message(client: Client, msg: dict) -> None:
     if kind == "object":
         action = str(msg.get("action") or "")
         obj = msg.get("object")
-        if action not in ("add", "move", "hold", "remove") or not isinstance(obj, dict):
+        if action not in ("add", "move", "hold", "remove", "material") or not isinstance(obj, dict):
             return
         oid = safe_token(obj.get("id"))
         if not oid:
@@ -320,11 +325,14 @@ def handle_message(client: Client, msg: dict) -> None:
                 prev = bucket.get(oid) or {}
                 meta = dict(prev.get("meta") or {})
                 for key in ("name", "ext", "x", "y", "z", "heldBy", "seq", "size", "fitted",
-                            "qx", "qy", "qz", "qw", "sx", "sy", "sz"):
+                            "qx", "qy", "qz", "qw", "sx", "sy", "sz",
+                            "matOn", "matColor", "matRough", "matMetal", "matOpac",
+                            "matColorSet", "matRoughSet", "matMetalSet", "matOpacSet",
+                            "matTex", "matTexSeq", "matTexCleared"):
                     if key in obj:
                         meta[key] = obj[key]
                 meta["id"] = oid
-                bucket[oid] = {"meta": meta, "bytes": prev.get("bytes")}
+                bucket[oid] = {"meta": meta, "bytes": prev.get("bytes"), "tex": prev.get("tex")}
             room = rooms.get(client.room, {})
             others = [c for cid, c in room.items() if cid != client.id]
         payload = {"type": "object", "action": action, "object": obj}
@@ -392,7 +400,7 @@ class LanHandler(SimpleHTTPRequestHandler):
         if not ident:
             self.send_error(404, "Unknown POST")
             return
-        room, oid = ident
+        room, oid, kind = ident
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -408,8 +416,12 @@ class LanHandler(SimpleHTTPRequestHandler):
             bucket = room_models.setdefault(room, {})
             prev = bucket.get(oid) or {}
             meta = dict(prev.get("meta") or {})
-            meta.update({"id": oid, "name": name, "ext": ext, "size": len(data)})
-            bucket[oid] = {"meta": meta, "bytes": data}
+            if kind == "tex":
+                meta.update({"id": oid, "matTex": 1, "matOn": 1})
+                bucket[oid] = {"meta": meta, "bytes": prev.get("bytes"), "tex": data}
+            else:
+                meta.update({"id": oid, "name": name, "ext": ext, "size": len(data)})
+                bucket[oid] = {"meta": meta, "bytes": data, "tex": prev.get("tex")}
         self._json({"ok": True, "id": oid, "size": len(data)})
 
     def do_GET(self) -> None:
@@ -428,12 +440,12 @@ class LanHandler(SimpleHTTPRequestHandler):
             if not ident:
                 self.send_error(400, "Bad model path")
                 return
-            room, oid = ident
+            room, oid, kind = ident
             with rooms_lock:
                 rec = room_models.get(room, {}).get(oid)
-                data = rec.get("bytes") if rec else None
+                data = (rec.get("tex") if kind == "tex" else rec.get("bytes")) if rec else None
             if not data:
-                self.send_error(404, "Model not found")
+                self.send_error(404, "Texture not found" if kind == "tex" else "Model not found")
                 return
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")

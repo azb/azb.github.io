@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "44";
+const APP_VERSION = "45";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -169,11 +169,14 @@ const DOT_SCALE_MINI = .38;
 const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 const FILE_CHUNK = 48 * 1024;
 const INLINE_FILE_MAX = 8 * 1024 * 1024;
+const MAX_TEX_BYTES = 8 * 1024 * 1024;
+const MAX_TEX_DIM = 1024;
 const MODEL_FIT = .75;
 const controllers = [];
 const remotePlayers = new Map();
 const sharedObjects = new Map();
 const incomingFiles = new Map();
+const incomingTex = new Map();
 const WHITE_PX = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+n2s8AAAAASUVORK5CYII=";
 const modelManager = new THREE.LoadingManager();
 modelManager.setURLModifier(url => {
@@ -187,6 +190,7 @@ const objLoader = new OBJLoader(modelManager);
 const stlLoader = new STLLoader(modelManager);
 const fbxLoader = new FBXLoader(modelManager);
 const gltfExporter = new GLTFExporter();
+const texLoader = new THREE.TextureLoader();
 const _raycaster = new THREE.Raycaster();
 const _pointerNdc = new THREE.Vector2();
 const _fitBox = new THREE.Box3();
@@ -195,6 +199,8 @@ const _fitCenter = new THREE.Vector3();
 let selectedShared = null;
 let lastObjectSend = 0;
 let pcPointerDown = null;
+let matUiLock = false;
+let matPersistTimer = null;
 
 const transformControls = new TransformControls(camera, renderer.domElement);
 transformControls.setMode("translate");
@@ -382,6 +388,40 @@ document.getElementById("recalibrate").onclick = () => {
 };
 document.getElementById("exit").onclick = () => leaveRoom(true);
 document.getElementById("clearModels").onclick = () => removeAllShared();
+const matEditor = document.getElementById("matEditor");
+const matTarget = document.getElementById("matTarget");
+const matColor = document.getElementById("matColor");
+const matRough = document.getElementById("matRough");
+const matMetal = document.getElementById("matMetal");
+const matOpac = document.getElementById("matOpac");
+const matTexFile = document.getElementById("matTexFile");
+const matTexClear = document.getElementById("matTexClear");
+const matReset = document.getElementById("matReset");
+if (matColor) {
+  matColor.addEventListener("input", () => editSelectedMaterial({ color: hexToNum(matColor.value) }, false));
+  matColor.addEventListener("change", () => editSelectedMaterial({ color: hexToNum(matColor.value) }, true));
+}
+if (matRough) {
+  matRough.addEventListener("input", () => editSelectedMaterial({ roughness: +matRough.value }, false));
+  matRough.addEventListener("change", () => editSelectedMaterial({ roughness: +matRough.value }, true));
+}
+if (matMetal) {
+  matMetal.addEventListener("input", () => editSelectedMaterial({ metalness: +matMetal.value }, false));
+  matMetal.addEventListener("change", () => editSelectedMaterial({ metalness: +matMetal.value }, true));
+}
+if (matOpac) {
+  matOpac.addEventListener("input", () => editSelectedMaterial({ opacity: +matOpac.value }, false));
+  matOpac.addEventListener("change", () => editSelectedMaterial({ opacity: +matOpac.value }, true));
+}
+if (matTexFile) {
+  matTexFile.addEventListener("change", () => {
+    const file = matTexFile.files && matTexFile.files[0];
+    matTexFile.value = "";
+    if (file) setSelectedTexture(file);
+  });
+}
+if (matTexClear) matTexClear.onclick = () => clearSelectedTexture();
+if (matReset) matReset.onclick = () => resetSelectedMaterial();
 
 function typingInField(el) {
   const tag = el && el.tagName;
@@ -1814,7 +1854,8 @@ function sharedPayload(rec) {
     qw: rec.roomQuat.w,
     sx: rec.roomScale.x,
     sy: rec.roomScale.y,
-    sz: rec.roomScale.z
+    sz: rec.roomScale.z,
+    ...matPayload(rec)
   };
 }
 
@@ -1883,7 +1924,8 @@ function ensureShared(id, meta = {}, fromNetwork = false) {
       typeof meta.sy === "number" ? meta.sy : 1,
       typeof meta.sz === "number" ? meta.sz : 1
     ),
-    radius: .2
+    radius: .2,
+    mat: matFromMeta(meta)
   };
   rec.root.userData.sharedId = id;
   applyLocalTransform(rec);
@@ -2106,6 +2148,9 @@ function loadSharedMesh(rec) {
       rec.mesh = object;
       rec.ready = true;
       cacheSharedRadius(rec);
+      if (rec.mat) applyRecMaterial(rec);
+      if (rec.mat && rec.mat.tex && !rec.matMap) requestSharedTex(rec.id);
+      if (selectedShared === rec.root) syncMatEditor();
       resolve(object);
     };
     const fail = err => {
@@ -2208,6 +2253,7 @@ function clearSharedObjects() {
   }
   sharedObjects.clear();
   incomingFiles.clear();
+  incomingTex.clear();
 }
 
 function removeSharedById(id) {
@@ -2217,6 +2263,7 @@ function removeSharedById(id) {
   scene.remove(rec.root);
   sharedObjects.delete(id);
   incomingFiles.delete(id);
+  incomingTex.delete(id);
   sendSharedMessage("remove", rec, true);
   return true;
 }
@@ -2243,6 +2290,571 @@ function syncPcGizmos() {
   transformHelper.visible = !!show;
   if (show) transformControls.attach(selectedShared);
   else transformControls.detach();
+  syncMatEditor();
+}
+
+function hexToNum(hex) {
+  return parseInt(String(hex || "").replace("#", ""), 16) || 0;
+}
+
+function numToHex(n) {
+  return "#" + ((n >>> 0) & 0xffffff).toString(16).padStart(6, "0");
+}
+
+function firstSharedMaterial(rec) {
+  let first = null;
+  if (!rec || !rec.root) return first;
+  rec.root.traverse(o => {
+    if (first || !o.isMesh || o === rec.placeholder || !o.material) return;
+    first = Array.isArray(o.material) ? o.material[0] : o.material;
+  });
+  return first;
+}
+
+function readMaterialState(rec) {
+  const first = firstSharedMaterial(rec);
+  const m = rec && rec.mat || {};
+  return {
+    color: typeof m.color === "number" ? m.color : (first && first.color ? first.color.getHex() : 0xc5cdd6),
+    roughness: typeof m.roughness === "number" ? m.roughness : (first && typeof first.roughness === "number" ? first.roughness : .55),
+    metalness: typeof m.metalness === "number" ? m.metalness : (first && typeof first.metalness === "number" ? first.metalness : .05),
+    opacity: typeof m.opacity === "number" ? m.opacity : (first && typeof first.opacity === "number" ? first.opacity : 1),
+    tex: !!(m.tex || rec.matMap || (first && first.map))
+  };
+}
+
+function matFromMeta(meta) {
+  if (!meta || !meta.matOn) return null;
+  return {
+    color: typeof meta.matColor === "number" ? meta.matColor : 0xc5cdd6,
+    roughness: typeof meta.matRough === "number" ? meta.matRough : .55,
+    metalness: typeof meta.matMetal === "number" ? meta.matMetal : .05,
+    opacity: typeof meta.matOpac === "number" ? meta.matOpac : 1,
+    colorSet: !!meta.matColorSet,
+    roughSet: !!meta.matRoughSet,
+    metalSet: !!meta.matMetalSet,
+    opacSet: !!meta.matOpacSet,
+    tex: meta.matTex ? 1 : 0,
+    texSeq: meta.matTexSeq || 0,
+    texCleared: !!meta.matTexCleared
+  };
+}
+
+function matPayload(rec) {
+  if (!rec || !rec.mat) return { matOn: 0, matTex: 0, matTexSeq: 0 };
+  const m = rec.mat;
+  return {
+    matOn: 1,
+    matColor: m.color,
+    matRough: m.roughness,
+    matMetal: m.metalness,
+    matOpac: m.opacity,
+    matColorSet: m.colorSet ? 1 : 0,
+    matRoughSet: m.roughSet ? 1 : 0,
+    matMetalSet: m.metalSet ? 1 : 0,
+    matOpacSet: m.opacSet ? 1 : 0,
+    matTex: m.tex ? 1 : 0,
+    matTexSeq: m.texSeq || 0,
+    matTexCleared: m.texCleared ? 1 : 0
+  };
+}
+
+function toEditableMaterial(mat) {
+  if (mat && mat.isMeshStandardMaterial) {
+    const next = mat.clone();
+    next.side = THREE.DoubleSide;
+    return next;
+  }
+  const next = new THREE.MeshStandardMaterial({
+    color: mat && mat.color ? mat.color.getHex() : 0xc5cdd6,
+    map: mat && mat.map ? mat.map : null,
+    roughness: mat && typeof mat.roughness === "number" ? mat.roughness : .55,
+    metalness: mat && typeof mat.metalness === "number" ? mat.metalness : .05,
+    opacity: mat && typeof mat.opacity === "number" ? mat.opacity : 1,
+    transparent: !!(mat && (mat.transparent || mat.opacity < 1)),
+    side: THREE.DoubleSide
+  });
+  if (mat && mat.emissive && next.emissive) next.emissive.copy(mat.emissive);
+  return next;
+}
+
+function eachSharedMaterial(rec, fn) {
+  if (!rec || !rec.root) return;
+  rec.root.traverse(o => {
+    if (!o.isMesh || o === rec.placeholder || !o.material) return;
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mat of list) if (mat) fn(mat, o);
+  });
+}
+
+function snapshotMaterials(rec) {
+  if (!rec || rec.matSnap) return;
+  rec.matSnap = [];
+  rec.root.traverse(o => {
+    if (!o.isMesh || o === rec.placeholder || !o.material) return;
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    rec.matSnap.push({ mesh: o, mats: list.map(m => m.clone()) });
+  });
+}
+
+function restoreMaterials(rec) {
+  if (!rec || !rec.matSnap) {
+    rec.matOwned = false;
+    return;
+  }
+  for (const snap of rec.matSnap) {
+    if (!snap.mesh) continue;
+    const clones = snap.mats.map(m => m.clone());
+    snap.mesh.material = clones.length === 1 ? clones[0] : clones;
+  }
+  rec.matOwned = false;
+  rec.matMap = null;
+}
+
+function ownMaterials(rec) {
+  if (!rec || !rec.root || rec.matOwned) return;
+  snapshotMaterials(rec);
+  rec.root.traverse(o => {
+    if (!o.isMesh || o === rec.placeholder || !o.material) return;
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    const next = list.map(toEditableMaterial);
+    o.material = next.length === 1 ? next[0] : next;
+  });
+  rec.matOwned = true;
+}
+
+function ensureSharedUvs(rec) {
+  if (!rec || !rec.root) return;
+  rec.root.traverse(o => {
+    if (!o.isMesh || !o.geometry || o.geometry.attributes.uv) return;
+    const pos = o.geometry.attributes.position;
+    if (!pos || !pos.count) return;
+    o.geometry.computeBoundingBox();
+    const box = o.geometry.boundingBox;
+    const sx = Math.max(box.max.x - box.min.x, 1e-6);
+    const sy = Math.max(box.max.y - box.min.y, 1e-6);
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      uv[i * 2] = (pos.getX(i) - box.min.x) / sx;
+      uv[i * 2 + 1] = (pos.getY(i) - box.min.y) / sy;
+    }
+    o.geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  });
+}
+
+function applyRecMaterial(rec) {
+  if (!rec || !rec.ready) return;
+  if (!rec.mat) {
+    restoreMaterials(rec);
+    return;
+  }
+  ownMaterials(rec);
+  const m = rec.mat;
+  if (m.tex && rec.matMap) ensureSharedUvs(rec);
+  eachSharedMaterial(rec, mat => {
+    if (m.colorSet && mat.color) mat.color.setHex(m.color);
+    if (m.roughSet && "roughness" in mat) mat.roughness = m.roughness;
+    if (m.metalSet && "metalness" in mat) mat.metalness = m.metalness;
+    if (m.opacSet) {
+      mat.opacity = m.opacity;
+      mat.transparent = m.opacity < .999;
+      mat.depthWrite = m.opacity >= .999;
+    }
+    if (m.tex && rec.matMap) {
+      mat.map = rec.matMap;
+      mat.needsUpdate = true;
+    } else if (m.texCleared) {
+      mat.map = null;
+      mat.needsUpdate = true;
+    }
+    mat.needsUpdate = true;
+  });
+}
+
+function applySharedMaterial(rec, meta) {
+  if (!rec || !meta) return;
+  if (!meta.matOn) {
+    if (rec.mat) {
+      rec.mat = null;
+      rec.matTex = null;
+      applyRecMaterial(rec);
+      if (selectedShared === rec.root) syncMatEditor();
+    }
+    return;
+  }
+  const next = matFromMeta(meta);
+  rec.mat = next;
+  applyRecMaterial(rec);
+  if (next.tex && !rec.matMap) requestSharedTex(rec.id);
+  if (selectedShared === rec.root) syncMatEditor();
+}
+
+function syncMatEditor() {
+  if (!matEditor) return;
+  const rec = selectedShared && sharedObjects.get(selectedShared.userData.sharedId);
+  const show = sessionStarted && !renderer.xr.isPresenting && rec && rec.ready;
+  matEditor.classList.toggle("hidden", !show);
+  if (!show || !rec) return;
+  const state = readMaterialState(rec);
+  matUiLock = true;
+  if (matTarget) matTarget.textContent = rec.name || "model";
+  if (matColor) matColor.value = numToHex(state.color);
+  if (matRough) matRough.value = String(state.roughness);
+  if (matMetal) matMetal.value = String(state.metalness);
+  if (matOpac) matOpac.value = String(state.opacity);
+  matUiLock = false;
+}
+
+function selectedRec() {
+  return selectedShared && sharedObjects.get(selectedShared.userData.sharedId);
+}
+
+function editSelectedMaterial(patch, persist) {
+  if (matUiLock) return;
+  const rec = selectedRec();
+  if (!rec || !rec.ready) return;
+  const cur = readMaterialState(rec);
+  rec.mat = rec.mat || {
+    color: cur.color,
+    roughness: cur.roughness,
+    metalness: cur.metalness,
+    opacity: cur.opacity,
+    tex: cur.tex ? 1 : 0,
+    texSeq: 0
+  };
+  if (typeof patch.color === "number") {
+    rec.mat.color = patch.color;
+    rec.mat.colorSet = 1;
+  }
+  if (typeof patch.roughness === "number") {
+    rec.mat.roughness = patch.roughness;
+    rec.mat.roughSet = 1;
+  }
+  if (typeof patch.metalness === "number") {
+    rec.mat.metalness = patch.metalness;
+    rec.mat.metalSet = 1;
+  }
+  if (typeof patch.opacity === "number") {
+    rec.mat.opacity = patch.opacity;
+    rec.mat.opacSet = 1;
+  }
+  applyRecMaterial(rec);
+  publishMaterial(rec, persist);
+}
+
+function resetSelectedMaterial() {
+  const rec = selectedRec();
+  if (!rec) return;
+  rec.mat = null;
+  rec.matTex = null;
+  rec.matMap = null;
+  applyRecMaterial(rec);
+  syncMatEditor();
+  publishMaterial(rec, true);
+  statusEl.textContent = "Reset material on " + (rec.name || "model");
+}
+
+async function setSelectedTexture(file) {
+  const rec = selectedRec();
+  if (!rec || !rec.ready) return;
+  if (file.size > MAX_TEX_BYTES) {
+    statusEl.textContent = "Texture is too large (max 8 MB)";
+    return;
+  }
+  try {
+    const packed = await packTextureFile(file);
+    rec.matMap = packed.map;
+    rec.matTex = packed.bytes;
+    const cur = readMaterialState(rec);
+    rec.mat = rec.mat || {
+      color: cur.color,
+      roughness: cur.roughness,
+      metalness: cur.metalness,
+      opacity: cur.opacity,
+      tex: 1,
+      texSeq: 0
+    };
+    rec.mat.tex = 1;
+    rec.mat.texCleared = 0;
+    rec.mat.texSeq = (rec.mat.texSeq || 0) + 1;
+    applyRecMaterial(rec);
+    syncMatEditor();
+    publishMaterial(rec, true);
+    await publishMaterialTex(rec);
+    statusEl.textContent = "Texture applied to " + (rec.name || "model");
+  } catch (err) {
+    console.warn(err);
+    statusEl.textContent = (err && err.message) || "Could not load texture";
+  }
+}
+
+function clearSelectedTexture() {
+  const rec = selectedRec();
+  if (!rec || !rec.ready) return;
+  const cur = readMaterialState(rec);
+  rec.mat = rec.mat || {
+    color: cur.color,
+    roughness: cur.roughness,
+    metalness: cur.metalness,
+    opacity: cur.opacity,
+    tex: 0,
+    texSeq: 0
+  };
+  rec.mat.tex = 0;
+  rec.mat.texCleared = 1;
+  rec.matTex = null;
+  rec.matMap = null;
+  applyRecMaterial(rec);
+  publishMaterial(rec, true);
+  statusEl.textContent = "Cleared texture on " + (rec.name || "model");
+}
+
+function packTextureFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth || img.width;
+      let h = img.naturalHeight || img.height;
+      if (!w || !h) {
+        URL.revokeObjectURL(url);
+        reject(new Error("empty image"));
+        return;
+      }
+      if (w > MAX_TEX_DIM || h > MAX_TEX_DIM) {
+        const s = MAX_TEX_DIM / Math.max(w, h);
+        w = Math.max(1, Math.round(w * s));
+        h = Math.max(1, Math.round(h * s));
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+      canvas.toBlob(blob => {
+        if (!blob) {
+          reject(new Error("encode failed"));
+          return;
+        }
+        blob.arrayBuffer().then(buf => {
+          const bytes = new Uint8Array(buf);
+          if (bytes.byteLength > MAX_TEX_BYTES) {
+            reject(new Error("Texture is too large after compress"));
+            return;
+          }
+          const map = new THREE.CanvasTexture(canvas);
+          map.colorSpace = THREE.SRGBColorSpace;
+          map.wrapS = THREE.RepeatWrapping;
+          map.wrapT = THREE.RepeatWrapping;
+          map.needsUpdate = true;
+          resolve({ map, bytes, mime });
+        }).catch(reject);
+      }, mime, .85);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read image"));
+    };
+    img.src = url;
+  });
+}
+
+async function textureFromBytes(bytes) {
+  const blob = new Blob([bytes], { type: "image/jpeg" });
+  const url = URL.createObjectURL(blob);
+  return new Promise((resolve, reject) => {
+    texLoader.load(url, tex => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.needsUpdate = true;
+      URL.revokeObjectURL(url);
+      resolve(tex);
+    }, undefined, err => {
+      URL.revokeObjectURL(url);
+      reject(err);
+    });
+  });
+}
+
+function publishMaterial(rec, persist) {
+  if (!rec) return;
+  sendSharedMessage("material", rec, persist && connectionMode === "local");
+  if (connectionMode !== "cloud") return;
+  if (!persist) return;
+  clearTimeout(matPersistTimer);
+  matPersistTimer = setTimeout(() => sendSharedMessage("material", rec, true), 400);
+}
+
+async function publishMaterialTex(rec) {
+  if (!rec || !rec.matTex) return;
+  if (connectionMode === "local") {
+    try {
+      const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(rec.id)}/tex`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: rec.matTex
+      });
+      if (!res.ok) throw new Error("tex upload failed");
+    } catch (err) {
+      console.warn(err);
+      statusEl.textContent = "Texture is local, but LAN upload failed";
+    }
+    sendLocalTex(rec).catch(err => console.warn("local tex push failed", err));
+    return;
+  }
+  try {
+    await publishCloudTex(rec);
+  } catch (err) {
+    console.warn(err);
+    statusEl.textContent = "Texture is local, but cloud upload failed";
+  }
+  for (const [peerId] of rtcPeers) sendRtcTexTo(peerId, rec);
+}
+
+function requestSharedTex(id) {
+  const rec = sharedObjects.get(id);
+  if (!rec || rec.matMap || rec.fetchingTex) return;
+  if (connectionMode === "local") {
+    fetchLocalTex(id);
+    if (localWs && localWs.readyState === WebSocket.OPEN) {
+      try { localWs.send(JSON.stringify({ type: "file-request", id, kind: "tex" })); } catch {}
+    }
+    return;
+  }
+  rtcSend({ type: "file-request", id, kind: "tex" });
+  fetchCloudTex(id).catch(err => console.warn("cloud tex failed", err));
+}
+
+async function fetchLocalTex(id) {
+  const rec = sharedObjects.get(id);
+  if (!rec || rec.matMap || rec.fetchingTex || !roomId) return;
+  rec.fetchingTex = true;
+  try {
+    for (let i = 0; i < 6; i++) {
+      try {
+        const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}/tex`);
+        if (!res.ok) throw new Error("missing");
+        rec.matTex = new Uint8Array(await res.arrayBuffer());
+        rec.matMap = await textureFromBytes(rec.matTex);
+        applyRecMaterial(rec);
+        return;
+      } catch {
+        await new Promise(r => setTimeout(r, 250 * (i + 1)));
+      }
+    }
+  } finally {
+    rec.fetchingTex = false;
+  }
+}
+
+async function publishCloudTex(rec) {
+  if (!db || !roomId || !rec.matTex) return;
+  const chunk = 500 * 1024;
+  const bytes = rec.matTex instanceof Uint8Array ? rec.matTex : new Uint8Array(rec.matTex);
+  const total = Math.max(1, Math.ceil(bytes.byteLength / chunk));
+  await setDoc(doc(db, "rooms", roomId, "objects", rec.id), {
+    ...sharedPayload(rec),
+    updatedAt: serverTimestamp()
+  });
+  for (let i = 0; i < total; i++) {
+    await setDoc(doc(db, "rooms", roomId, "objects", rec.id, "texchunks", String(i)), {
+      data: bytesToB64(bytes.subarray(i * chunk, (i + 1) * chunk))
+    });
+  }
+}
+
+async function fetchCloudTex(id) {
+  const rec = sharedObjects.get(id);
+  if (!rec || rec.matMap || rec.fetchingTex || !db || !roomId) return;
+  rec.fetchingTex = true;
+  try {
+    const snap = await getDocs(collection(db, "rooms", roomId, "objects", id, "texchunks"));
+    if (snap.empty) return;
+    const parts = [];
+    snap.forEach(d => {
+      const data = d.data();
+      if (data && typeof data.data === "string") parts.push({ i: Number(d.id), b64: data.data });
+    });
+    parts.sort((a, b) => a.i - b.i);
+    if (!parts.length) return;
+    let size = 0;
+    const chunks = parts.map(p => b64ToBytes(p.b64));
+    for (const c of chunks) size += c.length;
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const c of chunks) {
+      bytes.set(c, offset);
+      offset += c.length;
+    }
+    rec.matTex = bytes;
+    rec.matMap = await textureFromBytes(bytes);
+    applyRecMaterial(rec);
+  } finally {
+    rec.fetchingTex = false;
+  }
+}
+
+function texFileMsg(rec, extra = {}) {
+  const bytes = rec.matTex instanceof Uint8Array ? rec.matTex : new Uint8Array(rec.matTex);
+  return {
+    type: extra.type,
+    kind: "tex",
+    id: rec.id,
+    name: rec.name,
+    size: bytes.byteLength,
+    ...extra
+  };
+}
+
+async function sendLocalTex(rec) {
+  if (!localWs || localWs.readyState !== WebSocket.OPEN || !rec.matTex) return;
+  if (rec.matTex.byteLength > INLINE_FILE_MAX) return;
+  const bytes = rec.matTex instanceof Uint8Array ? rec.matTex : new Uint8Array(rec.matTex);
+  const total = Math.max(1, Math.ceil(bytes.byteLength / FILE_CHUNK));
+  const send = msg => localWs.send(JSON.stringify(msg));
+  send(texFileMsg(rec, { type: "file-meta", total }));
+  for (let i = 0; i < total; i++) {
+    send({
+      type: "file-chunk",
+      kind: "tex",
+      id: rec.id,
+      i,
+      data: bytesToB64(bytes.subarray(i * FILE_CHUNK, (i + 1) * FILE_CHUNK))
+    });
+    if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
+  }
+}
+
+async function sendRtcTexTo(remoteId, rec) {
+  if (!rec.matTex || rec.matTex.byteLength > INLINE_FILE_MAX) return;
+  const bytes = rec.matTex instanceof Uint8Array ? rec.matTex : new Uint8Array(rec.matTex);
+  const total = Math.max(1, Math.ceil(bytes.byteLength / FILE_CHUNK));
+  rtcSend(texFileMsg(rec, { type: "file-meta", total }), remoteId);
+  for (let i = 0; i < total; i++) {
+    const peer = remoteId ? rtcPeers.get(remoteId) : null;
+    const channel = remoteId ? peer && peer.channel : null;
+    if (remoteId && (!channel || channel.readyState !== "open")) return;
+    if (channel) await rtcWaitDrain(channel);
+    rtcSend({
+      type: "file-chunk",
+      kind: "tex",
+      id: rec.id,
+      i,
+      data: bytesToB64(bytes.subarray(i * FILE_CHUNK, (i + 1) * FILE_CHUNK))
+    }, remoteId);
+    if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
+  }
+}
+
+async function applyIncomingTex(id, bytes) {
+  const rec = sharedObjects.get(id);
+  if (!rec) return;
+  rec.matTex = bytes;
+  rec.matMap = await textureFromBytes(bytes);
+  applyRecMaterial(rec);
 }
 
 function sendSharedMessage(action, rec, persist) {
@@ -2302,12 +2914,14 @@ function handleSharedMessage(msg) {
     scene.remove(rec.root);
     sharedObjects.delete(msg.object.id);
     incomingFiles.delete(msg.object.id);
+    incomingTex.delete(msg.object.id);
     return;
   }
   const rec = ensureShared(msg.object.id, msg.object, true);
   if (msg.object.fitted) rec.fitted = true;
   if (msg.object.ext) rec.ext = msg.object.ext;
-  applySharedTransform(rec, msg.object, false);
+  if (msg.action !== "material") applySharedTransform(rec, msg.object, false);
+  applySharedMaterial(rec, msg.object);
   if (!rec.ready && !rec.bytes) requestSharedFile(rec.id);
 }
 
@@ -2460,6 +3074,7 @@ async function syncSharedToPeer(remoteId) {
   for (const rec of sharedObjects.values()) {
     rtcSend({ type: "object", action: "add", object: sharedPayload(rec) }, remoteId);
     if (rec.bytes) await rtcSendFileTo(remoteId, rec);
+    if (rec.matTex) await sendRtcTexTo(remoteId, rec);
   }
 }
 
@@ -2470,6 +3085,13 @@ function handleRtcPayload(remoteId, msg) {
   }
   if (msg.type === "file-request" && msg.id) {
     const rec = sharedObjects.get(msg.id);
+    if (msg.kind === "tex") {
+      if (rec && rec.matTex) {
+        if (connectionMode === "local") sendLocalTex(rec);
+        else sendRtcTexTo(remoteId, rec);
+      }
+      return;
+    }
     if (rec && rec.bytes && !rec.fromNetwork) {
       if (connectionMode === "local") sendLocalFile(rec);
       else rtcSendFileTo(remoteId, rec);
@@ -2477,6 +3099,10 @@ function handleRtcPayload(remoteId, msg) {
     return;
   }
   if (msg.type === "file-meta" && msg.id) {
+    if (msg.kind === "tex") {
+      incomingTex.set(msg.id, { size: msg.size || 0, total: msg.total || 1, chunks: [] });
+      return;
+    }
     incomingFiles.set(msg.id, {
       name: msg.name,
       ext: msg.ext,
@@ -2488,6 +3114,23 @@ function handleRtcPayload(remoteId, msg) {
     return;
   }
   if (msg.type === "file-chunk" && msg.id && typeof msg.data === "string") {
+    if (msg.kind === "tex") {
+      const incoming = incomingTex.get(msg.id) || { chunks: [], total: 1 };
+      incoming.chunks[msg.i] = b64ToBytes(msg.data);
+      incomingTex.set(msg.id, incoming);
+      if (incoming.chunks.filter(Boolean).length < incoming.total) return;
+      let size = 0;
+      for (const part of incoming.chunks) size += part.length;
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const part of incoming.chunks) {
+        bytes.set(part, offset);
+        offset += part.length;
+      }
+      incomingTex.delete(msg.id);
+      applyIncomingTex(msg.id, bytes).catch(err => console.warn(err));
+      return;
+    }
     const incoming = incomingFiles.get(msg.id) || { chunks: [], total: 1, name: "model", ext: "" };
     incoming.chunks[msg.i] = b64ToBytes(msg.data);
     incomingFiles.set(msg.id, incoming);
@@ -2676,6 +3319,14 @@ async function duplicateSelectedShared() {
   rec.root.add(object);
   rec.mesh = object;
   rec.ready = true;
+  rec.root.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    o.material = Array.isArray(o.material) ? o.material.map(m => m.clone()) : o.material.clone();
+  });
+  if (src.mat) rec.mat = { ...src.mat };
+  if (src.matTex) rec.matTex = new Uint8Array(src.matTex);
+  rec.matMap = src.matMap || null;
+  if (rec.mat) applyRecMaterial(rec);
   cacheSharedRadius(rec);
   selectShared(rec.root);
   statusEl.textContent = "Duplicated " + (src.name || "model");
@@ -2710,6 +3361,7 @@ async function publishSharedNew(rec) {
   } else {
     sendSharedMessage("add", rec, true);
   }
+  if (rec.matTex) await publishMaterialTex(rec);
 }
 
 function handleDroppedFiles(fileList) {
