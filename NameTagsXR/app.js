@@ -5,9 +5,10 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "34";
+const APP_VERSION = "35";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -171,10 +172,19 @@ const controllers = [];
 const remotePlayers = new Map();
 const sharedObjects = new Map();
 const incomingFiles = new Map();
-const gltfLoader = new GLTFLoader();
-const objLoader = new OBJLoader();
-const stlLoader = new STLLoader();
-const fbxLoader = new FBXLoader();
+const WHITE_PX = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+n2s8AAAAASUVORK5CYII=";
+const modelManager = new THREE.LoadingManager();
+modelManager.setURLModifier(url => {
+  const s = String(url || "");
+  if (/^(data:|blob:)/i.test(s)) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  return WHITE_PX;
+});
+const gltfLoader = new GLTFLoader(modelManager);
+const objLoader = new OBJLoader(modelManager);
+const stlLoader = new STLLoader(modelManager);
+const fbxLoader = new FBXLoader(modelManager);
+const gltfExporter = new GLTFExporter();
 const _raycaster = new THREE.Raycaster();
 const _pointerNdc = new THREE.Vector2();
 const _fitBox = new THREE.Box3();
@@ -1736,7 +1746,8 @@ function sharedPayload(rec) {
     z: rec.roomPos.z,
     heldBy: rec.heldBy || "",
     seq: rec.seq || 0,
-    size: rec.bytes ? rec.bytes.byteLength : rec.size || 0
+    size: rec.bytes ? rec.bytes.byteLength : rec.size || 0,
+    fitted: !!rec.fitted
   };
 }
 
@@ -1789,6 +1800,7 @@ function ensureShared(id, meta = {}) {
     heldBy: meta.heldBy || "",
     seq: meta.seq || 0,
     size: meta.size || 0,
+    fitted: !!meta.fitted,
     radius: .2
   };
   rec.root.userData.sharedId = id;
@@ -1826,50 +1838,129 @@ function markSharedMeshes(root, wrapper) {
   });
 }
 
-function loadSharedMesh(rec) {
-  if (!rec.bytes || rec.ready) return;
-  const ext = rec.ext || modelExt(rec.name);
-  const onReady = object => {
-    fitSharedModel(object);
-    markSharedMeshes(object, rec.root);
-    if (rec.placeholder) {
-      rec.root.remove(rec.placeholder);
-      rec.placeholder.geometry?.dispose();
-      rec.placeholder.material?.dispose();
-      rec.placeholder = null;
-    }
-    rec.root.add(object);
-    rec.mesh = object;
-    rec.ready = true;
-    cacheSharedRadius(rec);
-  };
-  const fail = err => {
-    console.warn("Shared model failed", rec.name, err);
-    statusEl.textContent = "Could not load " + rec.name;
-  };
-  try {
-    if (ext === "glb" || ext === "gltf") {
-      gltfLoader.parse(asArrayBuffer(rec.bytes), "", gltf => onReady(gltf.scene || gltf.scenes[0]), fail);
-      return;
-    }
-    if (ext === "obj") {
-      onReady(objLoader.parse(new TextDecoder().decode(rec.bytes)));
-      return;
-    }
-    if (ext === "stl") {
-      const geo = stlLoader.parse(asArrayBuffer(rec.bytes));
-      geo.computeVertexNormals();
-      onReady(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: .05, roughness: .7 })));
-      return;
-    }
-    if (ext === "fbx") {
-      onReady(fbxLoader.parse(asArrayBuffer(rec.bytes), ""));
-      return;
-    }
-    fail(new Error("unsupported"));
-  } catch (err) {
-    fail(err);
+function sniffModelExt(bytes, fallback) {
+  if (bytes && bytes.length >= 4 && bytes[0] === 0x67 && bytes[1] === 0x6C && bytes[2] === 0x54 && bytes[3] === 0x46) {
+    return "glb";
   }
+  return fallback;
+}
+
+function meshOnlyClone(object) {
+  const group = new THREE.Group();
+  object.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(object.matrixWorld).invert();
+  const local = new THREE.Matrix4();
+  object.traverse(o => {
+    if (!o.isMesh || !o.geometry) return;
+    const mesh = new THREE.Mesh(o.geometry, o.material);
+    local.multiplyMatrices(inv, o.matrixWorld);
+    local.decompose(mesh.position, mesh.quaternion, mesh.scale);
+    group.add(mesh);
+  });
+  return group;
+}
+
+function exportSharedGlb(object) {
+  return new Promise((resolve, reject) => {
+    const clone = meshOnlyClone(object);
+    if (!clone.children.length) {
+      reject(new Error("no mesh to export"));
+      return;
+    }
+    gltfExporter.parse(clone, result => {
+      if (result instanceof ArrayBuffer) resolve(result);
+      else reject(new Error("GLB export did not return binary"));
+    }, reject, { binary: true, embedImages: true });
+  });
+}
+
+function loadSharedMesh(rec) {
+  return new Promise((resolve, reject) => {
+    if (rec.ready && rec.mesh) {
+      resolve(rec.mesh);
+      return;
+    }
+    if (!rec.bytes) {
+      reject(new Error("no bytes"));
+      return;
+    }
+    const ext = sniffModelExt(rec.bytes, rec.ext || modelExt(rec.name));
+    rec.ext = ext;
+    const onReady = object => {
+      if (!object) {
+        reject(new Error("empty model"));
+        return;
+      }
+      if (!rec.fitted) fitSharedModel(object);
+      markSharedMeshes(object, rec.root);
+      if (rec.placeholder) {
+        rec.root.remove(rec.placeholder);
+        rec.placeholder.geometry?.dispose();
+        rec.placeholder.material?.dispose();
+        rec.placeholder = null;
+      }
+      rec.root.add(object);
+      rec.mesh = object;
+      rec.ready = true;
+      cacheSharedRadius(rec);
+      resolve(object);
+    };
+    const fail = err => {
+      console.warn("Shared model failed", rec.name, err);
+      statusEl.textContent = "Could not load " + (rec.name || "model");
+      reject(err || new Error("parse failed"));
+    };
+    try {
+      if (ext === "glb" || ext === "gltf") {
+        gltfLoader.parse(asArrayBuffer(rec.bytes), "", gltf => {
+          onReady(gltf.scene || (gltf.scenes && gltf.scenes[0]));
+        }, fail);
+        return;
+      }
+      if (ext === "obj") {
+        onReady(objLoader.parse(new TextDecoder().decode(rec.bytes)));
+        return;
+      }
+      if (ext === "stl") {
+        const geo = stlLoader.parse(asArrayBuffer(rec.bytes));
+        geo.computeVertexNormals();
+        onReady(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: .05, roughness: .7 })));
+        return;
+      }
+      if (ext === "fbx") {
+        onReady(fbxLoader.parse(asArrayBuffer(rec.bytes), ""));
+        return;
+      }
+      fail(new Error("unsupported"));
+    } catch (err) {
+      fail(err);
+    }
+  });
+}
+
+async function prepareSharedBytes(rec, originalExt, originalBytes) {
+  if (originalExt === "glb" || sniffModelExt(originalBytes, "") === "glb") {
+    rec.bytes = originalBytes;
+    rec.ext = "glb";
+    rec.size = originalBytes.byteLength;
+    return;
+  }
+  if (!rec.mesh) return;
+  try {
+    const glb = await exportSharedGlb(rec.mesh);
+    if (glb && glb.byteLength > 0 && glb.byteLength <= MAX_MODEL_BYTES) {
+      rec.bytes = new Uint8Array(glb);
+      rec.ext = "glb";
+      rec.size = rec.bytes.byteLength;
+      rec.fitted = true;
+      return;
+    }
+  } catch (err) {
+    console.warn("GLB export failed", err);
+  }
+  rec.bytes = originalBytes;
+  rec.ext = originalExt;
+  rec.size = originalBytes.byteLength;
 }
 
 function relocalizeSharedObjects() {
@@ -1964,6 +2055,8 @@ function handleSharedMessage(msg) {
     return;
   }
   const rec = ensureShared(msg.object.id, msg.object);
+  if (msg.object.fitted) rec.fitted = true;
+  if (msg.object.ext) rec.ext = msg.object.ext;
   applySharedTransform(rec, msg.object, false);
   if (!rec.ready && !rec.bytes) requestSharedFile(rec.id);
 }
@@ -1989,7 +2082,9 @@ async function fetchLocalModel(id) {
       const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}`);
       if (!res.ok) throw new Error("missing");
       rec.bytes = new Uint8Array(await res.arrayBuffer());
-      loadSharedMesh(rec);
+      rec.ext = sniffModelExt(rec.bytes, rec.ext);
+      statusEl.textContent = "Loading " + (rec.name || "model") + "…";
+      await loadSharedMesh(rec);
       return;
     } catch {
       await new Promise(r => setTimeout(r, 250 * (i + 1)));
@@ -2096,9 +2191,9 @@ function handleRtcPayload(remoteId, msg) {
     incomingFiles.delete(msg.id);
     const rec = ensureShared(msg.id, { name: incoming.name, ext: incoming.ext, size });
     rec.bytes = bytes;
-    rec.ext = rec.ext || incoming.ext;
+    rec.ext = sniffModelExt(bytes, rec.ext || incoming.ext);
     rec.name = rec.name || incoming.name;
-    loadSharedMesh(rec);
+    loadSharedMesh(rec).catch(() => {});
   }
 }
 
@@ -2176,16 +2271,24 @@ async function addSharedFromFile(file) {
   });
   rec.bytes = bytes;
   rec.size = bytes.byteLength;
-  loadSharedMesh(rec);
+  statusEl.textContent = "Loading " + file.name + "…";
+  try {
+    await loadSharedMesh(rec);
+    await prepareSharedBytes(rec, ext, bytes);
+  } catch (err) {
+    console.warn(err);
+    statusEl.textContent = "Could not load " + file.name;
+    return;
+  }
   selectShared(rec.root);
   statusEl.textContent = "Shared " + file.name + " · others can move it";
   if (connectionMode === "local") {
     try {
-      const q = `name=${encodeURIComponent(file.name)}&ext=${encodeURIComponent(ext)}`;
+      const q = `name=${encodeURIComponent(file.name)}&ext=${encodeURIComponent(rec.ext || ext)}`;
       const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}?${q}`, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
-        body: bytes
+        body: rec.bytes
       });
       if (!res.ok) throw new Error("upload failed");
     } catch (err) {
