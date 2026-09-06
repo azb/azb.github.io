@@ -118,6 +118,35 @@ button.primary-xl {
 .red { color: #ff4040; }
 .blue { color: #4090ff; }
 #desktopHint { bottom: 16px; top: auto; }
+#dropOverlay {
+  position: fixed;
+  inset: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px dashed #7ec8ff;
+  border-radius: 18px;
+  background: rgba(20, 50, 90, .42);
+  color: #fff;
+  font-size: 28px;
+  font-weight: 700;
+  pointer-events: none;
+}
+#dropOverlay.hidden { display: none; }
+#shareHint { margin-top: 8px; }
+label.filePick {
+  display: inline-block;
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: #fff;
+  color: #111;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+label.filePick input { display: none; }
 #hud {
   padding-top: 18px;
   padding-right: 56px;

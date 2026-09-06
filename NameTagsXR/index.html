@@ -55,9 +55,14 @@
     <div id="hudBody">
     <div><b id="roomLabel"></b> · <span id="status">Connecting…</span> · <span class="appVersion"></span></div>
     <div id="playerList" class="small">No other players yet.</div>
+    <div id="shareHint" class="small">On this PC, drop a .glb / .gltf / .obj / .stl / .fbx file onto the page to share it, or add one here. Drag the XYZ gizmo to move it. In a headset, pinch to grab.</div>
+    <label class="filePick">
+      Add 3D model
+      <input id="modelFile" type="file" accept=".glb,.gltf,.obj,.stl,.fbx,model/*" />
+    </label>
     <div id="xrCalibrateUi" class="hidden">
     <div id="instructions">
-      <b>Calibration:</b> grab the dots, then pinch the green <b>DONE</b> button between them (also works from a distance). Pinch a small marker to edit again.
+      <b>Calibration:</b> grab the gizmos, line the axis crossing up with a real-world point, then pinch the green <b>DONE</b> button between them (also works from a distance). Pinch a small marker to edit again.
     </div>
     <button id="calibrate">Calibrate</button>
     <button id="recalibrate" class="secondary">Recalibrate</button>
@@ -67,12 +72,13 @@
   </div>
 
   <div id="desktopHint" class="panel hidden">
-    WebXR requires a compatible headset or browser. On an XR device, Enter Room also starts the headset session.
+    This PC is the spectator and model host. Drop a 3D file onto the page to share it. Headsets enter the same room, then pinch models to move them.
   </div>
   </div>
+  <div id="dropOverlay" class="hidden">Drop 3D model to share</div>
 
   <script type="module">
-    import("./app.js?v=32").catch(err => {
+    import("./app.js?v=34").catch(err => {
       const el = document.getElementById("setupError");
       el.textContent = "Failed to load app: " + (err && err.message ? err.message : err);
     });

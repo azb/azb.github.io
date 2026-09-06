@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
@@ -37,8 +38,36 @@ WS_MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 rooms_lock = threading.Lock()
 # room_id -> { client_id: Client }
 rooms: dict[str, dict[str, "Client"]] = {}
+# room_id -> { object_id: { meta, bytes } }
+room_models: dict[str, dict[str, dict]] = {}
+MAX_MODEL_BYTES = 20 * 1024 * 1024
 lan_ip = "127.0.0.1"
 using_https = False
+
+
+def safe_token(value: str, n: int = 80) -> str:
+    raw = str(value or "")[:n]
+    return "".join(ch for ch in raw if ch.isalnum() or ch in "-_.") or ""
+
+
+def room_object_list(room_id: str) -> list:
+    out = []
+    for rec in room_models.get(room_id, {}).values():
+        meta = rec.get("meta")
+        if isinstance(meta, dict) and meta.get("id"):
+            out.append(meta)
+    return out
+
+
+def parse_model_path(path: str):
+    parts = path.strip("/").split("/")
+    if len(parts) != 3 or parts[0] != "models":
+        return None
+    room = safe_token(urllib.parse.unquote(parts[1]), 48)
+    oid = safe_token(urllib.parse.unquote(parts[2]), 80)
+    if not room or not oid:
+        return None
+    return room, oid
 
 
 def lan_address() -> str:
@@ -214,6 +243,7 @@ def drop_client(client: Client) -> None:
             del room[left_id]
             if not room:
                 rooms.pop(left_room, None)
+                room_models.pop(left_room, None)
             else:
                 others = list(room.values())
     for other in others:
@@ -241,12 +271,13 @@ def handle_message(client: Client, msg: dict) -> None:
             client.data = {}
             bucket[cid] = client
             snapshot = room_snapshot(room, exclude=cid)
+            objects = room_object_list(room)
         if old is not None and old is not client:
             try:
                 old.conn.close()
             except OSError:
                 pass
-        client.send_json({"type": "peers", "peers": snapshot})
+        client.send_json({"type": "peers", "peers": snapshot, "objects": objects})
         print(f"join {cid[:8]} room={room} peers={len(snapshot)}")
         return
 
@@ -264,6 +295,38 @@ def handle_message(client: Client, msg: dict) -> None:
             room = rooms.get(client.room, {})
             others = [c for cid, c in room.items() if cid != client.id]
         payload = {"type": "state", "id": client.id, "data": data}
+        for other in others:
+            try:
+                other.send_json(payload)
+            except OSError:
+                pass
+        return
+
+    if kind == "object":
+        action = str(msg.get("action") or "")
+        obj = msg.get("object")
+        if action not in ("add", "move", "hold", "remove") or not isinstance(obj, dict):
+            return
+        oid = safe_token(obj.get("id"))
+        if not oid:
+            return
+        obj = {**obj, "id": oid}
+        others = []
+        with rooms_lock:
+            bucket = room_models.setdefault(client.room, {})
+            if action == "remove":
+                bucket.pop(oid, None)
+            else:
+                prev = bucket.get(oid) or {}
+                meta = dict(prev.get("meta") or {})
+                for key in ("name", "ext", "x", "y", "z", "heldBy", "seq", "size"):
+                    if key in obj:
+                        meta[key] = obj[key]
+                meta["id"] = oid
+                bucket[oid] = {"meta": meta, "bytes": prev.get("bytes")}
+            room = rooms.get(client.room, {})
+            others = [c for cid, c in room.items() if cid != client.id]
+        payload = {"type": "object", "action": action, "object": obj}
         for other in others:
             try:
                 other.send_json(payload)
@@ -303,6 +366,39 @@ class LanHandler(SimpleHTTPRequestHandler):
             return "application/wasm"
         return SimpleHTTPRequestHandler.guess_type(self, path)
 
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_POST(self) -> None:
+        path = self.path.split("?", 1)[0]
+        ident = parse_model_path(path)
+        if not ident:
+            self.send_error(404, "Unknown POST")
+            return
+        room, oid = ident
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_MODEL_BYTES:
+            self.send_error(413 if length > MAX_MODEL_BYTES else 400, "Invalid model size")
+            return
+        data = self.rfile.read(length)
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        name = safe_token((qs.get("name") or ["model"])[0], 80) or "model"
+        ext = safe_token((qs.get("ext") or [""])[0], 8).lower()
+        with rooms_lock:
+            bucket = room_models.setdefault(room, {})
+            prev = bucket.get(oid) or {}
+            meta = dict(prev.get("meta") or {})
+            meta.update({"id": oid, "name": name, "ext": ext, "size": len(data)})
+            bucket[oid] = {"meta": meta, "bytes": data}
+        self._json({"ok": True, "id": oid, "size": len(data)})
+
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
         if path == "/__lan":
@@ -313,6 +409,24 @@ class LanHandler(SimpleHTTPRequestHandler):
             return
         if path == "/" or path == "/index.html":
             self._serve_index()
+            return
+        if path.startswith("/models/"):
+            ident = parse_model_path(path)
+            if not ident:
+                self.send_error(400, "Bad model path")
+                return
+            room, oid = ident
+            with rooms_lock:
+                rec = room_models.get(room, {}).get(oid)
+                data = rec.get("bytes") if rec else None
+            if not data:
+                self.send_error(404, "Model not found")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
             return
         if path.startswith(THREE_LOCAL + "/"):
             self._proxy_cdn(THREE_CDN, path[len(THREE_LOCAL) + 1 :], "three")

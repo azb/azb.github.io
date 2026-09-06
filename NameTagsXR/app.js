@@ -1,8 +1,13 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "32";
+const APP_VERSION = "34";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -19,7 +24,7 @@ const firebaseConfig = {
   measurementId: "G-R13NNSLFQ0"
 };
 
-let firebaseApp, auth, db, roomRef, playersUnsub;
+let firebaseApp, auth, db, roomRef, playersUnsub, objectsUnsub;
 let uid, roomId, playerName;
 let connectionMode = "cloud";
 let lanReady = false;
@@ -120,6 +125,9 @@ controls.enableDamping = true;
 controls.update();
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 2));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+dirLight.position.set(2.5, 5, 1.5);
+scene.add(dirLight);
 const grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
 scene.add(grid);
 
@@ -131,10 +139,17 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
+const GIZMO_AXIS_LEN = .16;
+const GIZMO_SHAFT_R = .0045;
+const GIZMO_CONE_R = .013;
+const GIZMO_CONE_LEN = .04;
+const GIZMO_STUB_LEN = .055;
+const GIZMO_CENTER = .012;
+
 // Shared calibration landmarks.
 // Canonical room coordinates are red=(0,0,0), blue=(1,0,0).
-const redDot = makeDot(0xff3030, "RED");
-const blueDot = makeDot(0x3080ff, "BLUE");
+const redDot = makeGizmo(0xff3030, "RED");
+const blueDot = makeGizmo(0x3080ff, "BLUE");
 redDot.position.set(-0.5, 1, -1.5);
 blueDot.position.set(0.5, 1, -1.5);
 const doneButton = makeDoneButton();
@@ -149,8 +164,33 @@ const GRAB_NEAR = .22;
 const GRAB_RADIUS = .28;
 const GRAB_FAR = 12;
 const DOT_SCALE_MINI = .38;
+const MAX_MODEL_BYTES = 20 * 1024 * 1024;
+const FILE_CHUNK = 48 * 1024;
+const MODEL_FIT = .75;
 const controllers = [];
 const remotePlayers = new Map();
+const sharedObjects = new Map();
+const incomingFiles = new Map();
+const gltfLoader = new GLTFLoader();
+const objLoader = new OBJLoader();
+const stlLoader = new STLLoader();
+const fbxLoader = new FBXLoader();
+const _raycaster = new THREE.Raycaster();
+const _pointerNdc = new THREE.Vector2();
+const _fitBox = new THREE.Box3();
+const _fitSize = new THREE.Vector3();
+const _fitCenter = new THREE.Vector3();
+let selectedShared = null;
+let lastObjectSend = 0;
+let pcPointerDown = null;
+
+const transformControls = new TransformControls(camera, renderer.domElement);
+transformControls.setMode("translate");
+transformControls.setSpace("world");
+transformControls.enabled = false;
+const transformHelper = transformControls.getHelper();
+transformHelper.visible = false;
+scene.add(transformHelper);
 
 const setup = document.getElementById("setup");
 const hud = document.getElementById("hud");
@@ -341,30 +381,89 @@ window.addEventListener("resize", () => {
 
 renderer.setAnimationLoop(render);
 
-function makeDot(color, text) {
+function makeGizmo(markerColor, text) {
   const group = new THREE.Group();
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(.09, 24, 16),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: .35 })
-  );
-  group.add(sphere);
+  const axes = [
+    { dir: new THREE.Vector3(1, 0, 0), color: 0xff3333, letter: "X" },
+    { dir: new THREE.Vector3(0, 1, 0), color: 0x33cc55, letter: "Y" },
+    { dir: new THREE.Vector3(0, 0, 1), color: 0x3388ff, letter: "Z" }
+  ];
 
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(.12, .14, 32),
-    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: .75 })
-  );
-  ring.rotation.x = -Math.PI / 2;
-  group.add(ring);
+  for (const axis of axes) {
+    addGizmoAxis(group, axis.dir, axis.color);
+    const glyph = makeLetterSprite(axis.letter, axis.color);
+    glyph.position.copy(axis.dir).multiplyScalar(GIZMO_AXIS_LEN + .03);
+    group.add(glyph);
+    if (!group.userData.axisLetters) group.userData.axisLetters = [];
+    group.userData.axisLetters.push(glyph);
+  }
 
-  const label = makeTextSprite(text, color);
-  label.position.y = .18;
+  const center = new THREE.Mesh(
+    new THREE.BoxGeometry(GIZMO_CENTER, GIZMO_CENTER, GIZMO_CENTER),
+    new THREE.MeshBasicMaterial({ color: markerColor })
+  );
+  group.add(center);
+
+  const label = makeTextSprite(text, markerColor);
+  label.position.y = GIZMO_AXIS_LEN + .08;
   label.scale.set(.35, .12, 1);
   group.add(label);
 
   group.userData.grabbable = true;
-  group.userData.radius = .14;
+  group.userData.radius = GIZMO_AXIS_LEN + GIZMO_CONE_LEN;
   group.userData.label = label;
   return group;
+}
+
+function addGizmoAxis(parent, dir, color) {
+  const mat = new THREE.MeshBasicMaterial({ color });
+  const shaftLen = GIZMO_AXIS_LEN - GIZMO_CONE_LEN;
+
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(GIZMO_SHAFT_R, GIZMO_SHAFT_R, shaftLen, 10),
+    mat
+  );
+  shaft.quaternion.setFromUnitVectors(_yAxis, dir);
+  shaft.position.copy(dir).multiplyScalar(shaftLen * .5);
+  parent.add(shaft);
+
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(GIZMO_CONE_R, GIZMO_CONE_LEN, 12),
+    mat
+  );
+  cone.quaternion.setFromUnitVectors(_yAxis, dir);
+  cone.position.copy(dir).multiplyScalar(shaftLen + GIZMO_CONE_LEN * .5);
+  parent.add(cone);
+
+  const stub = new THREE.Mesh(
+    new THREE.CylinderGeometry(GIZMO_SHAFT_R * .75, GIZMO_SHAFT_R * .75, GIZMO_STUB_LEN, 8),
+    mat
+  );
+  stub.quaternion.setFromUnitVectors(_yAxis, dir);
+  stub.position.copy(dir).multiplyScalar(-GIZMO_STUB_LEN * .5);
+  parent.add(stub);
+}
+
+function makeLetterSprite(letter, color) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.font = "bold 90px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.strokeStyle = "rgba(0,0,0,.85)";
+  ctx.lineWidth = 12;
+  ctx.strokeText(letter, 64, 68);
+  ctx.fillStyle = "#" + new THREE.Color(color).getHexString();
+  ctx.fillText(letter, 64, 68);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthTest: false
+  }));
+  sprite.scale.set(.055, .055, 1);
+  return sprite;
 }
 
 function makeDoneButton() {
@@ -893,11 +992,15 @@ function bindRtcChannel(remoteId, channel) {
   channel.onmessage = ev => {
     let msg;
     try { msg = JSON.parse(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data)); } catch { return; }
-    if (!msg || msg.type !== "state" || !msg.data) return;
-    updateRemotePlayer(remoteId, msg.data);
-    const obj = remotePlayers.get(remoteId);
-    if (obj) obj.userData.lastSeen = Date.now();
-    describeCloudPlayers();
+    if (!msg || !msg.type) return;
+    if (msg.type === "state" && msg.data) {
+      updateRemotePlayer(remoteId, msg.data);
+      const obj = remotePlayers.get(remoteId);
+      if (obj) obj.userData.lastSeen = Date.now();
+      describeCloudPlayers();
+      return;
+    }
+    handleRtcPayload(remoteId, msg);
   };
   channel.onopen = () => {
     delete outgoingOffers[remoteId];
@@ -906,6 +1009,7 @@ function bindRtcChannel(remoteId, channel) {
     publishPresence(true).catch(() => {});
     publishPlayer(true).catch(() => {});
     describeCloudPlayers();
+    syncSharedToPeer(remoteId).catch(err => console.warn("shared sync failed", err));
     if (renderer.xr.isPresenting) {
       statusEl.textContent = "Tracking pose · walking should appear on other devices";
     }
@@ -1132,8 +1236,13 @@ function leaveRoom(reload) {
     playersUnsub();
     playersUnsub = null;
   }
+  if (objectsUnsub) {
+    objectsUnsub();
+    objectsUnsub = null;
+  }
   sessionStarted = false;
   otherPlayerCount = 0;
+  clearSharedObjects();
   closeLocalSocket();
   closeAllRtc();
   if (connectionMode === "cloud" && uid && roomId && db) {
@@ -1213,10 +1322,21 @@ function connectLocalRoom() {
       if (msg.type === "peers") {
         localPeerMap = msg.peers && typeof msg.peers === "object" ? msg.peers : {};
         applyLocalPeerMap();
+        if (Array.isArray(msg.objects)) {
+          for (const meta of msg.objects) applySharedMeta(meta);
+        }
         if (!settled) {
           settled = true;
           resolve();
         }
+        return;
+      }
+      if (msg.type === "object") {
+        handleSharedMessage(msg);
+        return;
+      }
+      if (msg.type === "objects" && Array.isArray(msg.objects)) {
+        for (const meta of msg.objects) applySharedMeta(meta);
         return;
       }
       if (msg.type === "state" && msg.id && msg.data) {
@@ -1336,6 +1456,15 @@ async function start() {
         applyCloudPresence(docs);
         pruneStalePlayers(snap);
       });
+      objectsUnsub = onSnapshot(collection(db, "rooms", roomId, "objects"), snap => {
+        snap.docChanges().forEach(ch => {
+          if (ch.type === "removed") {
+            handleSharedMessage({ action: "remove", object: { id: ch.doc.id } });
+            return;
+          }
+          applySharedMeta({ id: ch.doc.id, ...ch.doc.data() });
+        });
+      });
     }
 
     setup.classList.add("hidden");
@@ -1382,8 +1511,15 @@ function syncCalibrationUi() {
   const s = markersCollapsed ? DOT_SCALE_MINI : 1;
   redDot.scale.setScalar(s);
   blueDot.scale.setScalar(s);
-  if (redDot.userData.label) redDot.userData.label.visible = !markersCollapsed;
-  if (blueDot.userData.label) blueDot.userData.label.visible = !markersCollapsed;
+  setGizmoChromeVisible(redDot, !markersCollapsed);
+  setGizmoChromeVisible(blueDot, !markersCollapsed);
+}
+
+function setGizmoChromeVisible(gizmo, show) {
+  if (gizmo.userData.label) gizmo.userData.label.visible = show;
+  if (gizmo.userData.axisLetters) {
+    for (const letter of gizmo.userData.axisLetters) letter.visible = show;
+  }
 }
 
 function setPassthrough(on) {
@@ -1426,6 +1562,7 @@ async function enterXRSession(session) {
   controls.enabled = false;
   statusEl.textContent = "Tracking pose · walking should appear on other devices";
   syncCalibrationUi();
+  syncPcGizmos();
   publishPlayer(true).catch(console.error);
 }
 
@@ -1436,6 +1573,7 @@ function onXRSessionEnded() {
   setPassthrough(false);
   statusEl.textContent = "XR stopped · pose is no longer broadcasting";
   syncCalibrationUi();
+  syncPcGizmos();
   publishPlayer(true).catch(() => {});
 }
 
@@ -1549,6 +1687,592 @@ function rayHitSphere(origin, dir, center, radius, maxDist) {
   return t;
 }
 
+function modelExt(name) {
+  const m = /\.(glb|gltf|obj|stl|fbx)$/i.exec(name || "");
+  return m ? m[1].toLowerCase() : "";
+}
+
+function newSharedId() {
+  return crypto.randomUUID ? crypto.randomUUID() : "o-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function asArrayBuffer(bytes) {
+  if (bytes instanceof ArrayBuffer) return bytes;
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function bytesToB64(u8) {
+  let s = "";
+  const n = u8.length;
+  for (let i = 0; i < n; i++) s += String.fromCharCode(u8[i]);
+  return btoa(s);
+}
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+
+function defaultRoomDropPos() {
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  dir.y = 0;
+  if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+  else dir.normalize();
+  const p = camera.position.clone().addScaledVector(dir, 2.2);
+  p.y = .7;
+  return localToRoom(p);
+}
+
+function sharedPayload(rec) {
+  return {
+    id: rec.id,
+    name: rec.name,
+    ext: rec.ext,
+    x: rec.roomPos.x,
+    y: rec.roomPos.y,
+    z: rec.roomPos.z,
+    heldBy: rec.heldBy || "",
+    seq: rec.seq || 0,
+    size: rec.bytes ? rec.bytes.byteLength : rec.size || 0
+  };
+}
+
+function makePlaceholder() {
+  return new THREE.Mesh(
+    new THREE.BoxGeometry(.28, .28, .28),
+    new THREE.MeshBasicMaterial({ color: 0x88c4ff, wireframe: true })
+  );
+}
+
+function fitSharedModel(object) {
+  object.updateMatrixWorld(true);
+  _fitBox.setFromObject(object);
+  if (_fitBox.isEmpty()) return;
+  _fitBox.getSize(_fitSize);
+  const max = Math.max(_fitSize.x, _fitSize.y, _fitSize.z, 1e-5);
+  object.scale.multiplyScalar(MODEL_FIT / max);
+  object.updateMatrixWorld(true);
+  _fitBox.setFromObject(object);
+  _fitBox.getCenter(_fitCenter);
+  object.position.sub(_fitCenter);
+}
+
+function cacheSharedRadius(rec) {
+  if (!rec.root) return;
+  rec.root.updateMatrixWorld(true);
+  _fitBox.setFromObject(rec.root);
+  if (_fitBox.isEmpty()) {
+    rec.radius = .18;
+    return;
+  }
+  rec.radius = Math.max(.08, _fitBox.getSize(_fitSize).length() * .5);
+}
+
+function ensureShared(id, meta = {}) {
+  let rec = sharedObjects.get(id);
+  if (rec) return rec;
+  rec = {
+    id,
+    name: meta.name || "model",
+    ext: meta.ext || "",
+    roomPos: new THREE.Vector3(
+      typeof meta.x === "number" ? meta.x : 0,
+      typeof meta.y === "number" ? meta.y : .7,
+      typeof meta.z === "number" ? meta.z : 0
+    ),
+    root: new THREE.Group(),
+    bytes: null,
+    ready: false,
+    heldBy: meta.heldBy || "",
+    seq: meta.seq || 0,
+    size: meta.size || 0,
+    radius: .2
+  };
+  rec.root.userData.sharedId = id;
+  rec.root.position.copy(roomToLocal(rec.roomPos));
+  rec.placeholder = makePlaceholder();
+  rec.root.add(rec.placeholder);
+  scene.add(rec.root);
+  sharedObjects.set(id, rec);
+  return rec;
+}
+
+function applySharedTransform(rec, meta, force) {
+  if (!rec || !meta) return;
+  const seq = typeof meta.seq === "number" ? meta.seq : rec.seq;
+  if (!force && rec.heldBy === uid) return;
+  if (!force && seq < rec.seq) return;
+  rec.seq = seq;
+  if (typeof meta.x === "number") rec.roomPos.set(meta.x, meta.y, meta.z);
+  rec.heldBy = meta.heldBy || "";
+  rec.root.position.copy(roomToLocal(rec.roomPos));
+}
+
+function markSharedMeshes(root, wrapper) {
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    o.frustumCulled = false;
+    o.userData.sharedRoot = wrapper;
+    if (Array.isArray(o.material)) {
+      for (const mat of o.material) {
+        if (mat) mat.side = THREE.DoubleSide;
+      }
+    } else if (o.material) {
+      o.material.side = THREE.DoubleSide;
+    }
+  });
+}
+
+function loadSharedMesh(rec) {
+  if (!rec.bytes || rec.ready) return;
+  const ext = rec.ext || modelExt(rec.name);
+  const onReady = object => {
+    fitSharedModel(object);
+    markSharedMeshes(object, rec.root);
+    if (rec.placeholder) {
+      rec.root.remove(rec.placeholder);
+      rec.placeholder.geometry?.dispose();
+      rec.placeholder.material?.dispose();
+      rec.placeholder = null;
+    }
+    rec.root.add(object);
+    rec.mesh = object;
+    rec.ready = true;
+    cacheSharedRadius(rec);
+  };
+  const fail = err => {
+    console.warn("Shared model failed", rec.name, err);
+    statusEl.textContent = "Could not load " + rec.name;
+  };
+  try {
+    if (ext === "glb" || ext === "gltf") {
+      gltfLoader.parse(asArrayBuffer(rec.bytes), "", gltf => onReady(gltf.scene || gltf.scenes[0]), fail);
+      return;
+    }
+    if (ext === "obj") {
+      onReady(objLoader.parse(new TextDecoder().decode(rec.bytes)));
+      return;
+    }
+    if (ext === "stl") {
+      const geo = stlLoader.parse(asArrayBuffer(rec.bytes));
+      geo.computeVertexNormals();
+      onReady(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: .05, roughness: .7 })));
+      return;
+    }
+    if (ext === "fbx") {
+      onReady(fbxLoader.parse(asArrayBuffer(rec.bytes), ""));
+      return;
+    }
+    fail(new Error("unsupported"));
+  } catch (err) {
+    fail(err);
+  }
+}
+
+function relocalizeSharedObjects() {
+  for (const rec of sharedObjects.values()) {
+    if (!rec.root) continue;
+    if (rec.heldBy === uid) rec.roomPos.copy(localToRoom(rec.root.position));
+    else rec.root.position.copy(roomToLocal(rec.roomPos));
+  }
+}
+
+function clearSharedObjects() {
+  deselectShared();
+  for (const rec of sharedObjects.values()) {
+    scene.remove(rec.root);
+  }
+  sharedObjects.clear();
+  incomingFiles.clear();
+}
+
+function selectShared(root) {
+  selectedShared = root;
+  syncPcGizmos();
+}
+
+function deselectShared() {
+  selectedShared = null;
+  syncPcGizmos();
+}
+
+function syncPcGizmos() {
+  const show = sessionStarted && !renderer.xr.isPresenting && selectedShared;
+  transformControls.enabled = !!show;
+  transformHelper.visible = !!show;
+  if (show) transformControls.attach(selectedShared);
+  else transformControls.detach();
+}
+
+function sendSharedMessage(action, rec, persist) {
+  const object = sharedPayload(rec);
+  if (connectionMode === "local") {
+    if (localWs && localWs.readyState === WebSocket.OPEN) {
+      localWs.send(JSON.stringify({ type: "object", action, object }));
+    }
+    return;
+  }
+  rtcSend({ type: "object", action, object });
+  if (persist && db && roomId) {
+    setDoc(doc(db, "rooms", roomId, "objects", rec.id), {
+      ...object,
+      updatedAt: serverTimestamp()
+    }).catch(err => console.warn("object persist failed", err));
+  }
+}
+
+function publishSharedMove(root, force) {
+  const rec = sharedObjects.get(root && root.userData.sharedId);
+  if (!rec) return;
+  rec.roomPos.copy(localToRoom(root.position));
+  rec.heldBy = uid;
+  rec.seq = (rec.seq || 0) + 1;
+  const now = performance.now();
+  if (!force && now - lastObjectSend < POSE_MS) return;
+  lastObjectSend = now;
+  sendSharedMessage("move", rec, force);
+}
+
+function beginSharedHold(root) {
+  const rec = sharedObjects.get(root.userData.sharedId);
+  if (!rec) return;
+  rec.heldBy = uid;
+  sendSharedMessage("hold", rec, false);
+}
+
+function endSharedHold(root) {
+  const rec = sharedObjects.get(root && root.userData.sharedId);
+  if (!rec) return;
+  rec.roomPos.copy(localToRoom(root.position));
+  rec.seq = (rec.seq || 0) + 1;
+  rec.heldBy = "";
+  lastObjectSend = 0;
+  sendSharedMessage("move", rec, true);
+}
+
+function handleSharedMessage(msg) {
+  if (!msg || !msg.object || !msg.object.id) return;
+  if (msg.action === "remove") {
+    const rec = sharedObjects.get(msg.object.id);
+    if (!rec) return;
+    if (selectedShared === rec.root) deselectShared();
+    scene.remove(rec.root);
+    sharedObjects.delete(msg.object.id);
+    return;
+  }
+  const rec = ensureShared(msg.object.id, msg.object);
+  applySharedTransform(rec, msg.object, false);
+  if (!rec.ready && !rec.bytes) requestSharedFile(rec.id);
+}
+
+function applySharedMeta(meta) {
+  if (!meta || !meta.id) return;
+  handleSharedMessage({ action: "add", object: meta });
+}
+
+function requestSharedFile(id) {
+  if (connectionMode === "local") {
+    fetchLocalModel(id);
+    return;
+  }
+  rtcSend({ type: "file-request", id });
+}
+
+async function fetchLocalModel(id) {
+  const rec = sharedObjects.get(id);
+  if (!rec || rec.bytes || !roomId) return;
+  for (let i = 0; i < 8; i++) {
+    try {
+      const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error("missing");
+      rec.bytes = new Uint8Array(await res.arrayBuffer());
+      loadSharedMesh(rec);
+      return;
+    } catch {
+      await new Promise(r => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  statusEl.textContent = "Waiting for " + (rec.name || "model") + " from the host";
+}
+
+function rtcSend(msg, remoteId) {
+  const raw = JSON.stringify(msg);
+  if (remoteId) {
+    const peer = rtcPeers.get(remoteId);
+    if (peer && peer.channel && peer.channel.readyState === "open") {
+      try { peer.channel.send(raw); } catch {}
+    }
+    return;
+  }
+  for (const peer of rtcPeers.values()) {
+    if (peer.channel && peer.channel.readyState === "open") {
+      try { peer.channel.send(raw); } catch {}
+    }
+  }
+}
+
+async function rtcWaitDrain(channel) {
+  while (channel && channel.readyState === "open" && channel.bufferedAmount > 512 * 1024) {
+    await new Promise(r => setTimeout(r, 25));
+  }
+}
+
+async function rtcSendFileTo(remoteId, rec) {
+  if (!rec.bytes) return;
+  const bytes = rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
+  const total = Math.max(1, Math.ceil(bytes.byteLength / FILE_CHUNK));
+  rtcSend({
+    type: "file-meta",
+    id: rec.id,
+    name: rec.name,
+    ext: rec.ext,
+    size: bytes.byteLength,
+    total
+  }, remoteId);
+  for (let i = 0; i < total; i++) {
+    const peer = remoteId ? rtcPeers.get(remoteId) : null;
+    const channel = remoteId ? peer && peer.channel : null;
+    if (remoteId && (!channel || channel.readyState !== "open")) return;
+    if (channel) await rtcWaitDrain(channel);
+    else {
+      for (const p of rtcPeers.values()) {
+        if (p.channel && p.channel.readyState === "open") await rtcWaitDrain(p.channel);
+      }
+    }
+    rtcSend({
+      type: "file-chunk",
+      id: rec.id,
+      i,
+      data: bytesToB64(bytes.subarray(i * FILE_CHUNK, (i + 1) * FILE_CHUNK))
+    }, remoteId);
+    if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
+  }
+}
+
+async function syncSharedToPeer(remoteId) {
+  for (const rec of sharedObjects.values()) {
+    rtcSend({ type: "object", action: "add", object: sharedPayload(rec) }, remoteId);
+    if (rec.bytes) await rtcSendFileTo(remoteId, rec);
+  }
+}
+
+function handleRtcPayload(remoteId, msg) {
+  if (msg.type === "object") {
+    handleSharedMessage(msg);
+    return;
+  }
+  if (msg.type === "file-request" && msg.id) {
+    const rec = sharedObjects.get(msg.id);
+    if (rec && rec.bytes) rtcSendFileTo(remoteId, rec);
+    return;
+  }
+  if (msg.type === "file-meta" && msg.id) {
+    incomingFiles.set(msg.id, {
+      name: msg.name,
+      ext: msg.ext,
+      size: msg.size || 0,
+      total: msg.total || 1,
+      chunks: []
+    });
+    ensureShared(msg.id, { name: msg.name, ext: msg.ext, size: msg.size });
+    return;
+  }
+  if (msg.type === "file-chunk" && msg.id && typeof msg.data === "string") {
+    const incoming = incomingFiles.get(msg.id) || { chunks: [], total: 1, name: "model", ext: "" };
+    incoming.chunks[msg.i] = b64ToBytes(msg.data);
+    incomingFiles.set(msg.id, incoming);
+    if (incoming.chunks.filter(Boolean).length < incoming.total) return;
+    let size = 0;
+    for (const part of incoming.chunks) size += part.length;
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const part of incoming.chunks) {
+      bytes.set(part, offset);
+      offset += part.length;
+    }
+    incomingFiles.delete(msg.id);
+    const rec = ensureShared(msg.id, { name: incoming.name, ext: incoming.ext, size });
+    rec.bytes = bytes;
+    rec.ext = rec.ext || incoming.ext;
+    rec.name = rec.name || incoming.name;
+    loadSharedMesh(rec);
+  }
+}
+
+function findSharedHit(controller) {
+  pointerFrom(controller, _pointerOrigin, _pointerDir);
+  let near = null;
+  let nearDist = .35;
+  for (const rec of sharedObjects.values()) {
+    if (!rec.root) continue;
+    const reach = Math.max(GRAB_NEAR, rec.radius * .65);
+    const d = _pointerOrigin.distanceTo(rec.root.position);
+    if (d < reach && d < nearDist) {
+      nearDist = d;
+      near = rec.root;
+    }
+  }
+  if (near) return { target: near, mode: "near", kind: "shared" };
+
+  let best = null;
+  let bestT = GRAB_FAR;
+  for (const rec of sharedObjects.values()) {
+    if (!rec.root) continue;
+    const t = rayHitSphere(_pointerOrigin, _pointerDir, rec.root.position, Math.max(rec.radius, .1), GRAB_FAR);
+    if (t != null && t < bestT) {
+      bestT = t;
+      best = rec.root;
+    }
+  }
+  if (best) return { target: best, mode: "ray", distance: bestT, kind: "shared" };
+  return null;
+}
+
+function pickSharedAt(e) {
+  if (!sessionStarted || renderer.xr.isPresenting) return;
+  if (transformControls.dragging || transformControls.axis) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  _pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  _pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  _raycaster.setFromCamera(_pointerNdc, camera);
+  const meshes = [];
+  for (const rec of sharedObjects.values()) {
+    if (!rec.root) continue;
+    rec.root.traverse(o => { if (o.isMesh) meshes.push(o); });
+  }
+  const hits = meshes.length ? _raycaster.intersectObjects(meshes, false) : [];
+  if (!hits.length) {
+    deselectShared();
+    return;
+  }
+  let root = hits[0].object;
+  while (root && !root.userData.sharedId) root = root.parent;
+  if (root) selectShared(root);
+}
+
+async function addSharedFromFile(file) {
+  const ext = modelExt(file.name);
+  if (!ext) {
+    statusEl.textContent = "Use a .glb, .gltf, .obj, .stl, or .fbx file";
+    return;
+  }
+  if (file.size > MAX_MODEL_BYTES) {
+    statusEl.textContent = "Model is too large (max 20 MB)";
+    return;
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const id = newSharedId();
+  const pos = defaultRoomDropPos();
+  const rec = ensureShared(id, {
+    name: file.name,
+    ext,
+    x: pos.x,
+    y: pos.y,
+    z: pos.z,
+    seq: 1
+  });
+  rec.bytes = bytes;
+  rec.size = bytes.byteLength;
+  loadSharedMesh(rec);
+  selectShared(rec.root);
+  statusEl.textContent = "Shared " + file.name + " · others can move it";
+  if (connectionMode === "local") {
+    try {
+      const q = `name=${encodeURIComponent(file.name)}&ext=${encodeURIComponent(ext)}`;
+      const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}?${q}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: bytes
+      });
+      if (!res.ok) throw new Error("upload failed");
+    } catch (err) {
+      console.warn(err);
+      statusEl.textContent = "Saved locally, but LAN upload failed";
+    }
+  }
+  sendSharedMessage("add", rec, true);
+  if (connectionMode === "cloud") {
+    for (const [peerId] of rtcPeers) rtcSendFileTo(peerId, rec);
+  }
+}
+
+function handleDroppedFiles(fileList) {
+  if (!sessionStarted) {
+    const el = setupError || statusEl;
+    if (el) el.textContent = "Enter a room first, then drop a 3D model.";
+    return;
+  }
+  if (renderer.xr.isPresenting) {
+    statusEl.textContent = "Drop models on the PC browser, not in the headset.";
+    return;
+  }
+  for (const file of fileList) addSharedFromFile(file);
+}
+
+transformControls.addEventListener("dragging-changed", e => {
+  controls.enabled = !e.value && !renderer.xr.isPresenting;
+  const root = transformControls.object;
+  if (!root || !root.userData.sharedId) return;
+  if (e.value) beginSharedHold(root);
+  else endSharedHold(root);
+});
+transformControls.addEventListener("objectChange", () => {
+  const root = transformControls.object;
+  if (root && root.userData.sharedId) publishSharedMove(root, false);
+});
+
+renderer.domElement.addEventListener("pointerdown", e => {
+  if (e.button !== 0 || renderer.xr.isPresenting) return;
+  pcPointerDown = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!pcPointerDown || e.button !== 0) return;
+  const dx = e.clientX - pcPointerDown.x;
+  const dy = e.clientY - pcPointerDown.y;
+  pcPointerDown = null;
+  if (dx * dx + dy * dy > 16) return;
+  pickSharedAt(e);
+});
+
+(function setupModelDrop() {
+  const overlay = document.getElementById("dropOverlay");
+  let depth = 0;
+  const modelFile = document.getElementById("modelFile");
+  if (modelFile) {
+    modelFile.addEventListener("change", () => {
+      handleDroppedFiles(modelFile.files);
+      modelFile.value = "";
+    });
+  }
+  const hasFiles = e => e.dataTransfer && (e.dataTransfer.files.length > 0 || [...(e.dataTransfer.types || [])].includes("Files"));
+  window.addEventListener("dragenter", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    if (overlay) overlay.classList.remove("hidden");
+  });
+  window.addEventListener("dragover", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  window.addEventListener("dragleave", e => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth && overlay) overlay.classList.add("hidden");
+  });
+  window.addEventListener("drop", e => {
+    depth = 0;
+    if (overlay) overlay.classList.add("hidden");
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    handleDroppedFiles(e.dataTransfer.files);
+  });
+})();
+
 function findDoneHit(controller) {
   if (!doneButton.visible) return null;
   pointerFrom(controller, _pointerOrigin, _pointerDir);
@@ -1574,7 +2298,7 @@ function findGrabbable(controller) {
       near = dot;
     }
   }
-  if (near) return { target: near, mode: "near" };
+  if (near) return { target: near, mode: "near", kind: "marker" };
 
   let best = null;
   let bestT = GRAB_FAR;
@@ -1586,8 +2310,8 @@ function findGrabbable(controller) {
       best = dot;
     }
   }
-  if (best) return { target: best, mode: "ray", distance: bestT };
-  return null;
+  if (best) return { target: best, mode: "ray", distance: bestT, kind: "marker" };
+  return findSharedHit(controller);
 }
 
 function onSelectStart(e) {
@@ -1599,9 +2323,13 @@ function onSelectStart(e) {
   }
   const hit = findGrabbable(controller);
   if (!hit) return;
-  if (markersCollapsed) {
-    expandCalibrationMarkers();
-    return;
+  if (hit.kind === "marker") {
+    if (markersCollapsed) {
+      expandCalibrationMarkers();
+      return;
+    }
+  } else if (hit.kind === "shared") {
+    beginSharedHold(hit.target);
   }
   controller.userData.grabbed = hit.target;
   controller.userData.grabMode = hit.mode;
@@ -1615,15 +2343,17 @@ function onSelectStart(e) {
 
 function onSelectEnd(e) {
   const controller = e.target;
+  const grabbed = controller.userData.grabbed;
   controller.userData.selecting = false;
   controller.userData.grabbed = null;
   controller.userData.grabMode = null;
+  if (grabbed && grabbed.userData.sharedId) endSharedHold(grabbed);
 }
 
 function updateGrab() {
   let aimingDoneAny = false;
   for (const c of controllers) {
-    const hover = c.userData.grabbed ? { target: c.userData.grabbed } : findGrabbable(c);
+    const hover = c.userData.grabbed ? { target: c.userData.grabbed, kind: c.userData.grabbed.userData.sharedId ? "shared" : "marker" } : findGrabbable(c);
     const aimingDone = !c.userData.grabbed && findDoneHit(c);
     if (aimingDone) aimingDoneAny = true;
     if (c.userData.rayLine) {
@@ -1641,6 +2371,7 @@ function updateGrab() {
       g.position.copy(p.add(c.userData.grabOffset));
     }
     g.position.y = Math.max(.01, g.position.y);
+    if (g.userData.sharedId) publishSharedMove(g, false);
   }
   if (doneButton.userData.plate) {
     doneButton.userData.plate.material.color.set(aimingDoneAny ? 0xb6ffd4 : 0x3ddc84);
@@ -2056,6 +2787,7 @@ function applyCalibrationFromDots() {
   const localAngle = Math.atan2(flat.z, flat.x);
   calibration = { origin: red, yaw: -localAngle };
   calibrated = true;
+  relocalizeSharedObjects();
   statusEl.textContent = "Calibrated · looking for other players";
   publishPlayer(true);
   return true;
