@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "47";
+const APP_VERSION = "48";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -2011,12 +2011,84 @@ function blendColorHex(rgba) {
   return (r << 16) | (g << 8) | b;
 }
 
+function firstBlendUvMap(mesh) {
+  if (!mesh) return null;
+  if (mesh.cornerUvs && mesh.cornerUvs.length) return mesh.cornerUvs;
+  if (!mesh.uvMaps) return null;
+  const names = Object.keys(mesh.uvMaps);
+  if (!names.length) return null;
+  const preferred = names.find(n => n === "UVMap" || /^uv/i.test(n));
+  return mesh.uvMaps[preferred || names[0]] || null;
+}
+
+function triangulateBlendCorners(offsets) {
+  const faceCount = offsets.length - 1;
+  let triCount = 0;
+  for (let i = 0; i < faceCount; i++) {
+    const size = (offsets[i + 1] || 0) - (offsets[i] || 0);
+    if (size >= 3) triCount += size - 2;
+  }
+  const tris = new Uint32Array(triCount * 3);
+  let t = 0;
+  for (let i = 0; i < faceCount; i++) {
+    const start = offsets[i] || 0;
+    const size = (offsets[i + 1] || 0) - start;
+    if (size < 3) continue;
+    for (let c = 1; c < size - 1; c++) {
+      tris[t++] = start;
+      tris[t++] = start + c;
+      tris[t++] = start + c + 1;
+    }
+  }
+  return tris;
+}
+
 function geometryFromBlendMesh(mesh) {
   if (!mesh || !mesh.vertices || !mesh.vertexCount) return null;
+  const cornerUv = firstBlendUvMap(mesh);
+  const canExpandUv = cornerUv
+    && mesh.cornerVertices
+    && mesh.faceOffsets
+    && mesh.cornerCount
+    && cornerUv.length >= mesh.cornerCount * 2;
+  if (canExpandUv) {
+    const cornerTris = triangulateBlendCorners(mesh.faceOffsets);
+    const n = cornerTris.length;
+    if (!n) return null;
+    const pos = new Float32Array(n * 3);
+    const uv = new Float32Array(n * 2);
+    const srcN = mesh.vertexNormals;
+    const nrm = srcN && srcN.length === mesh.vertexCount * 3 ? new Float32Array(n * 3) : null;
+    for (let i = 0; i < n; i++) {
+      const c = cornerTris[i];
+      const v = mesh.cornerVertices[c] || 0;
+      pos[i * 3] = mesh.vertices[v * 3] || 0;
+      pos[i * 3 + 1] = mesh.vertices[v * 3 + 1] || 0;
+      pos[i * 3 + 2] = mesh.vertices[v * 3 + 2] || 0;
+      uv[i * 2] = cornerUv[c * 2] || 0;
+      uv[i * 2 + 1] = cornerUv[c * 2 + 1] || 0;
+      if (nrm) {
+        nrm[i * 3] = srcN[v * 3] || 0;
+        nrm[i * 3 + 1] = srcN[v * 3 + 1] || 0;
+        nrm[i * 3 + 2] = srcN[v * 3 + 2] || 0;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    if (nrm) geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+    else geo.computeVertexNormals();
+    return geo;
+  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(mesh.vertices, 3));
   if (mesh.vertexNormals && mesh.vertexNormals.length === mesh.vertexCount * 3) {
     geo.setAttribute("normal", new THREE.Float32BufferAttribute(mesh.vertexNormals, 3));
+  }
+  if (mesh.uvs && mesh.uvs.length >= mesh.vertexCount * 2) {
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(mesh.uvs, 2));
+  } else if (cornerUv && cornerUv.length >= mesh.vertexCount * 2 && !mesh.cornerCount) {
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(cornerUv, 2));
   }
   if (mesh.triangles && mesh.triangles.length) {
     geo.setIndex(new THREE.BufferAttribute(mesh.triangles, 1));
@@ -2048,10 +2120,12 @@ function materialFromBlend(matInfo) {
 const CD_MVERT = 0;
 const CD_MFACE = 4;
 const CD_PROP_INT32 = 11;
+const CD_MLOOPUV = 16;
 const CD_MPOLY = 25;
 const CD_MLOOP = 26;
 const CD_PROP_FLOAT3 = 48;
 const CD_PROP_FLOAT2 = 49;
+const NTX_HAS_UV = 1;
 
 function blendLayout(reader, name) {
   try { return reader.layoutOf(name); } catch { return null; }
@@ -2191,6 +2265,26 @@ function readBlendFaceOffsets(reader, meshLayout, base, faceLayers, faceCount, c
   return { offsets, mat };
 }
 
+function readBlendCornerUvs(reader, loopLayers, cornerCount) {
+  if (!cornerCount) return null;
+  const float2 = loopLayers.filter(l => l.block && l.type === CD_PROP_FLOAT2);
+  const named = float2.find(l => l.name === "UVMap" || /^uv/i.test(l.name)) || float2[0];
+  if (named) return reader.readFloatArray(named.block.dataOffset, cornerCount * 2);
+  const mloopuv = loopLayers.find(l => l.block && l.type === CD_MLOOPUV);
+  if (!mloopuv) return null;
+  const layout = blendLayout(reader, "MLoopUV");
+  const fUv = layout && blendField(reader, layout, "uv");
+  const stride = layout ? layout.size : 12;
+  const extra = fUv ? fUv.offset : 0;
+  const out = new Float32Array(cornerCount * 2);
+  for (let i = 0; i < cornerCount; i++) {
+    const off = mloopuv.block.dataOffset + i * stride + extra;
+    out[i * 2] = reader.readFloat32(off);
+    out[i * 2 + 1] = reader.readFloat32(off + 4);
+  }
+  return out;
+}
+
 function readBlendMFaces(reader, meshLayout, base, faceLayers, faceCount) {
   const layer = faceLayers.find(l => l.block && l.type === CD_MFACE);
   const block = (layer && layer.block) || followMeshPtr(reader, meshLayout, base, ["mface"]);
@@ -2289,11 +2383,18 @@ function extractMeshesLegacy(blend) {
     const vertices = readBlendPositions(reader, meshLayout, base, vertLayers, vertexCount);
     if (!vertices) continue;
     let triangles = null;
+    let cornerVertices = null;
+    let faceOffsets = null;
+    let cornerUvs = null;
     let materialSlotNames = extractMaterialSlotNamesLegacy(reader, meshLayout, block, totcol);
     if (cornerCount > 0 && faceCount > 0) {
-      const cornerVertices = readBlendCornerVerts(reader, meshLayout, base, loopLayers, cornerCount);
+      cornerVertices = readBlendCornerVerts(reader, meshLayout, base, loopLayers, cornerCount);
       const faces = cornerVertices && readBlendFaceOffsets(reader, meshLayout, base, faceLayers, faceCount, cornerCount);
-      if (cornerVertices && faces) triangles = triangulateBlendFaces(faces.offsets, cornerVertices);
+      if (cornerVertices && faces) {
+        faceOffsets = faces.offsets;
+        triangles = triangulateBlendFaces(faces.offsets, cornerVertices);
+        cornerUvs = readBlendCornerUvs(reader, loopLayers, cornerCount);
+      }
     }
     if ((!triangles || !triangles.length) && legacyFaceCount > 0) {
       triangles = readBlendMFaces(reader, meshLayout, base, legacyFaceLayers, legacyFaceCount);
@@ -2307,6 +2408,10 @@ function extractMeshesLegacy(blend) {
       cornerCount,
       vertices,
       triangles,
+      faceOffsets,
+      cornerVertices,
+      cornerUvs,
+      uvMaps: cornerUvs ? { UVMap: cornerUvs } : {},
       materialSlotNames
     });
   }
@@ -2438,11 +2543,22 @@ function packSharedGeometry(object, space) {
     const idx = o.geometry.index && o.geometry.index.count
       ? Uint32Array.from(o.geometry.index.array)
       : null;
-    parts.push({ pos, idx, color: meshColor(o.material) });
+    const uvAttr = o.geometry.attributes.uv;
+    let uv = null;
+    if (uvAttr && uvAttr.count === attr.count) {
+      uv = new Float32Array(attr.count * 2);
+      for (let i = 0; i < attr.count; i++) {
+        uv[i * 2] = uvAttr.getX(i);
+        uv[i * 2 + 1] = uvAttr.getY(i);
+      }
+    }
+    parts.push({ pos, idx, uv, color: meshColor(o.material) });
   });
   if (!parts.length) return null;
   let size = 8;
-  for (const p of parts) size += 16 + p.pos.byteLength + (p.idx ? p.idx.byteLength : 0);
+  for (const p of parts) {
+    size += 16 + p.pos.byteLength + (p.idx ? p.idx.byteLength : 0) + (p.uv ? p.uv.byteLength : 0);
+  }
   const buf = new ArrayBuffer(size);
   const view = new DataView(buf);
   const out = new Uint8Array(buf);
@@ -2455,9 +2571,13 @@ function packSharedGeometry(object, space) {
     view.setUint32(o, p.color >>> 0, true); o += 4;
     view.setUint32(o, p.pos.length / 3, true); o += 4;
     view.setUint32(o, p.idx ? p.idx.length : 0, true); o += 4;
-    view.setUint32(o, 0, true); o += 4;
+    view.setUint32(o, p.uv ? NTX_HAS_UV : 0, true); o += 4;
     out.set(new Uint8Array(p.pos.buffer, p.pos.byteOffset, p.pos.byteLength), o);
     o += p.pos.byteLength;
+    if (p.uv) {
+      out.set(new Uint8Array(p.uv.buffer, p.uv.byteOffset, p.uv.byteLength), o);
+      o += p.uv.byteLength;
+    }
     if (p.idx && p.idx.length) {
       out.set(new Uint8Array(p.idx.buffer, p.idx.byteOffset, p.idx.byteLength), o);
       o += p.idx.byteLength;
@@ -2479,7 +2599,7 @@ function unpackSharedGeometry(bytes) {
     const color = view.getUint32(o, true); o += 4;
     const vtx = view.getUint32(o, true); o += 4;
     const idxn = view.getUint32(o, true); o += 4;
-    o += 4;
+    const flags = view.getUint32(o, true); o += 4;
     const pos = new Float32Array(vtx * 3);
     for (let i = 0; i < pos.length; i++) {
       pos[i] = view.getFloat32(o, true);
@@ -2487,6 +2607,14 @@ function unpackSharedGeometry(bytes) {
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    if (flags & NTX_HAS_UV) {
+      const uv = new Float32Array(vtx * 2);
+      for (let i = 0; i < uv.length; i++) {
+        uv[i] = view.getFloat32(o, true);
+        o += 4;
+      }
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    }
     if (idxn) {
       const idx = [];
       for (let i = 0; i < idxn; i++) {
