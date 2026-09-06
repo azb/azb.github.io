@@ -8,12 +8,12 @@ import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "37";
+const APP_VERSION = "38";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
 let initializeAuth, getAuth, inMemoryPersistence, signInAnonymously;
-let getFirestore, doc, setDoc, onSnapshot, collection, serverTimestamp, deleteDoc;
+let getFirestore, doc, setDoc, onSnapshot, collection, getDocs, serverTimestamp, deleteDoc;
 
 const firebaseConfig = {
   apiKey: "AIzaSyD9wx0VS7oZLUqB4v5-XEBHGVHom4f7dZM",
@@ -25,7 +25,7 @@ const firebaseConfig = {
   measurementId: "G-R13NNSLFQ0"
 };
 
-let firebaseApp, auth, db, roomRef, playersUnsub, objectsUnsub;
+let firebaseApp, auth, db, roomRef, playersUnsub, objectsUnsub, sharedRetryTimer;
 let uid, roomId, playerName;
 let connectionMode = "cloud";
 let lanReady = false;
@@ -1265,6 +1265,10 @@ function leaveRoom(reload) {
     objectsUnsub();
     objectsUnsub = null;
   }
+  if (sharedRetryTimer) {
+    clearInterval(sharedRetryTimer);
+    sharedRetryTimer = null;
+  }
   sessionStarted = false;
   otherPlayerCount = 0;
   clearSharedObjects();
@@ -1412,6 +1416,7 @@ async function loadFirebase() {
   setDoc = fsMod.setDoc;
   onSnapshot = fsMod.onSnapshot;
   collection = fsMod.collection;
+  getDocs = fsMod.getDocs;
   serverTimestamp = fsMod.serverTimestamp;
   deleteDoc = fsMod.deleteDoc;
 }
@@ -1502,6 +1507,15 @@ async function start() {
       ? `Room: ${roomId} · local`
       : `Room: ${roomId} · p2p`;
     sessionStarted = true;
+    if (!sharedRetryTimer) {
+      sharedRetryTimer = setInterval(() => {
+        if (!sessionStarted) return;
+        for (const rec of sharedObjects.values()) {
+          if (rec.ready || rec.unreadable || !rec.fromNetwork || rec.bytes) continue;
+          requestSharedFile(rec.id);
+        }
+      }, 4000);
+    }
     statusEl.textContent = "Connected";
     syncCalibrationUi();
     pruneTimer = setInterval(() => pruneStalePlayers(), connectionMode === "cloud" ? CLOUD_HEARTBEAT_MS : HEARTBEAT_MS);
@@ -1766,7 +1780,8 @@ function sharedPayload(rec) {
     heldBy: rec.heldBy || "",
     seq: rec.seq || 0,
     size: rec.bytes ? rec.bytes.byteLength : rec.size || 0,
-    fitted: !!rec.fitted
+    fitted: !!rec.fitted,
+    chunkCount: rec.chunkCount || 0
   };
 }
 
@@ -2029,8 +2044,9 @@ function loadSharedMesh(rec) {
     const fail = err => {
       rec.loadPromise = null;
       console.warn("Shared model failed", rec.name, ext, err);
+      if (rec.fromNetwork && rec.root) rec.root.visible = false;
       statusEl.textContent = rec.fromNetwork
-        ? "Headset could not rebuild " + (rec.name || "model") + " — drop it again on the PC"
+        ? "Waiting for a rebuild of " + (rec.name || "model") + " — drop it again on the PC"
         : "Could not load " + (rec.name || "model");
       reject(err || new Error("parse failed"));
     };
@@ -2039,8 +2055,10 @@ function loadSharedMesh(rec) {
         onReady(unpackSharedGeometry(rec.bytes));
         return;
       }
-      if (rec.fromNetwork && ext === "fbx") {
-        fail(new Error("raw FBX cannot be parsed on headset"));
+      if (rec.fromNetwork && (ext === "fbx" || ext === "gltf")) {
+        rec.bytes = null;
+        rec.unreadable = true;
+        fail(new Error("raw " + ext + " cannot be parsed on headset"));
         return;
       }
       if (ext === "glb" || ext === "gltf") {
@@ -2228,6 +2246,59 @@ function requestSharedFile(id) {
     return;
   }
   rtcSend({ type: "file-request", id });
+  fetchCloudChunks(id).catch(err => console.warn("cloud chunks failed", err));
+}
+
+async function publishCloudMesh(rec) {
+  if (!db || !roomId || !rec.bytes) return;
+  const chunk = 500 * 1024;
+  const bytes = rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
+  const total = Math.max(1, Math.ceil(bytes.byteLength / chunk));
+  rec.chunkCount = total;
+  await setDoc(doc(db, "rooms", roomId, "objects", rec.id), {
+    ...sharedPayload(rec),
+    chunkCount: total,
+    updatedAt: serverTimestamp()
+  });
+  for (let i = 0; i < total; i++) {
+    await setDoc(doc(db, "rooms", roomId, "objects", rec.id, "chunks", String(i)), {
+      data: bytesToB64(bytes.subarray(i * chunk, (i + 1) * chunk))
+    });
+  }
+}
+
+async function fetchCloudChunks(id) {
+  const rec = sharedObjects.get(id);
+  if (!rec || rec.ready || rec.bytes || rec.fetchingCloud || !db || !roomId) return;
+  rec.fetchingCloud = true;
+  try {
+    const snap = await getDocs(collection(db, "rooms", roomId, "objects", id, "chunks"));
+    if (snap.empty) return;
+    const parts = [];
+    snap.forEach(d => {
+      const data = d.data();
+      if (data && typeof data.data === "string") parts.push({ i: Number(d.id), b64: data.data });
+    });
+    parts.sort((a, b) => a.i - b.i);
+    if (!parts.length) return;
+    let size = 0;
+    const chunks = parts.map(p => b64ToBytes(p.b64));
+    for (const c of chunks) size += c.length;
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const c of chunks) {
+      bytes.set(c, offset);
+      offset += c.length;
+    }
+    rec.bytes = bytes;
+    rec.ext = sniffModelExt(bytes, rec.ext);
+    rec.loadPromise = null;
+    rec.fromNetwork = true;
+    statusEl.textContent = "Loading " + (rec.name || "model") + "…";
+    await loadSharedMesh(rec);
+  } finally {
+    rec.fetchingCloud = false;
+  }
 }
 
 async function fetchLocalModel(id) {
@@ -2476,9 +2547,17 @@ async function addSharedFromFile(file) {
     }
     sendLocalFile(rec).catch(err => console.warn("local file push failed", err));
   }
-  sendSharedMessage("add", rec, true);
   if (connectionMode === "cloud") {
+    try {
+      await publishCloudMesh(rec);
+    } catch (err) {
+      console.warn(err);
+      statusEl.textContent = "Model is local, but cloud upload failed";
+    }
+    sendSharedMessage("add", rec, false);
     for (const [peerId] of rtcPeers) rtcSendFileTo(peerId, rec);
+  } else {
+    sendSharedMessage("add", rec, true);
   }
 }
 
