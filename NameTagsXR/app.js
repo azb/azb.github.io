@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "48";
+const APP_VERSION = "49";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -1893,7 +1893,7 @@ function cacheSharedRadius(rec) {
 function ensureShared(id, meta = {}, fromNetwork = false) {
   let rec = sharedObjects.get(id);
   if (rec) {
-    if (fromNetwork) rec.fromNetwork = true;
+    if (fromNetwork && !rec.ready && !rec.bytes) rec.fromNetwork = true;
     return rec;
   }
   rec = {
@@ -3651,7 +3651,7 @@ function handleRtcPayload(remoteId, msg) {
       }
       return;
     }
-    if (rec && rec.bytes && !rec.fromNetwork) {
+    if (rec && rec.bytes) {
       if (connectionMode === "local") sendLocalFile(rec);
       else rtcSendFileTo(remoteId, rec);
     }
@@ -3828,6 +3828,21 @@ function duplicateOffsetRoom(src) {
   return localToRoom(roomToLocal(src.roomPos).addScaledVector(right, .28));
 }
 
+function packedMeshExt(bytes, fallback) {
+  if (!bytes || !bytes.length) return "";
+  const raw = isGzip(bytes) ? inflateSharedBytes(bytes) : bytes;
+  return sniffModelExt(raw, fallback);
+}
+
+async function ensurePackedShared(rec) {
+  const ext = packedMeshExt(rec.bytes, rec.ext);
+  if (ext === "ntx" || ext === "glb") {
+    rec.ext = ext;
+    return;
+  }
+  await prepareSharedBytes(rec);
+}
+
 async function duplicateSelectedShared() {
   if (!selectedShared) return;
   const src = sharedObjects.get(selectedShared.userData.sharedId);
@@ -3835,14 +3850,12 @@ async function duplicateSelectedShared() {
     statusEl.textContent = "Wait for the model to finish loading";
     return;
   }
-  if (!src.bytes) {
-    try {
-      await prepareSharedBytes(src);
-    } catch (err) {
-      console.warn(err);
-      statusEl.textContent = "Could not copy this model";
-      return;
-    }
+  try {
+    await ensurePackedShared(src);
+  } catch (err) {
+    console.warn(err);
+    statusEl.textContent = "Could not copy this model";
+    return;
   }
   writeRoomTransform(src);
   const id = newSharedId();
@@ -3861,32 +3874,25 @@ async function duplicateSelectedShared() {
     sy: src.roomScale.y,
     sz: src.roomScale.z,
     seq: 1,
-    fitted: src.fitted
+    fitted: true
   });
+  rec.fromNetwork = false;
   rec.bytes = new Uint8Array(src.bytes);
   rec.size = rec.bytes.byteLength;
   rec.chunkCount = src.chunkCount || 0;
-  rec.fitted = !!src.fitted;
-  const object = src.mesh.clone(true);
-  markSharedMeshes(object, rec.root);
-  if (rec.placeholder) {
-    rec.root.remove(rec.placeholder);
-    rec.placeholder.geometry?.dispose();
-    rec.placeholder.material?.dispose();
-    rec.placeholder = null;
-  }
-  rec.root.add(object);
-  rec.mesh = object;
-  rec.ready = true;
-  rec.root.traverse(o => {
-    if (!o.isMesh || !o.material) return;
-    o.material = Array.isArray(o.material) ? o.material.map(m => m.clone()) : o.material.clone();
-  });
+  rec.fitted = true;
+  rec.loadPromise = null;
   if (src.mat) rec.mat = { ...src.mat };
   if (src.matTex) rec.matTex = new Uint8Array(src.matTex);
   rec.matMap = src.matMap || null;
-  if (rec.mat) applyRecMaterial(rec);
-  cacheSharedRadius(rec);
+  try {
+    await loadSharedMesh(rec);
+  } catch (err) {
+    console.warn(err);
+    statusEl.textContent = "Could not duplicate " + (src.name || "model");
+    removeSharedById(rec.id);
+    return;
+  }
   selectShared(rec.root);
   statusEl.textContent = "Duplicated " + (src.name || "model");
   await publishSharedNew(rec);
