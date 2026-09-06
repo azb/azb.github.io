@@ -6,9 +6,10 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
+import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "41";
+const APP_VERSION = "42";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -167,6 +168,7 @@ const GRAB_FAR = 12;
 const DOT_SCALE_MINI = .38;
 const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 const FILE_CHUNK = 48 * 1024;
+const INLINE_FILE_MAX = 8 * 1024 * 1024;
 const MODEL_FIT = .75;
 const controllers = [];
 const remotePlayers = new Map();
@@ -1916,6 +1918,16 @@ function markSharedMeshes(root, wrapper) {
   });
 }
 
+function isGzip(bytes) {
+  return bytes && bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+function inflateSharedBytes(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (!isGzip(u8)) return u8;
+  return fflate.gunzipSync(u8);
+}
+
 function sniffModelExt(bytes, fallback) {
   if (bytes && bytes.length >= 4) {
     if (bytes[0] === 0x4E && bytes[1] === 0x54 && bytes[2] === 0x58 && bytes[3] === 0x31) return "ntx";
@@ -2061,6 +2073,13 @@ function loadSharedMesh(rec) {
       reject(new Error("no bytes"));
       return;
     }
+    try {
+      rec.bytes = inflateSharedBytes(rec.bytes);
+    } catch (err) {
+      rec.loadPromise = null;
+      reject(err);
+      return;
+    }
     const ext = sniffModelExt(rec.bytes, rec.ext || modelExt(rec.name));
     rec.ext = ext;
     const onReady = object => {
@@ -2131,29 +2150,41 @@ function loadSharedMesh(rec) {
   return rec.loadPromise;
 }
 
+function gzipIfSmaller(bytes) {
+  try {
+    const gz = fflate.gzipSync(bytes, { level: 6 });
+    if (gz && gz.byteLength > 0 && gz.byteLength < bytes.byteLength) return gz;
+  } catch (err) {
+    console.warn("gzip failed", err);
+  }
+  return bytes;
+}
+
 async function prepareSharedBytes(rec) {
   if (!rec.mesh) throw new Error("model has no mesh");
-  const packed = packSharedGeometry(rec.mesh, rec.root);
-  if (packed && packed.byteLength > 0 && packed.byteLength <= MAX_MODEL_BYTES) {
-    rec.bytes = packed;
-    rec.ext = "ntx";
-    rec.size = packed.byteLength;
-    rec.fitted = true;
-    return;
-  }
-  try {
-    const glb = await exportSharedGlb(rec.mesh);
-    if (glb && glb.byteLength > 0 && glb.byteLength <= MAX_MODEL_BYTES) {
-      rec.bytes = new Uint8Array(glb);
-      rec.ext = "glb";
-      rec.size = rec.bytes.byteLength;
-      rec.fitted = true;
-      return;
+  let packed = packSharedGeometry(rec.mesh, rec.root);
+  let ext = "ntx";
+  if (!packed || !packed.byteLength) {
+    try {
+      const glb = await exportSharedGlb(rec.mesh);
+      if (glb && glb.byteLength) {
+        packed = new Uint8Array(glb);
+        ext = "glb";
+      }
+    } catch (err) {
+      console.warn("GLB export failed", err);
     }
-  } catch (err) {
-    console.warn("GLB export failed", err);
   }
-  throw new Error("could not pack model for headset");
+  if (!packed || !packed.byteLength) throw new Error("could not pack model for headset");
+  const shipped = gzipIfSmaller(packed);
+  if (shipped.byteLength > MAX_MODEL_BYTES) {
+    throw new Error("Packed mesh is " + Math.round(shipped.byteLength / 1048576) + " MB after compress (max 100 MB)");
+  }
+  rec.bytes = shipped;
+  rec.ext = ext;
+  rec.size = shipped.byteLength;
+  rec.fitted = true;
+  statusEl.textContent = "Prepared " + rec.name + " · " + Math.round(shipped.byteLength / 104857.6) / 10 + " MB";
 }
 
 function relocalizeSharedObjects() {
@@ -2297,6 +2328,7 @@ async function publishCloudMesh(rec) {
   const bytes = rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
   const total = Math.max(1, Math.ceil(bytes.byteLength / chunk));
   rec.chunkCount = total;
+  statusEl.textContent = "Uploading " + rec.name + " · " + total + " parts…";
   await setDoc(doc(db, "rooms", roomId, "objects", rec.id), {
     ...sharedPayload(rec),
     chunkCount: total,
@@ -2346,7 +2378,8 @@ async function fetchCloudChunks(id) {
 async function fetchLocalModel(id) {
   const rec = sharedObjects.get(id);
   if (!rec || rec.bytes || !roomId) return;
-  for (let i = 0; i < 8; i++) {
+  const tries = rec.size > INLINE_FILE_MAX ? 3 : 8;
+  for (let i = 0; i < tries; i++) {
     try {
       const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}`);
       if (!res.ok) throw new Error("missing");
@@ -2386,7 +2419,7 @@ async function rtcWaitDrain(channel) {
 }
 
 async function rtcSendFileTo(remoteId, rec) {
-  if (!rec.bytes) return;
+  if (!rec.bytes || rec.bytes.byteLength > INLINE_FILE_MAX) return;
   const bytes = rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
   const total = Math.max(1, Math.ceil(bytes.byteLength / FILE_CHUNK));
   rtcSend({
@@ -2474,6 +2507,7 @@ function handleRtcPayload(remoteId, msg) {
 
 async function sendLocalFile(rec) {
   if (!localWs || localWs.readyState !== WebSocket.OPEN || !rec.bytes) return;
+  if (rec.bytes.byteLength > INLINE_FILE_MAX) return;
   const bytes = rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes);
   const total = Math.max(1, Math.ceil(bytes.byteLength / FILE_CHUNK));
   const send = msg => localWs.send(JSON.stringify(msg));
@@ -2569,7 +2603,7 @@ async function addSharedFromFile(file) {
     await prepareSharedBytes(rec);
   } catch (err) {
     console.warn(err);
-    statusEl.textContent = "Could not load " + file.name;
+    statusEl.textContent = (err && err.message) || ("Could not load " + file.name);
     return;
   }
   selectShared(rec.root);
