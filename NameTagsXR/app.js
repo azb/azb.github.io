@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "49";
+const APP_VERSION = "50";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -126,6 +126,7 @@ controls.target.set(0, 1.2, 0);
 controls.enableDamping = true;
 controls.update();
 
+scene.add(new THREE.AmbientLight(0xffffff, .55));
 scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 2));
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
 dirLight.position.set(2.5, 5, 1.5);
@@ -201,6 +202,7 @@ let lastObjectSend = 0;
 let pcPointerDown = null;
 let matUiLock = false;
 let matPersistTimer = null;
+let meshRepublishTimer = null;
 
 const transformControls = new TransformControls(camera, renderer.domElement);
 transformControls.setMode("translate");
@@ -1577,8 +1579,10 @@ async function start() {
       sharedRetryTimer = setInterval(() => {
         if (!sessionStarted) return;
         for (const rec of sharedObjects.values()) {
-          if (rec.ready || rec.unreadable || !rec.fromNetwork || rec.bytes) continue;
-          requestSharedFile(rec.id);
+          if (!rec.ready && !rec.unreadable && rec.fromNetwork && !rec.bytes) {
+            requestSharedFile(rec.id);
+          }
+          if (rec.mat && rec.mat.tex && !rec.matMap) requestSharedTex(rec.id);
         }
       }, 4000);
     }
@@ -1855,6 +1859,7 @@ function sharedPayload(rec) {
     sx: rec.roomScale.x,
     sy: rec.roomScale.y,
     sz: rec.roomScale.z,
+    meshRev: rec.meshRev || 0,
     ...matPayload(rec)
   };
 }
@@ -1925,7 +1930,8 @@ function ensureShared(id, meta = {}, fromNetwork = false) {
       typeof meta.sz === "number" ? meta.sz : 1
     ),
     radius: .2,
-    mat: matFromMeta(meta)
+    mat: matFromMeta(meta),
+    meshRev: typeof meta.meshRev === "number" ? meta.meshRev : 0
   };
   rec.root.userData.sharedId = id;
   applyLocalTransform(rec);
@@ -2626,11 +2632,23 @@ function unpackSharedGeometry(bytes) {
     geo.computeVertexNormals();
     group.add(new THREE.Mesh(
       geo,
-      new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })
+      new THREE.MeshStandardMaterial({ color, roughness: .55, metalness: .05, side: THREE.DoubleSide })
     ));
   }
   if (!group.children.length) throw new Error("packed mesh was empty");
   return group;
+}
+
+function materialForExport(mat) {
+  if (!mat) return new THREE.MeshStandardMaterial({ color: 0xc5cdd6, side: THREE.DoubleSide });
+  const copy = Array.isArray(mat) ? mat.map(m => (m ? m.clone() : m)) : mat.clone();
+  const list = Array.isArray(copy) ? copy : [copy];
+  for (const m of list) {
+    if (!m) continue;
+    m.side = THREE.DoubleSide;
+    if (m.map) m.map.needsUpdate = true;
+  }
+  return copy;
 }
 
 function meshOnlyClone(object) {
@@ -2640,7 +2658,7 @@ function meshOnlyClone(object) {
   const local = new THREE.Matrix4();
   object.traverse(o => {
     if (!o.isMesh || !o.geometry) return;
-    const mesh = new THREE.Mesh(o.geometry, o.material);
+    const mesh = new THREE.Mesh(o.geometry, materialForExport(o.material));
     local.multiplyMatrices(inv, o.matrixWorld);
     local.decompose(mesh.position, mesh.quaternion, mesh.scale);
     group.add(mesh);
@@ -2658,7 +2676,7 @@ function exportSharedGlb(object) {
     gltfExporter.parse(clone, result => {
       if (result instanceof ArrayBuffer) resolve(result);
       else reject(new Error("GLB export did not return binary"));
-    }, reject, { binary: true, embedImages: true });
+    }, reject, { binary: true, embedImages: true, maxTextureSize: 1024 });
   });
 }
 
@@ -2772,18 +2790,20 @@ function gzipIfSmaller(bytes) {
 
 async function prepareSharedBytes(rec) {
   if (!rec.mesh) throw new Error("model has no mesh");
-  let packed = packSharedGeometry(rec.mesh, rec.root);
-  let ext = "ntx";
-  if (!packed || !packed.byteLength) {
-    try {
-      const glb = await exportSharedGlb(rec.mesh);
-      if (glb && glb.byteLength) {
-        packed = new Uint8Array(glb);
-        ext = "glb";
-      }
-    } catch (err) {
-      console.warn("GLB export failed", err);
+  let packed = null;
+  let ext = "glb";
+  try {
+    const glb = await exportSharedGlb(rec.mesh);
+    if (glb && glb.byteLength) {
+      packed = new Uint8Array(glb);
+      ext = "glb";
     }
+  } catch (err) {
+    console.warn("GLB export failed", err);
+  }
+  if (!packed || !packed.byteLength) {
+    packed = packSharedGeometry(rec.mesh, rec.root);
+    ext = "ntx";
   }
   if (!packed || !packed.byteLength) throw new Error("could not pack model for headset");
   const shipped = gzipIfSmaller(packed);
@@ -2794,7 +2814,22 @@ async function prepareSharedBytes(rec) {
   rec.ext = ext;
   rec.size = shipped.byteLength;
   rec.fitted = true;
+  rec.meshRev = (rec.meshRev || 0) + 1;
   statusEl.textContent = "Prepared " + rec.name + " · " + Math.round(shipped.byteLength / 104857.6) / 10 + " MB";
+}
+
+function resetSharedMesh(rec) {
+  if (!rec) return;
+  if (rec.mesh && rec.root) rec.root.remove(rec.mesh);
+  rec.mesh = null;
+  rec.ready = false;
+  rec.loadPromise = null;
+  rec.matOwned = false;
+  rec.matSnap = null;
+  if (rec.root && !rec.placeholder) {
+    rec.placeholder = makePlaceholder();
+    rec.root.add(rec.placeholder);
+  }
 }
 
 function relocalizeSharedObjects() {
@@ -3241,10 +3276,25 @@ async function textureFromBytes(bytes) {
 function publishMaterial(rec, persist) {
   if (!rec) return;
   sendSharedMessage("material", rec, persist && connectionMode === "local");
+  if (persist) scheduleMeshRepublish(rec);
   if (connectionMode !== "cloud") return;
   if (!persist) return;
   clearTimeout(matPersistTimer);
   matPersistTimer = setTimeout(() => sendSharedMessage("material", rec, true), 400);
+}
+
+function scheduleMeshRepublish(rec) {
+  if (!rec || !rec.mesh) return;
+  clearTimeout(meshRepublishTimer);
+  meshRepublishTimer = setTimeout(() => {
+    republishSharedMesh(rec).catch(err => console.warn("mesh republish failed", err));
+  }, 700);
+}
+
+async function republishSharedMesh(rec) {
+  if (!rec || !rec.mesh) return;
+  await prepareSharedBytes(rec);
+  await publishSharedNew(rec);
 }
 
 async function publishMaterialTex(rec) {
@@ -3479,8 +3529,17 @@ function handleSharedMessage(msg) {
   const rec = ensureShared(msg.object.id, msg.object, true);
   if (msg.object.fitted) rec.fitted = true;
   if (msg.object.ext) rec.ext = msg.object.ext;
+  const meshRev = typeof msg.object.meshRev === "number" ? msg.object.meshRev : 0;
+  const newerMesh = meshRev > (rec.meshRev || 0);
+  if (newerMesh) rec.meshRev = meshRev;
   if (msg.action !== "material") applySharedTransform(rec, msg.object, false);
   applySharedMaterial(rec, msg.object);
+  if (newerMesh && rec.fromNetwork && rec.ready) {
+    rec.bytes = null;
+    resetSharedMesh(rec);
+    requestSharedFile(rec.id);
+    return;
+  }
   if (!rec.ready && !rec.bytes) requestSharedFile(rec.id);
 }
 
@@ -3835,12 +3894,20 @@ function packedMeshExt(bytes, fallback) {
 }
 
 async function ensurePackedShared(rec) {
+  if (rec.mesh) {
+    try {
+      await prepareSharedBytes(rec);
+      return;
+    } catch (err) {
+      console.warn(err);
+    }
+  }
   const ext = packedMeshExt(rec.bytes, rec.ext);
   if (ext === "ntx" || ext === "glb") {
     rec.ext = ext;
     return;
   }
-  await prepareSharedBytes(rec);
+  throw new Error("could not pack model");
 }
 
 async function duplicateSelectedShared() {

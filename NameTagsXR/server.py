@@ -328,7 +328,7 @@ def handle_message(client: Client, msg: dict) -> None:
                             "qx", "qy", "qz", "qw", "sx", "sy", "sz",
                             "matOn", "matColor", "matRough", "matMetal", "matOpac",
                             "matColorSet", "matRoughSet", "matMetalSet", "matOpacSet",
-                            "matTex", "matTexSeq", "matTexCleared"):
+                            "matTex", "matTexSeq", "matTexCleared", "meshRev"):
                     if key in obj:
                         meta[key] = obj[key]
                 meta["id"] = oid
