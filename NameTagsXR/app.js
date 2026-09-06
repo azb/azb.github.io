@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "45";
+const APP_VERSION = "46";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -1797,7 +1797,7 @@ function rayHitSphere(origin, dir, center, radius, maxDist) {
 }
 
 function modelExt(name) {
-  const m = /\.(glb|gltf|obj|stl|fbx)$/i.exec(name || "");
+  const m = /\.(glb|gltf|obj|stl|fbx|blend)$/i.exec(name || "");
   return m ? m[1].toLowerCase() : "";
 }
 
@@ -1977,11 +1977,153 @@ function inflateSharedBytes(bytes) {
 }
 
 function sniffModelExt(bytes, fallback) {
+  if (bytes && bytes.length >= 7) {
+    if (bytes[0] === 0x42 && bytes[1] === 0x4C && bytes[2] === 0x45 && bytes[3] === 0x4E &&
+        bytes[4] === 0x44 && bytes[5] === 0x45 && bytes[6] === 0x52) return "blend";
+  }
   if (bytes && bytes.length >= 4) {
     if (bytes[0] === 0x4E && bytes[1] === 0x54 && bytes[2] === 0x58 && bytes[3] === 0x31) return "ntx";
     if (bytes[0] === 0x67 && bytes[1] === 0x6C && bytes[2] === 0x54 && bytes[3] === 0x46) return "glb";
+    if (bytes[0] === 0x28 && bytes[1] === 0xB5 && bytes[2] === 0x2F && bytes[3] === 0xFD) return "blend";
   }
   return fallback;
+}
+
+let jsblenderMod = null;
+
+async function loadJsblender() {
+  if (jsblenderMod) return jsblenderMod;
+  jsblenderMod = await import("https://cdn.jsdelivr.net/npm/jsblender@0.0.4/+esm");
+  return jsblenderMod;
+}
+
+function decompressBlendBytes(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b) return fflate.gunzipSync(u8);
+  return u8;
+}
+
+function blendColorHex(rgba) {
+  if (!rgba || !rgba.length) return 0xc5cdd6;
+  const r = Math.round(Math.min(1, Math.max(0, rgba[0])) * 255);
+  const g = Math.round(Math.min(1, Math.max(0, rgba[1])) * 255);
+  const b = Math.round(Math.min(1, Math.max(0, rgba[2])) * 255);
+  return (r << 16) | (g << 8) | b;
+}
+
+function geometryFromBlendMesh(mesh) {
+  if (!mesh || !mesh.vertices || !mesh.vertexCount) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(mesh.vertices, 3));
+  if (mesh.vertexNormals && mesh.vertexNormals.length === mesh.vertexCount * 3) {
+    geo.setAttribute("normal", new THREE.Float32BufferAttribute(mesh.vertexNormals, 3));
+  }
+  if (mesh.triangles && mesh.triangles.length) {
+    geo.setIndex(new THREE.BufferAttribute(mesh.triangles, 1));
+  }
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+  return geo;
+}
+
+function materialFromBlend(matInfo) {
+  const p = matInfo && matInfo.shader && matInfo.shader.principled;
+  const color = blendColorHex((p && p.baseColor) || (matInfo && matInfo.diffuse));
+  const roughness = p && typeof p.roughness === "number"
+    ? p.roughness
+    : (matInfo && typeof matInfo.roughness === "number" ? matInfo.roughness : .55);
+  const metalness = p && typeof p.metallic === "number"
+    ? p.metallic
+    : (matInfo && typeof matInfo.metallic === "number" ? matInfo.metallic : 0);
+  const opacity = p && typeof p.alpha === "number" ? p.alpha : 1;
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness,
+    metalness,
+    opacity,
+    transparent: opacity < .999,
+    side: THREE.DoubleSide
+  });
+}
+
+function lookupBlendMesh(obj, evaluated, meshByName) {
+  if (evaluated) {
+    const byObj = evaluated.get(obj.name);
+    if (byObj) return byObj;
+    if (obj.dataName) {
+      const byData = evaluated.get(obj.dataName);
+      if (byData) return byData;
+    }
+  }
+  if (obj.dataName && meshByName.has(obj.dataName)) return meshByName.get(obj.dataName);
+  if (meshByName.has(obj.name)) return meshByName.get(obj.name);
+  return null;
+}
+
+async function parseBlendToObject(bytes) {
+  let lib;
+  try {
+    lib = await loadJsblender();
+  } catch (err) {
+    throw new Error("Could not load the Blender parser — check your internet connection");
+  }
+  const { parseBlend, extractMeshes, extractObjects, extractMaterials, evaluateAllMeshes, OB_TYPE } = lib;
+  let blend;
+  try {
+    blend = parseBlend(decompressBlendBytes(bytes));
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : "";
+    if (/unrecognised magic|gzip-compressed|No DNA1|legacy|header/i.test(msg)) {
+      throw new Error("This .blend is too old or compressed for the web parser. Save it in Blender 5+ or export as .glb");
+    }
+    throw new Error("Could not read this .blend. Export as .glb from Blender (File → Export → glTF)");
+  }
+  const materials = extractMaterials(blend);
+  const matByName = new Map();
+  for (const mat of materials) matByName.set(mat.name, mat);
+  const rawMeshes = extractMeshes(blend);
+  const meshByName = new Map();
+  for (const mesh of rawMeshes) meshByName.set(mesh.name, mesh);
+  let evaluated = null;
+  try {
+    evaluated = evaluateAllMeshes(blend);
+  } catch (err) {
+    console.warn("blend modifiers skipped", err);
+  }
+  const group = new THREE.Group();
+  const objects = extractObjects(blend);
+  const meshType = OB_TYPE && typeof OB_TYPE.MESH === "number" ? OB_TYPE.MESH : 1;
+  for (const obj of objects) {
+    if (obj.type !== meshType) continue;
+    const mesh = lookupBlendMesh(obj, evaluated, meshByName);
+    if (!mesh) continue;
+    const geo = geometryFromBlendMesh(mesh);
+    if (!geo) continue;
+    const slot = mesh.materialSlotNames && mesh.materialSlotNames[0];
+    const threeMesh = new THREE.Mesh(geo, materialFromBlend(slot && matByName.get(slot)));
+    threeMesh.name = obj.name || mesh.name || "Mesh";
+    if (obj.worldMatrix && obj.worldMatrix.length >= 16) {
+      const m = new THREE.Matrix4().fromArray(obj.worldMatrix).transpose();
+      m.decompose(threeMesh.position, threeMesh.quaternion, threeMesh.scale);
+    } else {
+      if (obj.location) threeMesh.position.fromArray(obj.location);
+      if (obj.rotation) threeMesh.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2], "XYZ");
+      if (obj.scale) threeMesh.scale.fromArray(obj.scale);
+    }
+    group.add(threeMesh);
+  }
+  if (!group.children.length) {
+    for (const mesh of rawMeshes) {
+      const geo = geometryFromBlendMesh(mesh);
+      if (!geo) continue;
+      const slot = mesh.materialSlotNames && mesh.materialSlotNames[0];
+      group.add(new THREE.Mesh(geo, materialFromBlend(slot && matByName.get(slot))));
+    }
+  }
+  if (!group.children.length) {
+    throw new Error("No mesh objects in this .blend. Export as .glb from Blender");
+  }
+  group.rotation.x = -Math.PI / 2;
+  return group;
 }
 
 function meshColor(mat) {
@@ -2159,7 +2301,9 @@ function loadSharedMesh(rec) {
       if (rec.fromNetwork && rec.root) rec.root.visible = false;
       statusEl.textContent = rec.fromNetwork
         ? "Waiting for a rebuild of " + (rec.name || "model") + " — drop it again on the PC"
-        : "Could not load " + (rec.name || "model");
+        : ext === "blend"
+          ? ((err && err.message) || "Could not read this .blend. Export as .glb from Blender")
+          : "Could not load " + (rec.name || "model");
       reject(err || new Error("parse failed"));
     };
     try {
@@ -2167,7 +2311,7 @@ function loadSharedMesh(rec) {
         onReady(unpackSharedGeometry(rec.bytes));
         return;
       }
-      if (rec.fromNetwork && (ext === "fbx" || ext === "gltf")) {
+      if (rec.fromNetwork && (ext === "fbx" || ext === "gltf" || ext === "blend")) {
         rec.bytes = null;
         rec.unreadable = true;
         fail(new Error("raw " + ext + " cannot be parsed on headset"));
@@ -2191,6 +2335,10 @@ function loadSharedMesh(rec) {
       }
       if (ext === "fbx") {
         onReady(fbxLoader.parse(asArrayBuffer(rec.bytes), ""));
+        return;
+      }
+      if (ext === "blend") {
+        parseBlendToObject(rec.bytes).then(onReady, fail);
         return;
       }
       fail(new Error("unsupported"));
@@ -3226,7 +3374,7 @@ function pickSharedAt(e) {
 async function addSharedFromFile(file) {
   const ext = modelExt(file.name);
   if (!ext) {
-    statusEl.textContent = "Use a .glb, .gltf, .obj, .stl, or .fbx file";
+    statusEl.textContent = "Use a .glb, .gltf, .obj, .stl, .fbx, or .blend file";
     return;
   }
   if (file.size > MAX_MODEL_BYTES) {

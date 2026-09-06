@@ -55,11 +55,11 @@
     <div id="hudBody">
     <div><b id="roomLabel"></b> · <span id="status">Connecting…</span> · <span class="appVersion"></span></div>
     <div id="playerList" class="small">No other players yet.</div>
-    <div id="shareHint" class="small">On this PC, drop a .glb / .gltf / .obj / .stl / .fbx file onto the page to share it, or add one here. Select a model: <b>W</b> move, <b>E</b> rotate, <b>R</b> scale, Ctrl+D to duplicate, Delete to remove. The material panel edits color, texture, roughness, metalness, and opacity. In a headset, pinch to grab.</div>
+    <div id="shareHint" class="small">On this PC, drop a .glb / .gltf / .obj / .stl / .fbx / .blend file onto the page to share it, or add one here. Select a model: <b>W</b> move, <b>E</b> rotate, <b>R</b> scale, Ctrl+D to duplicate, Delete to remove. The material panel edits color, texture, roughness, metalness, and opacity. In a headset, pinch to grab.</div>
     <div id="modelActions">
     <label class="filePick">
       Add 3D model
-      <input id="modelFile" type="file" accept=".glb,.gltf,.obj,.stl,.fbx,model/*" />
+      <input id="modelFile" type="file" accept=".glb,.gltf,.obj,.stl,.fbx,.blend,model/*" />
     </label>
     <button id="clearModels" class="secondary" type="button">Clear models</button>
     </div>
@@ -107,7 +107,7 @@
   <div id="dropOverlay" class="hidden">Drop 3D model to share</div>
 
   <script type="module">
-    import("./app.js?v=45").catch(err => {
+    import("./app.js?v=46").catch(err => {
       const el = document.getElementById("setupError");
       el.textContent = "Failed to load app: " + (err && err.message ? err.message : err);
     });
