@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "31";
+const APP_VERSION = "32";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -27,6 +27,7 @@ let localWs = null;
 let localPeerMap = {};
 let calibrated = false;
 let calibration = null;
+let markersCollapsed = false;
 let lastNetworkSend = 0;
 let lastPresenceSend = 0;
 let sessionStarted = false;
@@ -147,6 +148,7 @@ const _oc = new THREE.Vector3();
 const GRAB_NEAR = .22;
 const GRAB_RADIUS = .28;
 const GRAB_FAR = 12;
+const DOT_SCALE_MINI = .38;
 const controllers = [];
 const remotePlayers = new Map();
 
@@ -322,6 +324,7 @@ document.getElementById("calibrate").onclick = calibrate;
 document.getElementById("recalibrate").onclick = () => {
   calibrated = false;
   calibration = null;
+  markersCollapsed = false;
   statusEl.textContent = "Recalibration: place red + blue again";
   syncCalibrationUi();
 };
@@ -360,6 +363,7 @@ function makeDot(color, text) {
 
   group.userData.grabbable = true;
   group.userData.radius = .14;
+  group.userData.label = label;
   return group;
 }
 
@@ -1369,12 +1373,17 @@ async function start() {
   }
 }
 
-function syncCalibrationUi(forceMarkers) {
+function syncCalibrationUi() {
   const xr = renderer.xr.isPresenting;
   const ui = document.getElementById("xrCalibrateUi");
   if (ui) ui.classList.toggle("hidden", !xr);
-  const showMarkers = xr && (forceMarkers != null ? forceMarkers : !calibrated);
-  redDot.visible = blueDot.visible = doneButton.visible = showMarkers;
+  redDot.visible = blueDot.visible = xr;
+  doneButton.visible = xr && !markersCollapsed;
+  const s = markersCollapsed ? DOT_SCALE_MINI : 1;
+  redDot.scale.setScalar(s);
+  blueDot.scale.setScalar(s);
+  if (redDot.userData.label) redDot.userData.label.visible = !markersCollapsed;
+  if (blueDot.userData.label) blueDot.userData.label.visible = !markersCollapsed;
 }
 
 function setPassthrough(on) {
@@ -1547,8 +1556,13 @@ function findDoneHit(controller) {
   return rayHitSphere(_pointerOrigin, _pointerDir, doneButton.position, .28, GRAB_FAR) != null;
 }
 
+function markerGrabRadius() {
+  return markersCollapsed ? GRAB_RADIUS * DOT_SCALE_MINI : GRAB_RADIUS;
+}
+
 function findGrabbable(controller) {
   pointerFrom(controller, _pointerOrigin, _pointerDir);
+  const radius = markerGrabRadius();
 
   let near = null;
   let nearDist = GRAB_NEAR;
@@ -1566,7 +1580,7 @@ function findGrabbable(controller) {
   let bestT = GRAB_FAR;
   for (const dot of [redDot, blueDot]) {
     if (!dot.visible) continue;
-    const t = rayHitSphere(_pointerOrigin, _pointerDir, dot.position, GRAB_RADIUS, GRAB_FAR);
+    const t = rayHitSphere(_pointerOrigin, _pointerDir, dot.position, radius, GRAB_FAR);
     if (t != null && t < bestT) {
       bestT = t;
       best = dot;
@@ -1585,6 +1599,10 @@ function onSelectStart(e) {
   }
   const hit = findGrabbable(controller);
   if (!hit) return;
+  if (markersCollapsed) {
+    expandCalibrationMarkers();
+    return;
+  }
   controller.userData.grabbed = hit.target;
   controller.userData.grabMode = hit.mode;
   if (hit.mode === "ray") {
@@ -2024,55 +2042,49 @@ function roomToLocal(room) {
   return room.clone().applyAxisAngle(new THREE.Vector3(0,1,0), -calibration.yaw).add(calibration.origin);
 }
 
-function calibrate() {
+function applyCalibrationFromDots() {
   const red = redDot.position.clone();
   const blue = blueDot.position.clone();
-  const v = blue.clone().sub(red);
-  const flat = new THREE.Vector3(v.x, 0, v.z);
+  const flat = new THREE.Vector3(blue.x - red.x, 0, blue.z - red.z);
 
   if (flat.length() < .15) {
     statusEl.textContent = "Move red and blue farther apart before calibrating.";
-    return;
+    return false;
   }
 
   // Rotation that maps local red->blue direction onto canonical +X.
   const localAngle = Math.atan2(flat.z, flat.x);
-  const yaw = -localAngle;
-
-  calibration = {
-    origin: red,
-    yaw
-  };
+  calibration = { origin: red, yaw: -localAngle };
   calibrated = true;
-
-  redDot.position.set(0, 1, -1.5);
-  blueDot.position.set(1, 1, -1.5);
-  syncCalibrationUi();
-
   statusEl.textContent = "Calibrated · looking for other players";
   publishPlayer(true);
+  return true;
 }
 
-function hideCalibrationDots() {
-  syncCalibrationUi(false);
+function expandCalibrationMarkers() {
+  markersCollapsed = false;
+  syncCalibrationUi();
+}
+
+function collapseCalibrationMarkers() {
+  markersCollapsed = true;
   for (const c of controllers) {
     if (c.userData.grabbed === redDot || c.userData.grabbed === blueDot) {
       c.userData.grabbed = null;
       c.userData.grabMode = null;
     }
   }
-  const red = redDot.position.clone();
-  const blue = blueDot.position.clone();
-  const flat = new THREE.Vector3(blue.x - red.x, 0, blue.z - red.z);
-  if (flat.length() >= .15) {
-    const localAngle = Math.atan2(flat.z, flat.x);
-    calibration = { origin: red, yaw: -localAngle };
-    calibrated = true;
-    statusEl.textContent = "Calibrated · looking for other players";
-    publishPlayer(true);
-  } else {
-    statusEl.textContent = "Markers hidden";
-  }
+  syncCalibrationUi();
+}
+
+function calibrate() {
+  if (!applyCalibrationFromDots()) return;
+  collapseCalibrationMarkers();
+}
+
+function hideCalibrationDots() {
+  applyCalibrationFromDots();
+  collapseCalibrationMarkers();
 }
 
 function updateDoneButton() {
