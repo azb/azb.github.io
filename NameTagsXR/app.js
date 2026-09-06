@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "43";
+const APP_VERSION = "44";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -389,8 +389,14 @@ function typingInField(el) {
 }
 
 window.addEventListener("keydown", e => {
-  if (typingInField(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (typingInField(e.target)) return;
   if (!sessionStarted || renderer.xr.isPresenting || !selectedShared) return;
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === "KeyD") {
+    e.preventDefault();
+    duplicateSelectedShared();
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.code === "KeyW") {
     e.preventDefault();
     transformControls.setMode("translate");
@@ -2608,10 +2614,79 @@ async function addSharedFromFile(file) {
   }
   selectShared(rec.root);
   statusEl.textContent = "Shared " + file.name + " · others can move it";
+  await publishSharedNew(rec);
+}
+
+function duplicateOffsetRoom(src) {
+  const right = new THREE.Vector3();
+  camera.getWorldDirection(right);
+  right.cross(camera.up);
+  if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+  else right.normalize();
+  return localToRoom(roomToLocal(src.roomPos).addScaledVector(right, .28));
+}
+
+async function duplicateSelectedShared() {
+  if (!selectedShared) return;
+  const src = sharedObjects.get(selectedShared.userData.sharedId);
+  if (!src || !src.ready || !src.mesh) {
+    statusEl.textContent = "Wait for the model to finish loading";
+    return;
+  }
+  if (!src.bytes) {
+    try {
+      await prepareSharedBytes(src);
+    } catch (err) {
+      console.warn(err);
+      statusEl.textContent = "Could not copy this model";
+      return;
+    }
+  }
+  writeRoomTransform(src);
+  const id = newSharedId();
+  const pos = duplicateOffsetRoom(src);
+  const rec = ensureShared(id, {
+    name: src.name,
+    ext: src.ext,
+    x: pos.x,
+    y: pos.y,
+    z: pos.z,
+    qx: src.roomQuat.x,
+    qy: src.roomQuat.y,
+    qz: src.roomQuat.z,
+    qw: src.roomQuat.w,
+    sx: src.roomScale.x,
+    sy: src.roomScale.y,
+    sz: src.roomScale.z,
+    seq: 1,
+    fitted: src.fitted
+  });
+  rec.bytes = new Uint8Array(src.bytes);
+  rec.size = rec.bytes.byteLength;
+  rec.chunkCount = src.chunkCount || 0;
+  rec.fitted = !!src.fitted;
+  const object = src.mesh.clone(true);
+  markSharedMeshes(object, rec.root);
+  if (rec.placeholder) {
+    rec.root.remove(rec.placeholder);
+    rec.placeholder.geometry?.dispose();
+    rec.placeholder.material?.dispose();
+    rec.placeholder = null;
+  }
+  rec.root.add(object);
+  rec.mesh = object;
+  rec.ready = true;
+  cacheSharedRadius(rec);
+  selectShared(rec.root);
+  statusEl.textContent = "Duplicated " + (src.name || "model");
+  await publishSharedNew(rec);
+}
+
+async function publishSharedNew(rec) {
   if (connectionMode === "local") {
     try {
-      const q = `name=${encodeURIComponent(file.name)}&ext=${encodeURIComponent(rec.ext || "ntx")}`;
-      const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(id)}?${q}`, {
+      const q = `name=${encodeURIComponent(rec.name)}&ext=${encodeURIComponent(rec.ext || "ntx")}`;
+      const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(rec.id)}?${q}`, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
         body: rec.bytes
