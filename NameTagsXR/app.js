@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "46";
+const APP_VERSION = "47";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -2045,6 +2045,284 @@ function materialFromBlend(matInfo) {
   });
 }
 
+const CD_MVERT = 0;
+const CD_MFACE = 4;
+const CD_PROP_INT32 = 11;
+const CD_MPOLY = 25;
+const CD_MLOOP = 26;
+const CD_PROP_FLOAT3 = 48;
+const CD_PROP_FLOAT2 = 49;
+
+function blendLayout(reader, name) {
+  try { return reader.layoutOf(name); } catch { return null; }
+}
+
+function blendField(reader, layout, name) {
+  if (!layout || !name) return null;
+  try { return reader.fieldOf(layout, name); } catch { return null; }
+}
+
+function blendFieldAny(reader, layout, names) {
+  for (const name of names) {
+    const f = blendField(reader, layout, name);
+    if (f) return f;
+  }
+  return null;
+}
+
+function blendReadCount(reader, layout, base, names) {
+  const f = blendFieldAny(reader, layout, names);
+  return f ? reader.readInt32(base + f.offset) : 0;
+}
+
+function readCustomDataLayers(reader, cdOffset, anchor) {
+  const layout = blendLayout(reader, "CustomData");
+  if (!layout) return [];
+  const fLayers = blendField(reader, layout, "layers");
+  const fTot = blendField(reader, layout, "totlayer");
+  if (!fLayers || !fTot) return [];
+  const tot = reader.readInt32(cdOffset + fTot.offset);
+  if (tot <= 0 || tot > 4096) return [];
+  const ptr = reader.readPointer(cdOffset + fLayers.offset);
+  const block = reader.blockAt(ptr, anchor);
+  const layerLayout = blendLayout(reader, "CustomDataLayer");
+  if (!block || !layerLayout) return [];
+  const fType = blendField(reader, layerLayout, "type");
+  const fName = blendField(reader, layerLayout, "name");
+  const fData = blendField(reader, layerLayout, "data");
+  const out = [];
+  for (let i = 0; i < tot; i++) {
+    const off = block.dataOffset + i * layerLayout.size;
+    const dataPtr = fData ? reader.readPointer(off + fData.offset) : 0n;
+    out.push({
+      type: fType ? reader.readInt32(off + fType.offset) : -1,
+      name: fName ? reader.readCString(off + fName.offset, 68) : "",
+      block: dataPtr ? reader.blockAt(dataPtr, block.dataOffset) : null
+    });
+  }
+  return out;
+}
+
+function meshCustomData(reader, meshLayout, base, names) {
+  const f = blendFieldAny(reader, meshLayout, names);
+  return f ? readCustomDataLayers(reader, base + f.offset, base) : [];
+}
+
+function readMVertPositions(reader, block, count) {
+  if (!block || count <= 0) return null;
+  const layout = blendLayout(reader, "MVert");
+  const fCo = layout && blendFieldAny(reader, layout, ["co", "co_legacy"]);
+  const stride = layout ? layout.size : 12;
+  const extra = fCo ? fCo.offset : 0;
+  const out = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const off = block.dataOffset + i * stride + extra;
+    out[i * 3] = reader.readFloat32(off);
+    out[i * 3 + 1] = reader.readFloat32(off + 4);
+    out[i * 3 + 2] = reader.readFloat32(off + 8);
+  }
+  return out;
+}
+
+function followMeshPtr(reader, meshLayout, base, names) {
+  const f = blendFieldAny(reader, meshLayout, names);
+  if (!f) return null;
+  const ptr = reader.readPointer(base + f.offset);
+  return ptr ? reader.blockAt(ptr, base) : null;
+}
+
+function readBlendPositions(reader, meshLayout, base, vertLayers, vertexCount) {
+  const named = vertLayers.find(l => l.block && l.type === CD_PROP_FLOAT3 && (!l.name || l.name === "position"));
+  if (named) return reader.readFloatArray(named.block.dataOffset, vertexCount * 3);
+  const mvertLayer = vertLayers.find(l => l.block && l.type === CD_MVERT);
+  if (mvertLayer) return readMVertPositions(reader, mvertLayer.block, vertexCount);
+  return readMVertPositions(reader, followMeshPtr(reader, meshLayout, base, ["mvert"]), vertexCount);
+}
+
+function readBlendCornerVerts(reader, meshLayout, base, loopLayers, cornerCount) {
+  const named = loopLayers.find(l => l.block && l.type === CD_PROP_INT32 && (l.name === ".corner_vert" || l.name === "corner_vert"));
+  if (named) {
+    const ints = reader.readInt32Array(named.block.dataOffset, cornerCount);
+    return new Uint32Array(ints.buffer.slice(0));
+  }
+  const loopLayer = loopLayers.find(l => l.block && l.type === CD_MLOOP);
+  const block = (loopLayer && loopLayer.block) || followMeshPtr(reader, meshLayout, base, ["mloop"]);
+  if (!block) return null;
+  const layout = blendLayout(reader, "MLoop");
+  const fV = layout && blendField(reader, layout, "v");
+  const stride = layout ? layout.size : 8;
+  const extra = fV ? fV.offset : 0;
+  const out = new Uint32Array(cornerCount);
+  for (let i = 0; i < cornerCount; i++) {
+    out[i] = reader.readUint32(block.dataOffset + i * stride + extra);
+  }
+  return out;
+}
+
+function readBlendFaceOffsets(reader, meshLayout, base, faceLayers, faceCount, cornerCount) {
+  const fOff = blendFieldAny(reader, meshLayout, ["face_offset_indices", "poly_offset_indices"]);
+  if (fOff) {
+    const ptr = reader.readPointer(base + fOff.offset);
+    const block = ptr ? reader.blockAt(ptr, base) : null;
+    if (block) {
+      const ints = reader.readInt32Array(block.dataOffset, faceCount + 1);
+      return { offsets: new Uint32Array(ints.buffer.slice(0)), mat: null };
+    }
+  }
+  const polyLayer = faceLayers.find(l => l.block && l.type === CD_MPOLY);
+  const block = (polyLayer && polyLayer.block) || followMeshPtr(reader, meshLayout, base, ["mpoly"]);
+  if (!block) return null;
+  const layout = blendLayout(reader, "MPoly");
+  const fStart = layout && blendFieldAny(reader, layout, ["loopstart"]);
+  const fTot = layout && blendFieldAny(reader, layout, ["totloop"]);
+  const fMat = layout && blendFieldAny(reader, layout, ["mat_nr", "mat_nr_legacy"]);
+  const stride = layout ? layout.size : 12;
+  const offsets = new Uint32Array(faceCount + 1);
+  const mat = new Uint32Array(faceCount);
+  for (let i = 0; i < faceCount; i++) {
+    const off = block.dataOffset + i * stride;
+    const start = fStart ? reader.readInt32(off + fStart.offset) : 0;
+    const tot = fTot ? reader.readInt32(off + fTot.offset) : 0;
+    offsets[i] = start >>> 0;
+    offsets[i + 1] = (start + tot) >>> 0;
+    if (fMat) mat[i] = reader.readInt16(off + fMat.offset);
+  }
+  if (offsets[faceCount] === 0 && cornerCount) offsets[faceCount] = cornerCount;
+  return { offsets, mat };
+}
+
+function readBlendMFaces(reader, meshLayout, base, faceLayers, faceCount) {
+  const layer = faceLayers.find(l => l.block && l.type === CD_MFACE);
+  const block = (layer && layer.block) || followMeshPtr(reader, meshLayout, base, ["mface"]);
+  if (!block || faceCount <= 0) return null;
+  const layout = blendLayout(reader, "MFace");
+  const f1 = layout && blendField(reader, layout, "v1");
+  const f2 = layout && blendField(reader, layout, "v2");
+  const f3 = layout && blendField(reader, layout, "v3");
+  const f4 = layout && blendField(reader, layout, "v4");
+  const stride = layout ? layout.size : 16;
+  const tris = [];
+  for (let i = 0; i < faceCount; i++) {
+    const off = block.dataOffset + i * stride;
+    const a = f1 ? reader.readUint32(off + f1.offset) : reader.readUint32(off);
+    const b = f2 ? reader.readUint32(off + f2.offset) : reader.readUint32(off + 4);
+    const c = f3 ? reader.readUint32(off + f3.offset) : reader.readUint32(off + 8);
+    const d = f4 ? reader.readUint32(off + f4.offset) : reader.readUint32(off + 12);
+    tris.push(a, b, c);
+    if (d && d !== c) tris.push(a, c, d);
+  }
+  return new Uint32Array(tris);
+}
+
+function triangulateBlendFaces(offsets, cornerVerts) {
+  const faceCount = offsets.length - 1;
+  let triCount = 0;
+  for (let i = 0; i < faceCount; i++) {
+    const size = (offsets[i + 1] || 0) - (offsets[i] || 0);
+    if (size >= 3) triCount += size - 2;
+  }
+  const tris = new Uint32Array(triCount * 3);
+  let t = 0;
+  for (let i = 0; i < faceCount; i++) {
+    const start = offsets[i] || 0;
+    const size = (offsets[i + 1] || 0) - start;
+    if (size < 3) continue;
+    const v0 = cornerVerts[start] || 0;
+    for (let c = 1; c < size - 1; c++) {
+      tris[t++] = v0;
+      tris[t++] = cornerVerts[start + c] || 0;
+      tris[t++] = cornerVerts[start + c + 1] || 0;
+    }
+  }
+  return tris;
+}
+
+function extractMaterialSlotNamesLegacy(reader, meshLayout, meshBlock, totcol) {
+  const fMat = blendField(reader, meshLayout, "mat");
+  if (!fMat || totcol <= 0) return [];
+  const matsPtr = reader.readPointer(meshBlock.dataOffset + fMat.offset);
+  const matsBlock = reader.blockAt(matsPtr, meshBlock.dataOffset);
+  if (!matsBlock) return [];
+  const idLayout = blendLayout(reader, "ID");
+  const fIdName = idLayout && blendField(reader, idLayout, "name");
+  const names = [];
+  for (let i = 0; i < totcol; i++) {
+    const ptr = reader.readPointer(matsBlock.dataOffset + i * reader.header.pointerSize);
+    const block = reader.blockAt(ptr);
+    if (!block || !fIdName) {
+      names.push("");
+      continue;
+    }
+    const raw = reader.readCString(block.dataOffset + fIdName.offset, 64);
+    names.push(raw.startsWith("MA") ? raw.slice(2) : raw);
+  }
+  return names;
+}
+
+function extractMeshesLegacy(blend) {
+  const { reader, blocks } = blend;
+  const meshLayout = blendLayout(reader, "Mesh");
+  const idLayout = blendLayout(reader, "ID");
+  if (!meshLayout || !idLayout) return [];
+  const fId = blendField(reader, meshLayout, "id");
+  const fIdName = blendField(reader, idLayout, "name");
+  const meshes = [];
+  for (const block of blocks) {
+    if (block.code !== "ME") continue;
+    const base = block.dataOffset;
+    const rawName = fId && fIdName
+      ? reader.readCString(base + fId.offset + fIdName.offset, 64)
+      : "Mesh";
+    const name = rawName.startsWith("ME") ? rawName.slice(2) : rawName;
+    const vertexCount = blendReadCount(reader, meshLayout, base, ["totvert", "verts_num"]);
+    const edgeCount = blendReadCount(reader, meshLayout, base, ["totedge", "edges_num"]);
+    const faceCount = blendReadCount(reader, meshLayout, base, ["totpoly", "faces_num"]);
+    const cornerCount = blendReadCount(reader, meshLayout, base, ["totloop", "corners_num"]);
+    const legacyFaceCount = blendReadCount(reader, meshLayout, base, ["totface", "totface_legacy"]);
+    const totcolField = blendField(reader, meshLayout, "totcol");
+    const totcol = totcolField ? reader.readInt16(base + totcolField.offset) : 0;
+    if (vertexCount <= 0) continue;
+    const vertLayers = meshCustomData(reader, meshLayout, base, ["vert_data", "vdata"]);
+    const loopLayers = meshCustomData(reader, meshLayout, base, ["corner_data", "ldata"]);
+    const faceLayers = meshCustomData(reader, meshLayout, base, ["face_data", "pdata"]);
+    const legacyFaceLayers = meshCustomData(reader, meshLayout, base, ["fdata_legacy", "fdata"]);
+    const vertices = readBlendPositions(reader, meshLayout, base, vertLayers, vertexCount);
+    if (!vertices) continue;
+    let triangles = null;
+    let materialSlotNames = extractMaterialSlotNamesLegacy(reader, meshLayout, block, totcol);
+    if (cornerCount > 0 && faceCount > 0) {
+      const cornerVertices = readBlendCornerVerts(reader, meshLayout, base, loopLayers, cornerCount);
+      const faces = cornerVertices && readBlendFaceOffsets(reader, meshLayout, base, faceLayers, faceCount, cornerCount);
+      if (cornerVertices && faces) triangles = triangulateBlendFaces(faces.offsets, cornerVertices);
+    }
+    if ((!triangles || !triangles.length) && legacyFaceCount > 0) {
+      triangles = readBlendMFaces(reader, meshLayout, base, legacyFaceLayers, legacyFaceCount);
+    }
+    if (!triangles || !triangles.length) continue;
+    meshes.push({
+      name,
+      vertexCount,
+      edgeCount,
+      faceCount: faceCount || legacyFaceCount,
+      cornerCount,
+      vertices,
+      triangles,
+      materialSlotNames
+    });
+  }
+  return meshes;
+}
+
+function extractBlendMeshes(lib, blend) {
+  try {
+    const meshes = lib.extractMeshes(blend);
+    if (meshes && meshes.length) return meshes;
+  } catch (err) {
+    console.warn("Blender 5 mesh parse failed, trying older layout", err);
+  }
+  return extractMeshesLegacy(blend);
+}
+
 function lookupBlendMesh(obj, evaluated, meshByName) {
   if (evaluated) {
     const byObj = evaluated.get(obj.name);
@@ -2077,10 +2355,15 @@ async function parseBlendToObject(bytes) {
     }
     throw new Error("Could not read this .blend. Export as .glb from Blender (File → Export → glTF)");
   }
-  const materials = extractMaterials(blend);
+  let materials = [];
+  try {
+    materials = extractMaterials(blend) || [];
+  } catch (err) {
+    console.warn("blend materials skipped", err);
+  }
   const matByName = new Map();
   for (const mat of materials) matByName.set(mat.name, mat);
-  const rawMeshes = extractMeshes(blend);
+  const rawMeshes = extractBlendMeshes(lib, blend);
   const meshByName = new Map();
   for (const mesh of rawMeshes) meshByName.set(mesh.name, mesh);
   let evaluated = null;
@@ -2120,7 +2403,7 @@ async function parseBlendToObject(bytes) {
     }
   }
   if (!group.children.length) {
-    throw new Error("No mesh objects in this .blend. Export as .glb from Blender");
+    throw new Error("No readable mesh in this .blend. Export as .glb from Blender (File → Export → glTF)");
   }
   group.rotation.x = -Math.PI / 2;
   return group;
