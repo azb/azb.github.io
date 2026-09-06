@@ -319,7 +319,8 @@ def handle_message(client: Client, msg: dict) -> None:
             else:
                 prev = bucket.get(oid) or {}
                 meta = dict(prev.get("meta") or {})
-                for key in ("name", "ext", "x", "y", "z", "heldBy", "seq", "size", "fitted"):
+                for key in ("name", "ext", "x", "y", "z", "heldBy", "seq", "size", "fitted",
+                            "qx", "qy", "qz", "qw", "sx", "sy", "sz"):
                     if key in obj:
                         meta[key] = obj[key]
                 meta["id"] = oid

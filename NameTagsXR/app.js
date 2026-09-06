@@ -8,7 +8,7 @@ import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "39";
+const APP_VERSION = "40";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -381,12 +381,30 @@ document.getElementById("recalibrate").onclick = () => {
 document.getElementById("exit").onclick = () => leaveRoom(true);
 document.getElementById("clearModels").onclick = () => removeAllShared();
 
-window.addEventListener("keydown", e => {
-  if (e.key !== "Delete") return;
-  const el = e.target;
+function typingInField(el) {
   const tag = el && el.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || (el && el.isContentEditable)) return;
+  return tag === "INPUT" || tag === "TEXTAREA" || (el && el.isContentEditable);
+}
+
+window.addEventListener("keydown", e => {
+  if (typingInField(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
   if (!sessionStarted || renderer.xr.isPresenting || !selectedShared) return;
+  if (e.code === "KeyW") {
+    e.preventDefault();
+    transformControls.setMode("translate");
+    return;
+  }
+  if (e.code === "KeyE") {
+    e.preventDefault();
+    transformControls.setMode("rotate");
+    return;
+  }
+  if (e.code === "KeyR") {
+    e.preventDefault();
+    transformControls.setMode("scale");
+    return;
+  }
+  if (e.key !== "Delete") return;
   const rec = sharedObjects.get(selectedShared.userData.sharedId);
   if (!rec) return;
   e.preventDefault();
@@ -1781,7 +1799,14 @@ function sharedPayload(rec) {
     seq: rec.seq || 0,
     size: rec.bytes ? rec.bytes.byteLength : rec.size || 0,
     fitted: !!rec.fitted,
-    chunkCount: rec.chunkCount || 0
+    chunkCount: rec.chunkCount || 0,
+    qx: rec.roomQuat.x,
+    qy: rec.roomQuat.y,
+    qz: rec.roomQuat.z,
+    qw: rec.roomQuat.w,
+    sx: rec.roomScale.x,
+    sy: rec.roomScale.y,
+    sz: rec.roomScale.z
   };
 }
 
@@ -1839,10 +1864,21 @@ function ensureShared(id, meta = {}, fromNetwork = false) {
     size: meta.size || 0,
     fitted: !!meta.fitted,
     fromNetwork,
+    roomQuat: new THREE.Quaternion(
+      typeof meta.qx === "number" ? meta.qx : 0,
+      typeof meta.qy === "number" ? meta.qy : 0,
+      typeof meta.qz === "number" ? meta.qz : 0,
+      typeof meta.qw === "number" ? meta.qw : 1
+    ).normalize(),
+    roomScale: new THREE.Vector3(
+      typeof meta.sx === "number" ? meta.sx : 1,
+      typeof meta.sy === "number" ? meta.sy : 1,
+      typeof meta.sz === "number" ? meta.sz : 1
+    ),
     radius: .2
   };
   rec.root.userData.sharedId = id;
-  rec.root.position.copy(roomToLocal(rec.roomPos));
+  applyLocalTransform(rec);
   rec.placeholder = makePlaceholder();
   rec.root.add(rec.placeholder);
   scene.add(rec.root);
@@ -1857,8 +1893,12 @@ function applySharedTransform(rec, meta, force) {
   if (!force && seq < rec.seq) return;
   rec.seq = seq;
   if (typeof meta.x === "number") rec.roomPos.set(meta.x, meta.y, meta.z);
+  if (typeof meta.qx === "number") {
+    rec.roomQuat.set(meta.qx, meta.qy, meta.qz, meta.qw).normalize();
+  }
+  if (typeof meta.sx === "number") rec.roomScale.set(meta.sx, meta.sy, meta.sz);
   rec.heldBy = meta.heldBy || "";
-  rec.root.position.copy(roomToLocal(rec.roomPos));
+  applyLocalTransform(rec);
 }
 
 function markSharedMeshes(root, wrapper) {
@@ -2119,8 +2159,8 @@ async function prepareSharedBytes(rec) {
 function relocalizeSharedObjects() {
   for (const rec of sharedObjects.values()) {
     if (!rec.root) continue;
-    if (rec.heldBy === uid) rec.roomPos.copy(localToRoom(rec.root.position));
-    else rec.root.position.copy(roomToLocal(rec.roomPos));
+    if (rec.heldBy === uid) writeRoomTransform(rec);
+    else applyLocalTransform(rec);
   }
 }
 
@@ -2190,7 +2230,7 @@ function sendSharedMessage(action, rec, persist) {
 function publishSharedMove(root, force) {
   const rec = sharedObjects.get(root && root.userData.sharedId);
   if (!rec) return;
-  rec.roomPos.copy(localToRoom(root.position));
+  writeRoomTransform(rec);
   rec.heldBy = uid;
   rec.seq = (rec.seq || 0) + 1;
   const now = performance.now();
@@ -2209,7 +2249,7 @@ function beginSharedHold(root) {
 function endSharedHold(root) {
   const rec = sharedObjects.get(root && root.userData.sharedId);
   if (!rec) return;
-  rec.roomPos.copy(localToRoom(root.position));
+  writeRoomTransform(rec);
   rec.seq = (rec.seq || 0) + 1;
   rec.heldBy = "";
   lastObjectSend = 0;
@@ -3135,6 +3175,28 @@ function localToRoom(local) {
 function roomToLocal(room) {
   if (!calibration) return room.clone();
   return room.clone().applyAxisAngle(new THREE.Vector3(0,1,0), -calibration.yaw).add(calibration.origin);
+}
+
+function localQuatToRoom(q) {
+  if (!calibration) return q.clone();
+  return new THREE.Quaternion().setFromAxisAngle(_yAxis, calibration.yaw).multiply(q);
+}
+
+function roomQuatToLocal(q) {
+  if (!calibration) return q.clone();
+  return new THREE.Quaternion().setFromAxisAngle(_yAxis, -calibration.yaw).multiply(q);
+}
+
+function writeRoomTransform(rec) {
+  rec.roomPos.copy(localToRoom(rec.root.position));
+  rec.roomQuat.copy(localQuatToRoom(rec.root.quaternion));
+  rec.roomScale.copy(rec.root.scale);
+}
+
+function applyLocalTransform(rec) {
+  rec.root.position.copy(roomToLocal(rec.roomPos));
+  rec.root.quaternion.copy(roomQuatToLocal(rec.roomQuat));
+  rec.root.scale.copy(rec.roomScale);
 }
 
 function applyCalibrationFromDots() {
