@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "50";
+const APP_VERSION = "51";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -1676,6 +1676,9 @@ async function enterXRSession(session) {
   statusEl.textContent = "Tracking pose · walking should appear on other devices";
   syncCalibrationUi();
   syncPcGizmos();
+  for (const rec of sharedObjects.values()) {
+    if (rec.root) forceUnlitSharedMaterials(rec.root);
+  }
   publishPlayer(true).catch(console.error);
 }
 
@@ -1957,6 +1960,119 @@ function applySharedTransform(rec, meta, force) {
   applyLocalTransform(rec);
 }
 
+function isDummyMap(map) {
+  if (!map || !map.image) return true;
+  const img = map.image;
+  const w = img.width || img.naturalWidth || img.videoWidth || 0;
+  const h = img.height || img.naturalHeight || img.videoHeight || 0;
+  return w <= 1 && h <= 1;
+}
+
+function firstUsableMap(mat) {
+  const list = Array.isArray(mat) ? mat : [mat];
+  for (const m of list) {
+    if (!m) continue;
+    const map = m.map || m.emissiveMap || null;
+    if (map && !isDummyMap(map)) return map;
+  }
+  return null;
+}
+
+function jpegFromTexture(map, maxSize) {
+  try {
+    const img = map && map.image;
+    if (!img) return null;
+    const w = img.width || img.naturalWidth || img.videoWidth || 0;
+    const h = img.height || img.naturalHeight || img.videoHeight || 0;
+    if (w <= 1 || h <= 1) return null;
+    const cap = maxSize || MAX_TEX_DIM;
+    const scale = Math.min(1, cap / Math.max(w, h));
+    const cw = Math.max(1, Math.round(w * scale));
+    const ch = Math.max(1, Math.round(h * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = cw;
+    canvas.height = ch;
+    const ctx = canvas.getContext("2d");
+    if (map.flipY) {
+      ctx.translate(0, ch);
+      ctx.scale(1, -1);
+    }
+    ctx.drawImage(img, 0, 0, cw, ch);
+    const dataUrl = canvas.toDataURL("image/jpeg", .82);
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0) return null;
+    const bin = atob(dataUrl.slice(comma + 1));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyJpegToMaterial(mat, jpegBytes) {
+  if (!mat || !jpegBytes || !jpegBytes.length) return;
+  const blob = new Blob([jpegBytes], { type: "image/jpeg" });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    const tex = new THREE.Texture(img);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.flipY = false;
+    tex.needsUpdate = true;
+    mat.map = tex;
+    mat.needsUpdate = true;
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => URL.revokeObjectURL(url);
+  img.src = url;
+}
+
+function toUnlitMaterial(mat) {
+  if (!mat) {
+    return new THREE.MeshBasicMaterial({ color: 0xc5cdd6, side: THREE.DoubleSide, toneMapped: false });
+  }
+  const map = firstUsableMap(mat);
+  const color = mat.color && typeof mat.color.getHex === "function" ? mat.color.getHex() : 0xc5cdd6;
+  const opacity = typeof mat.opacity === "number" ? mat.opacity : 1;
+  const transparent = !!(mat.transparent || opacity < .999);
+  if (mat.isMeshBasicMaterial) {
+    if (mat.map && isDummyMap(mat.map)) mat.map = null;
+    else if (map) mat.map = map;
+    mat.side = THREE.DoubleSide;
+    mat.toneMapped = false;
+    mat.transparent = transparent;
+    mat.depthWrite = !transparent;
+    return mat;
+  }
+  const next = new THREE.MeshBasicMaterial({
+    color,
+    map,
+    opacity,
+    transparent,
+    depthWrite: !transparent,
+    side: THREE.DoubleSide,
+    toneMapped: false
+  });
+  return next;
+}
+
+function forceUnlitSharedMaterials(root) {
+  if (!root) return;
+  root.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    const next = list.map(toUnlitMaterial);
+    o.material = next.length === 1 ? next[0] : next;
+  });
+}
+
+function shouldUnlitShared(rec) {
+  return !!(renderer.xr.isPresenting || (rec && rec.fromNetwork));
+}
+
 function markSharedMeshes(root, wrapper) {
   root.traverse(o => {
     if (!o.isMesh) return;
@@ -2132,6 +2248,7 @@ const CD_MLOOP = 26;
 const CD_PROP_FLOAT3 = 48;
 const CD_PROP_FLOAT2 = 49;
 const NTX_HAS_UV = 1;
+const NTX_HAS_TEX = 2;
 
 function blendLayout(reader, name) {
   try { return reader.layoutOf(name); } catch { return null; }
@@ -2558,12 +2675,14 @@ function packSharedGeometry(object, space) {
         uv[i * 2 + 1] = uvAttr.getY(i);
       }
     }
-    parts.push({ pos, idx, uv, color: meshColor(o.material) });
+    const tex = jpegFromTexture(firstUsableMap(o.material), MAX_TEX_DIM);
+    parts.push({ pos, idx, uv, tex, color: meshColor(o.material) });
   });
   if (!parts.length) return null;
   let size = 8;
   for (const p of parts) {
     size += 16 + p.pos.byteLength + (p.idx ? p.idx.byteLength : 0) + (p.uv ? p.uv.byteLength : 0);
+    if (p.tex) size += 4 + p.tex.byteLength;
   }
   const buf = new ArrayBuffer(size);
   const view = new DataView(buf);
@@ -2577,12 +2696,20 @@ function packSharedGeometry(object, space) {
     view.setUint32(o, p.color >>> 0, true); o += 4;
     view.setUint32(o, p.pos.length / 3, true); o += 4;
     view.setUint32(o, p.idx ? p.idx.length : 0, true); o += 4;
-    view.setUint32(o, p.uv ? NTX_HAS_UV : 0, true); o += 4;
+    let flags = 0;
+    if (p.uv) flags |= NTX_HAS_UV;
+    if (p.tex) flags |= NTX_HAS_TEX;
+    view.setUint32(o, flags, true); o += 4;
     out.set(new Uint8Array(p.pos.buffer, p.pos.byteOffset, p.pos.byteLength), o);
     o += p.pos.byteLength;
     if (p.uv) {
       out.set(new Uint8Array(p.uv.buffer, p.uv.byteOffset, p.uv.byteLength), o);
       o += p.uv.byteLength;
+    }
+    if (p.tex) {
+      view.setUint32(o, p.tex.byteLength, true); o += 4;
+      out.set(p.tex, o);
+      o += p.tex.byteLength;
     }
     if (p.idx && p.idx.length) {
       out.set(new Uint8Array(p.idx.buffer, p.idx.byteOffset, p.idx.byteLength), o);
@@ -2621,6 +2748,12 @@ function unpackSharedGeometry(bytes) {
       }
       geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
     }
+    let texBytes = null;
+    if (flags & NTX_HAS_TEX) {
+      const texLen = view.getUint32(o, true); o += 4;
+      texBytes = bytes.subarray(o, o + texLen);
+      o += texLen;
+    }
     if (idxn) {
       const idx = [];
       for (let i = 0; i < idxn; i++) {
@@ -2630,25 +2763,28 @@ function unpackSharedGeometry(bytes) {
       geo.setIndex(idx);
     }
     geo.computeVertexNormals();
-    group.add(new THREE.Mesh(
-      geo,
-      new THREE.MeshStandardMaterial({ color, roughness: .55, metalness: .05, side: THREE.DoubleSide })
-    ));
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      side: THREE.DoubleSide,
+      toneMapped: false
+    });
+    if (texBytes && texBytes.length) applyJpegToMaterial(mat, texBytes);
+    group.add(new THREE.Mesh(geo, mat));
   }
   if (!group.children.length) throw new Error("packed mesh was empty");
   return group;
 }
 
 function materialForExport(mat) {
-  if (!mat) return new THREE.MeshStandardMaterial({ color: 0xc5cdd6, side: THREE.DoubleSide });
-  const copy = Array.isArray(mat) ? mat.map(m => (m ? m.clone() : m)) : mat.clone();
-  const list = Array.isArray(copy) ? copy : [copy];
-  for (const m of list) {
+  if (!mat) return new THREE.MeshBasicMaterial({ color: 0xc5cdd6, side: THREE.DoubleSide, toneMapped: false });
+  const list = Array.isArray(mat) ? mat : [mat];
+  const out = list.map(m => toUnlitMaterial(m ? m.clone() : m));
+  for (const m of out) {
     if (!m) continue;
-    m.side = THREE.DoubleSide;
+    if (m.map && isDummyMap(m.map)) m.map = null;
     if (m.map) m.map.needsUpdate = true;
   }
-  return copy;
+  return out.length === 1 ? out[0] : out;
 }
 
 function meshOnlyClone(object) {
@@ -2720,6 +2856,7 @@ function loadSharedMesh(rec) {
       rec.ready = true;
       cacheSharedRadius(rec);
       if (rec.mat) applyRecMaterial(rec);
+      if (shouldUnlitShared(rec)) forceUnlitSharedMaterials(rec.root);
       if (rec.mat && rec.mat.tex && !rec.matMap) requestSharedTex(rec.id);
       if (selectedShared === rec.root) syncMatEditor();
       resolve(object);
@@ -3063,6 +3200,7 @@ function applyRecMaterial(rec) {
     }
     mat.needsUpdate = true;
   });
+  if (shouldUnlitShared(rec)) forceUnlitSharedMaterials(rec.root);
 }
 
 function applySharedMaterial(rec, meta) {
