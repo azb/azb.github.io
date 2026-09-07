@@ -9,12 +9,12 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "51";
+const APP_VERSION = "52";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
 let initializeAuth, getAuth, inMemoryPersistence, signInAnonymously;
-let getFirestore, doc, setDoc, onSnapshot, collection, getDocs, serverTimestamp, deleteDoc;
+let getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs, serverTimestamp, deleteDoc;
 
 const firebaseConfig = {
   apiKey: "AIzaSyD9wx0VS7oZLUqB4v5-XEBHGVHom4f7dZM",
@@ -172,6 +172,7 @@ const FILE_CHUNK = 48 * 1024;
 const INLINE_FILE_MAX = 8 * 1024 * 1024;
 const MAX_TEX_BYTES = 8 * 1024 * 1024;
 const MAX_TEX_DIM = 1024;
+const FIRESTORE_TEX_MAX = 520 * 1024;
 const MODEL_FIT = .75;
 const controllers = [];
 const remotePlayers = new Map();
@@ -1485,6 +1486,7 @@ async function loadFirebase() {
   onSnapshot = fsMod.onSnapshot;
   collection = fsMod.collection;
   getDocs = fsMod.getDocs;
+  getDoc = fsMod.getDoc;
   serverTimestamp = fsMod.serverTimestamp;
   deleteDoc = fsMod.deleteDoc;
 }
@@ -1978,7 +1980,7 @@ function firstUsableMap(mat) {
   return null;
 }
 
-function jpegFromTexture(map, maxSize) {
+function jpegFromTexture(map, maxSize, quality) {
   try {
     const img = map && map.image;
     if (!img) return null;
@@ -1998,7 +2000,7 @@ function jpegFromTexture(map, maxSize) {
       ctx.scale(1, -1);
     }
     ctx.drawImage(img, 0, 0, cw, ch);
-    const dataUrl = canvas.toDataURL("image/jpeg", .82);
+    const dataUrl = canvas.toDataURL("image/jpeg", quality || .82);
     const comma = dataUrl.indexOf(",");
     if (comma < 0) return null;
     const bin = atob(dataUrl.slice(comma + 1));
@@ -3312,8 +3314,8 @@ async function setSelectedTexture(file) {
     applyRecMaterial(rec);
     syncMatEditor();
     publishMaterial(rec, true);
-    await publishMaterialTex(rec);
-    statusEl.textContent = "Texture applied to " + (rec.name || "model");
+    const uploaded = await publishMaterialTex(rec);
+    if (uploaded) statusEl.textContent = "Texture applied to " + (rec.name || "model");
   } catch (err) {
     console.warn(err);
     statusEl.textContent = (err && err.message) || "Could not load texture";
@@ -3338,6 +3340,9 @@ function clearSelectedTexture() {
   rec.matMap = null;
   applyRecMaterial(rec);
   publishMaterial(rec, true);
+  if (connectionMode === "cloud" && db && roomId) {
+    deleteDoc(doc(db, "rooms", roomId, "objects", texDocId(rec.id))).catch(() => {});
+  }
   statusEl.textContent = "Cleared texture on " + (rec.name || "model");
 }
 
@@ -3436,7 +3441,7 @@ async function republishSharedMesh(rec) {
 }
 
 async function publishMaterialTex(rec) {
-  if (!rec || !rec.matTex) return;
+  if (!rec || !rec.matTex) return true;
   if (connectionMode === "local") {
     try {
       const res = await fetch(`/models/${encodeURIComponent(roomId)}/${encodeURIComponent(rec.id)}/tex`, {
@@ -3448,17 +3453,23 @@ async function publishMaterialTex(rec) {
     } catch (err) {
       console.warn(err);
       statusEl.textContent = "Texture is local, but LAN upload failed";
+      sendLocalTex(rec).catch(e => console.warn("local tex push failed", e));
+      return false;
     }
     sendLocalTex(rec).catch(err => console.warn("local tex push failed", err));
-    return;
+    return true;
   }
   try {
     await publishCloudTex(rec);
   } catch (err) {
     console.warn(err);
-    statusEl.textContent = "Texture is local, but cloud upload failed";
+    const detail = err && (err.code || err.message) ? String(err.code || err.message) : "upload failed";
+    statusEl.textContent = "Texture is local, but cloud upload failed (" + detail + ")";
+    for (const [peerId] of rtcPeers) sendRtcTexTo(peerId, rec);
+    return false;
   }
   for (const [peerId] of rtcPeers) sendRtcTexTo(peerId, rec);
+  return true;
 }
 
 function requestSharedTex(id) {
@@ -3497,20 +3508,35 @@ async function fetchLocalTex(id) {
   }
 }
 
+function shrinkTexForCloud(bytes, map) {
+  const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  if (src.byteLength && src.byteLength <= FIRESTORE_TEX_MAX) return src;
+  let dim = MAX_TEX_DIM;
+  let q = .75;
+  let best = src.byteLength ? src : null;
+  for (let i = 0; i < 8; i++) {
+    const out = jpegFromTexture(map, dim, q);
+    if (out && out.byteLength <= FIRESTORE_TEX_MAX) return out;
+    if (out && (!best || out.byteLength < best.byteLength)) best = out;
+    dim = Math.max(256, Math.round(dim * .72));
+    q = Math.max(.4, q - .08);
+  }
+  if (best && best.byteLength <= FIRESTORE_TEX_MAX) return best;
+  throw new Error("Texture is too large for cloud after compress");
+}
+
 async function publishCloudTex(rec) {
   if (!db || !roomId || !rec.matTex) return;
-  const chunk = 500 * 1024;
-  const bytes = rec.matTex instanceof Uint8Array ? rec.matTex : new Uint8Array(rec.matTex);
-  const total = Math.max(1, Math.ceil(bytes.byteLength / chunk));
-  await setDoc(doc(db, "rooms", roomId, "objects", rec.id), {
-    ...sharedPayload(rec),
+  const bytes = shrinkTexForCloud(rec.matTex, rec.matMap);
+  rec.matTex = bytes;
+  await setDoc(doc(db, "rooms", roomId, "objects", texDocId(rec.id)), {
+    kind: "tex",
+    parent: rec.id,
+    data: bytesToB64(bytes),
+    size: bytes.byteLength,
+    texSeq: rec.mat && rec.mat.texSeq ? rec.mat.texSeq : 0,
     updatedAt: serverTimestamp()
   });
-  for (let i = 0; i < total; i++) {
-    await setDoc(doc(db, "rooms", roomId, "objects", rec.id, "texchunks", String(i)), {
-      data: bytesToB64(bytes.subarray(i * chunk, (i + 1) * chunk))
-    });
-  }
 }
 
 async function fetchCloudTex(id) {
@@ -3518,6 +3544,16 @@ async function fetchCloudTex(id) {
   if (!rec || rec.matMap || rec.fetchingTex || !db || !roomId) return;
   rec.fetchingTex = true;
   try {
+    const texSnap = await getDoc(doc(db, "rooms", roomId, "objects", texDocId(id)));
+    if (texSnap.exists()) {
+      const data = texSnap.data();
+      if (data && typeof data.data === "string") {
+        rec.matTex = b64ToBytes(data.data);
+        rec.matMap = await textureFromBytes(rec.matTex);
+        applyRecMaterial(rec);
+        return;
+      }
+    }
     const snap = await getDocs(collection(db, "rooms", roomId, "objects", id, "texchunks"));
     if (snap.empty) return;
     const parts = [];
@@ -3615,7 +3651,10 @@ function sendSharedMessage(action, rec, persist) {
   rtcSend({ type: "object", action, object });
   if (persist && db && roomId) {
     const ref = doc(db, "rooms", roomId, "objects", rec.id);
-    if (action === "remove") deleteDoc(ref).catch(err => console.warn("object delete failed", err));
+    if (action === "remove") {
+      deleteDoc(ref).catch(err => console.warn("object delete failed", err));
+      deleteDoc(doc(db, "rooms", roomId, "objects", texDocId(rec.id))).catch(() => {});
+    }
     else {
       setDoc(ref, { ...object, updatedAt: serverTimestamp() })
         .catch(err => console.warn("object persist failed", err));
@@ -3681,8 +3720,29 @@ function handleSharedMessage(msg) {
   if (!rec.ready && !rec.bytes) requestSharedFile(rec.id);
 }
 
+function texDocId(id) {
+  return id + "__tex";
+}
+
+function isTexDoc(meta) {
+  return !!(meta && (meta.kind === "tex" || (meta.id && String(meta.id).endsWith("__tex"))));
+}
+
+function applyCloudTexMeta(meta) {
+  const parent = meta.parent || String(meta.id || "").replace(/__tex$/, "");
+  if (!parent || !sharedObjects.has(parent)) return;
+  if (typeof meta.data !== "string" || !meta.data) return;
+  const rec = sharedObjects.get(parent);
+  if (rec && rec.matMap && rec.mat && rec.mat.texSeq && meta.texSeq && meta.texSeq < rec.mat.texSeq) return;
+  applyIncomingTex(parent, b64ToBytes(meta.data)).catch(err => console.warn("tex apply failed", err));
+}
+
 function applySharedMeta(meta) {
   if (!meta || !meta.id) return;
+  if (isTexDoc(meta)) {
+    applyCloudTexMeta(meta);
+    return;
+  }
   handleSharedMessage({ action: "add", object: meta });
 }
 
