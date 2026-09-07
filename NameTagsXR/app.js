@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "53";
+const APP_VERSION = "54";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -1844,8 +1844,8 @@ function defaultRoomDropPos() {
   return localToRoom(p);
 }
 
-function sharedPayload(rec) {
-  return {
+function sharedPayload(rec, opts = {}) {
+  const payload = {
     id: rec.id,
     name: rec.name,
     ext: rec.ext,
@@ -1864,9 +1864,11 @@ function sharedPayload(rec) {
     sx: rec.roomScale.x,
     sy: rec.roomScale.y,
     sz: rec.roomScale.z,
-    meshRev: rec.meshRev || 0,
-    ...matPayload(rec)
+    meshRev: rec.meshRev || 0
   };
+  if (rec.mat) Object.assign(payload, matPayload(rec));
+  else if (opts.resetMat) Object.assign(payload, { matOn: 0, matTex: 0, matTexSeq: 0, matReset: 1 });
+  return payload;
 }
 
 function makePlaceholder() {
@@ -1963,10 +1965,11 @@ function applySharedTransform(rec, meta, force) {
 }
 
 function isDummyMap(map) {
-  if (!map || !map.image) return true;
+  if (!map || !map.image) return false;
   const img = map.image;
   const w = img.width || img.naturalWidth || img.videoWidth || 0;
   const h = img.height || img.naturalHeight || img.videoHeight || 0;
+  if (!w || !h) return false;
   return w <= 1 && h <= 1;
 }
 
@@ -2798,7 +2801,7 @@ function meshOnlyClone(object, space) {
   const local = new THREE.Matrix4();
   object.traverse(o => {
     if (!o.isMesh || !o.geometry) return;
-    const mesh = new THREE.Mesh(o.geometry, materialForExport(o.material));
+    const mesh = new THREE.Mesh(o.geometry.clone(), materialForExport(o.material));
     local.multiplyMatrices(inv, o.matrixWorld);
     local.decompose(mesh.position, mesh.quaternion, mesh.scale);
     group.add(mesh);
@@ -3197,6 +3200,7 @@ function applyRecMaterial(rec) {
     }
     if (m.tex && rec.matMap) {
       mat.map = rec.matMap;
+      if (!m.colorSet && mat.color) mat.color.setHex(0xffffff);
       mat.needsUpdate = true;
     } else if (m.texCleared) {
       mat.map = null;
@@ -3204,13 +3208,13 @@ function applyRecMaterial(rec) {
     }
     mat.needsUpdate = true;
   });
-  if (shouldUnlitShared(rec)) forceUnlitSharedMaterials(rec.root);
+  if (shouldUnlitShared(rec) || (m.tex && rec.matMap)) forceUnlitSharedMaterials(rec.root);
 }
 
-function applySharedMaterial(rec, meta) {
+function applySharedMaterial(rec, meta, action) {
   if (!rec || !meta) return;
   if (!meta.matOn) {
-    if (rec.mat) {
+    if ((action === "material" || meta.matReset) && rec.mat) {
       rec.mat = null;
       rec.matTex = null;
       applyRecMaterial(rec);
@@ -3639,11 +3643,13 @@ async function applyIncomingTex(id, bytes) {
   if (!rec) return;
   rec.matTex = bytes;
   rec.matMap = await textureFromBytes(bytes);
+  if (!rec.mat) rec.mat = { tex: 1, texSeq: 0 };
+  else rec.mat.tex = 1;
   applyRecMaterial(rec);
 }
 
 function sendSharedMessage(action, rec, persist) {
-  const object = sharedPayload(rec);
+  const object = sharedPayload(rec, { resetMat: action === "material" && !rec.mat });
   if (connectionMode === "local") {
     if (localWs && localWs.readyState === WebSocket.OPEN) {
       localWs.send(JSON.stringify({ type: "object", action, object }));
@@ -3657,8 +3663,17 @@ function sendSharedMessage(action, rec, persist) {
       deleteDoc(ref).catch(err => console.warn("object delete failed", err));
       deleteDoc(doc(db, "rooms", roomId, "objects", texDocId(rec.id))).catch(() => {});
     }
-    else {
-      setDoc(ref, { ...object, updatedAt: serverTimestamp() })
+    else if (action === "move" || action === "hold") {
+      setDoc(ref, {
+        x: object.x, y: object.y, z: object.z,
+        qx: object.qx, qy: object.qy, qz: object.qz, qw: object.qw,
+        sx: object.sx, sy: object.sy, sz: object.sz,
+        heldBy: object.heldBy,
+        seq: object.seq,
+        updatedAt: serverTimestamp()
+      }, { merge: true }).catch(err => console.warn("object persist failed", err));
+    } else {
+      setDoc(ref, { ...object, updatedAt: serverTimestamp() }, { merge: true })
         .catch(err => console.warn("object persist failed", err));
     }
   }
@@ -3712,7 +3727,7 @@ function handleSharedMessage(msg) {
   const newerMesh = meshRev > (rec.meshRev || 0);
   if (newerMesh) rec.meshRev = meshRev;
   if (msg.action !== "material") applySharedTransform(rec, msg.object, false);
-  applySharedMaterial(rec, msg.object);
+  applySharedMaterial(rec, msg.object, msg.action);
   if (newerMesh && rec.fromNetwork && rec.ready) {
     rec.bytes = null;
     resetSharedMesh(rec);
@@ -3771,7 +3786,7 @@ async function publishCloudMesh(rec) {
     ...sharedPayload(rec),
     chunkCount: total,
     updatedAt: serverTimestamp()
-  });
+  }, { merge: true });
   for (let i = 0; i < total; i++) {
     await setDoc(doc(db, "rooms", roomId, "objects", rec.id, "chunks", String(i)), {
       data: bytesToB64(bytes.subarray(i * chunk, (i + 1) * chunk))
