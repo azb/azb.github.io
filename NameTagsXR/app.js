@@ -9,7 +9,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as fflate from "three/addons/libs/fflate.module.js";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
-const APP_VERSION = "52";
+const APP_VERSION = "53";
 
 const FB_BASE = "https://www.gstatic.com/firebasejs/12.1.0";
 let initializeApp, getApps, getApp;
@@ -2789,10 +2789,12 @@ function materialForExport(mat) {
   return out.length === 1 ? out[0] : out;
 }
 
-function meshOnlyClone(object) {
+function meshOnlyClone(object, space) {
   const group = new THREE.Group();
+  const root = space || object;
+  root.updateMatrixWorld(true);
   object.updateMatrixWorld(true);
-  const inv = new THREE.Matrix4().copy(object.matrixWorld).invert();
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
   const local = new THREE.Matrix4();
   object.traverse(o => {
     if (!o.isMesh || !o.geometry) return;
@@ -2804,9 +2806,9 @@ function meshOnlyClone(object) {
   return group;
 }
 
-function exportSharedGlb(object) {
+function exportSharedGlb(object, space) {
   return new Promise((resolve, reject) => {
-    const clone = meshOnlyClone(object);
+    const clone = meshOnlyClone(object, space);
     if (!clone.children.length) {
       reject(new Error("no mesh to export"));
       return;
@@ -2932,7 +2934,7 @@ async function prepareSharedBytes(rec) {
   let packed = null;
   let ext = "glb";
   try {
-    const glb = await exportSharedGlb(rec.mesh);
+    const glb = await exportSharedGlb(rec.mesh, rec.root);
     if (glb && glb.byteLength) {
       packed = new Uint8Array(glb);
       ext = "glb";
