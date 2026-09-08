@@ -1,5 +1,5 @@
 export const HEX_SIZE = 0.13;
-export const TABLE_HEIGHT = 0.74;
+export const TABLE_HEIGHT = 0.49;
 export const VP_TO_WIN = 10;
 
 export const RESOURCE = {

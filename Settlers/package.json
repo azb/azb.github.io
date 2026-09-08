@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/publish-pages.js",
+    "build:only": "vite build",
     "preview": "vite preview --host"
   },
   "dependencies": {

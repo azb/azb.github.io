@@ -24,9 +24,10 @@ import {
 import { sfx } from './audio.js';
 
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x1b140f, 1);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.xr.enabled = true;
@@ -40,11 +41,11 @@ stage.position.set(0, 0, -0.72);
 scene.add(stage);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 30);
-camera.position.set(0, 1.42, 0.62);
+camera.position.set(0, 1.17, 0.62);
 scene.add(camera);
 
 const controls = new OrbitControls(camera, canvas);
-controls.target.set(0, 0.82, -0.72);
+controls.target.set(0, 0.57, -0.72);
 controls.enableDamping = true;
 controls.enablePan = true;
 controls.screenSpacePanning = true;
@@ -60,7 +61,10 @@ controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
 controls.listenToKeyEvents(window);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-createWorld(stage);
+const ROOM_BG = new THREE.Color('#1b140f');
+scene.background = ROOM_BG;
+scene.fog = new THREE.Fog('#1b140f', 6, 12);
+const world = createWorld(stage);
 const boardView = new BoardView(stage);
 boardView.rebuild(new Game({ seed: 2026 }).board);
 const dice = new DicePair(stage);
@@ -333,6 +337,29 @@ function setupXR() {
   return controllers;
 }
 
+function setPassthrough(on) {
+  world.room.visible = !on;
+  scene.background = on ? null : ROOM_BG;
+  scene.fog = on ? null : new THREE.Fog('#1b140f', 6, 12);
+  renderer.setClearColor(on ? 0x000000 : 0x1b140f, on ? 0 : 1);
+}
+
+async function requestXRSession(mode, hud) {
+  const withOverlay = {
+    requiredFeatures: ['local-floor'],
+    optionalFeatures: ['bounded-floor', 'hand-tracking', 'dom-overlay', 'unbounded', 'hit-test', 'plane-detection'],
+    domOverlay: { root: hud },
+  };
+  const lite = {
+    optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'unbounded'],
+  };
+  try {
+    return await navigator.xr.requestSession(mode, withOverlay);
+  } catch {
+    return navigator.xr.requestSession(mode, lite);
+  }
+}
+
 async function enterVR() {
   sfx.unlock();
   if (!navigator.xr) {
@@ -340,35 +367,50 @@ async function enterVR() {
     return;
   }
   const hud = document.getElementById('hud');
+  const arOk = await navigator.xr.isSessionSupported?.('immersive-ar');
+  const vrOk = await navigator.xr.isSessionSupported?.('immersive-vr');
   try {
-    const session = await navigator.xr.requestSession('immersive-vr', {
-      optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'dom-overlay'],
-      domOverlay: { root: hud },
-    });
-    renderer.xr.setReferenceSpaceType('local-floor');
-    await renderer.xr.setSession(session);
-    session.addEventListener('end', () => updateVRButton());
-  } catch {
-    try {
-      const session = await navigator.xr.requestSession('immersive-vr', {
-        optionalFeatures: ['local-floor', 'bounded-floor'],
-      });
-      renderer.xr.setReferenceSpaceType('local-floor');
-      await renderer.xr.setSession(session);
-    } catch {
-      showToast('Could not start a VR session.');
+    let session = null;
+    let passthrough = false;
+    if (arOk) {
+      try {
+        session = await requestXRSession('immersive-ar', hud);
+        passthrough = true;
+      } catch {
+        session = null;
+      }
     }
+    if (!session && vrOk) session = await requestXRSession('immersive-vr', hud);
+    if (!session) {
+      showToast('This browser has no AR or VR session.');
+      return;
+    }
+    renderer.xr.setReferenceSpaceType('local-floor');
+    setPassthrough(passthrough);
+    await renderer.xr.setSession(session);
+    session.addEventListener('end', () => {
+      setPassthrough(false);
+      updateVRButton();
+    });
+  } catch {
+    showToast('Could not start a mixed-reality session.');
+    setPassthrough(false);
   }
 }
 
 async function updateVRButton() {
   const btn = document.getElementById('vr-btn');
-  if (!navigator.xr || !(await navigator.xr.isSessionSupported?.('immersive-vr'))) {
-    btn.textContent = 'VR unavailable';
-    btn.disabled = true;
-  } else {
+  const arOk = navigator.xr && (await navigator.xr.isSessionSupported?.('immersive-ar'));
+  const vrOk = navigator.xr && (await navigator.xr.isSessionSupported?.('immersive-vr'));
+  if (arOk) {
+    btn.textContent = 'Enter MR';
+    btn.disabled = false;
+  } else if (vrOk) {
     btn.textContent = 'Enter VR';
     btn.disabled = false;
+  } else {
+    btn.textContent = 'MR unavailable';
+    btn.disabled = true;
   }
 }
 

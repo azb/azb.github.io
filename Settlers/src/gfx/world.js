@@ -8,6 +8,9 @@ export function createWorld(scene) {
   const floorWood = woodMap(1024, 1024, [78, 48, 28]);
   floorWood.repeat.set(8, 8);
   const plaster = feltMap([62, 52, 42]);
+  const room = new THREE.Group();
+  room.name = 'room';
+  scene.add(room);
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(10, 10),
@@ -15,7 +18,7 @@ export function createWorld(scene) {
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
-  scene.add(floor);
+  room.add(floor);
 
   const wallMat = new THREE.MeshStandardMaterial({ map: plaster, color: '#6d5a48', roughness: 0.95 });
   const walls = [
@@ -29,7 +32,7 @@ export function createWorld(scene) {
     w.position.set(x, y, z);
     w.rotation.y = ry;
     w.receiveShadow = true;
-    scene.add(w);
+    room.add(w);
   }
 
   const table = new THREE.Mesh(
@@ -54,7 +57,7 @@ export function createWorld(scene) {
   );
   rug.rotation.x = -Math.PI / 2;
   rug.position.y = 0.01;
-  scene.add(rug);
+  room.add(rug);
 
   const hemi = new THREE.HemisphereLight('#f4ead8', '#4a3424', 1.05);
   scene.add(hemi);
@@ -77,9 +80,7 @@ export function createWorld(scene) {
   );
   chandelier.rotation.x = Math.PI / 2;
   chandelier.position.y = 2.05;
-  scene.add(chandelier);
+  room.add(chandelier);
 
-  scene.background = new THREE.Color('#1b140f');
-  scene.fog = new THREE.Fog('#1b140f', 6, 12);
-  return { table };
+  return { table, room };
 }
