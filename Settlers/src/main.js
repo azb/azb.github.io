@@ -31,6 +31,7 @@ renderer.setClearColor(0x1b140f, 1);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.xr.enabled = true;
+renderer.xr.setFramebufferScaleFactor(2);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -387,14 +388,17 @@ async function enterVR() {
     }
     renderer.xr.setReferenceSpaceType('local-floor');
     setPassthrough(passthrough);
+    document.documentElement.classList.add('xr-presenting');
     await renderer.xr.setSession(session);
     session.addEventListener('end', () => {
       setPassthrough(false);
+      document.documentElement.classList.remove('xr-presenting');
       updateVRButton();
     });
   } catch {
     showToast('Could not start a mixed-reality session.');
     setPassthrough(false);
+    document.documentElement.classList.remove('xr-presenting');
   }
 }
 

@@ -188,8 +188,9 @@ export class BoardView {
         new THREE.PlaneGeometry(0.07, 0.07),
         new THREE.MeshBasicMaterial({
           map: labelTexture(harbor.type === 'generic' ? '3:1' : `2:1\n${harbor.type}`, {
-            size: 256,
-            font: 48,
+            width: 512,
+            height: 512,
+            font: 110,
             fill: '#efe0bc',
           }),
         }),

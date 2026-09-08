@@ -361,3 +361,68 @@ h1 {
     display: none;
   }
 }
+
+html.xr-presenting {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+html.xr-presenting .turn-banner {
+  font-size: 40px;
+}
+
+html.xr-presenting .phase-label {
+  font-size: 22px;
+}
+
+html.xr-presenting .player-card {
+  font-size: 18px;
+  padding: 12px 14px;
+}
+
+html.xr-presenting .player-meta,
+html.xr-presenting .player-res {
+  font-size: 16px;
+}
+
+html.xr-presenting .resource-chip {
+  min-width: 104px;
+  padding: 12px 14px;
+}
+
+html.xr-presenting .resource-chip .n {
+  font-size: 36px;
+}
+
+html.xr-presenting .resource-chip .k {
+  font-size: 16px;
+}
+
+html.xr-presenting .action-bar button,
+html.xr-presenting .dev-bar button,
+html.xr-presenting .ghost,
+html.xr-presenting .primary {
+  font-size: 22px;
+  padding: 14px 16px;
+}
+
+html.xr-presenting .journal {
+  font-size: 18px;
+}
+
+html.xr-presenting .journal h2 {
+  font-size: 18px;
+}
+
+html.xr-presenting #log {
+  font-size: 18px;
+}
+
+html.xr-presenting .modal-panel {
+  font-size: 22px;
+}
+
+html.xr-presenting .toast {
+  font-size: 28px;
+  padding: 14px 22px;
+}

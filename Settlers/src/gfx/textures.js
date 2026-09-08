@@ -51,54 +51,71 @@ export function feltMap(color = [22, 70, 92]) {
   return tex;
 }
 
-export function labelTexture(text, { fill = '#f3e2c4', ink = '#2a1c12', size = 256, font = 42 } = {}) {
+export function sharpenTexture(tex) {
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+export function labelTexture(text, {
+  fill = '#f3e2c4',
+  ink = '#2a1c12',
+  size,
+  width = 512,
+  height = 256,
+  font = 72,
+} = {}) {
+  const w = size || width;
+  const h = size || height;
   const c = document.createElement('canvas');
-  c.width = size;
-  c.height = size;
+  c.width = w;
+  c.height = h;
   const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.fillStyle = fill;
-  ctx.fillRect(0, 0, size, size);
+  ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = ink;
-  ctx.font = `bold ${font}px Georgia, serif`;
+  ctx.font = `700 ${font}px Trebuchet MS, Segoe UI, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const lines = String(text).split('\n');
   lines.forEach((line, i) => {
-    ctx.fillText(line, size / 2, size / 2 + (i - (lines.length - 1) / 2) * font * 0.95);
+    ctx.fillText(line, w / 2, h / 2 + (i - (lines.length - 1) / 2) * font * 1.05);
   });
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  return sharpenTexture(new THREE.CanvasTexture(c));
 }
 
 export function numberTexture(n, pips) {
   const c = document.createElement('canvas');
-  c.width = c.height = 256;
+  c.width = c.height = 512;
   const ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, 256, 256);
+  ctx.clearRect(0, 0, 512, 512);
   ctx.fillStyle = '#f4e6c6';
   ctx.beginPath();
-  ctx.arc(128, 128, 118, 0, Math.PI * 2);
+  ctx.arc(256, 256, 236, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = '#5b3418';
-  ctx.lineWidth = 8;
+  ctx.lineWidth = 14;
   ctx.stroke();
   ctx.fillStyle = n === 6 || n === 8 ? '#b42318' : '#2a1c12';
-  ctx.font = 'bold 110px Georgia, serif';
+  ctx.font = '700 220px Trebuchet MS, Segoe UI, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(n), 128, 118);
+  ctx.fillText(String(n), 256, 236);
   const dots = pips || 1;
   ctx.fillStyle = n === 6 || n === 8 ? '#b42318' : '#4a3724';
-  const w = (dots - 1) * 14;
+  const w = (dots - 1) * 28;
   for (let i = 0; i < dots; i++) {
     ctx.beginPath();
-    ctx.arc(128 - w / 2 + i * 14, 198, 5, 0, Math.PI * 2);
+    ctx.arc(256 - w / 2 + i * 28, 396, 10, 0, Math.PI * 2);
     ctx.fill();
   }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  return sharpenTexture(new THREE.CanvasTexture(c));
 }
 
 export function dieFace(n) {
@@ -124,7 +141,5 @@ export function dieFace(n) {
     ctx.arc(x, y, 10, 0, Math.PI * 2);
     ctx.fill();
   }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  return sharpenTexture(new THREE.CanvasTexture(c));
 }

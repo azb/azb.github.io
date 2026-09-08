@@ -85,9 +85,13 @@ export class Tray {
     defs.forEach((def, i) => {
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(0.11, 0.03, 0.06),
-        new THREE.MeshStandardMaterial({
-          map: labelTexture(def.label, { size: 256, font: 36, fill: def.disabled ? '#b9a88c' : '#f3e2c4' }),
-          roughness: 0.6,
+        new THREE.MeshBasicMaterial({
+          map: labelTexture(def.label, {
+            width: 1024,
+            height: 512,
+            font: 160,
+            fill: def.disabled ? '#b9a88c' : '#f3e2c4',
+          }),
         }),
       );
       const col = i % 4;
@@ -105,7 +109,8 @@ export class Tray {
 }
 
 function makeStatus() {
-  let tex = labelTexture(' ', { size: 512, font: 28, fill: '#2a1c12', ink: '#f3e2c4' });
+  const opts = { width: 1024, height: 256, font: 72, fill: '#2a1c12', ink: '#f3e2c4' };
+  let tex = labelTexture(' ', opts);
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(0.5, 0.08),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
@@ -114,7 +119,7 @@ function makeStatus() {
     mesh,
     set(text) {
       tex.dispose();
-      tex = labelTexture(text, { size: 512, font: 28, fill: '#2a1c12', ink: '#f3e2c4' });
+      tex = labelTexture(text, opts);
       mesh.material.map = tex;
       mesh.material.needsUpdate = true;
     },
