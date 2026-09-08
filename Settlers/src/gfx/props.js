@@ -37,8 +37,8 @@ export class BoardHandles {
     if (!on) this.stuck.clear();
   }
 
-  stick(handle, controller) {
-    this.stuck.set(handle, controller);
+  stick(handle, source) {
+    this.stuck.set(handle, source);
   }
 
   unstick(handle) {
@@ -51,23 +51,30 @@ export class BoardHandles {
 
   setHover(obj) {
     const root = obj?.userData?.handleRoot;
-    this.left.scale.setScalar(root === this.left ? 1.28 : 1);
-    this.right.scale.setScalar(root === this.right ? 1.28 : 1);
+    for (const h of [this.left, this.right]) {
+      const hot = root === h || this.stuck.has(h);
+      h.userData.halo.material.opacity = hot ? 0.5 : 0.2;
+      h.userData.ball.material.color.set(hot ? '#ffffff' : h.userData.baseColor);
+    }
   }
 
-  update(dt, camera) {
+  update(dt, camera, sourcePos) {
     if (!this.group.visible) return;
     this._pulse += dt;
-    const glow = 0.6 + Math.sin(this._pulse * 3.2) * 0.22;
+    const glow = 0.72 + Math.sin(this._pulse * 2.4) * 0.1;
     this.left.userData.ball.material.opacity = glow;
     this.right.userData.ball.material.opacity = glow;
     this.rig.updateMatrixWorld();
-    if (!this.stuck.has(this.left)) placeHandle(this.left, this.rig, -0.18, TABLE_HEIGHT + 0.1, 1.08);
-    else this.stuck.get(this.left).getWorldPosition(this.left.position);
-    if (!this.stuck.has(this.right)) placeHandle(this.right, this.rig, 0.18, TABLE_HEIGHT + 0.1, 1.08);
-    else this.stuck.get(this.right).getWorldPosition(this.right.position);
-    this.left.lookAt(camera.position);
-    this.right.lookAt(camera.position);
+    for (const [handle, local] of [
+      [this.left, [-0.18, TABLE_HEIGHT + 0.1, 1.08]],
+      [this.right, [0.18, TABLE_HEIGHT + 0.1, 1.08]],
+    ]) {
+      const src = this.stuck.get(handle);
+      if (src && sourcePos) sourcePos(src, handle.position);
+      else if (src) src.getWorldPosition(handle.position);
+      else placeHandle(handle, this.rig, local[0], local[1], local[2]);
+      handle.userData.tag.lookAt(camera.position);
+    }
     if (this.stuck.size === 2) {
       const pts = this.linkGeo.attributes.position;
       pts.setXYZ(0, this.left.position.x, this.left.position.y, this.left.position.z);
@@ -104,11 +111,11 @@ function makeOrb(color, label) {
   );
   tag.position.y = 0.058;
   const hit = new THREE.Mesh(
-    new THREE.SphereGeometry(0.06, 12, 10),
+    new THREE.SphereGeometry(0.09, 12, 10),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   );
   g.add(ball, halo, tag, hit);
-  const data = { kind: 'handle', action: label === 'MOVE' ? 'move' : 'scale', handleRoot: g, ball };
+  const data = { kind: 'handle', handleRoot: g, ball, halo, tag, baseColor: color };
   g.userData = data;
   g.traverse((o) => {
     if (o.isMesh) o.userData = data;

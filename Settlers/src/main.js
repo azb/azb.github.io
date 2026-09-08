@@ -2,6 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { Game } from './game/Game.js';
 import { takeAITurn } from './game/ai.js';
 import { PHASE } from './game/constants.js';
@@ -191,7 +192,7 @@ renderer.setAnimationLoop(() => {
   dice.update(dt);
   if (renderer.xr.isPresenting) {
     updateGrabs();
-    handles.update(dt, renderer.xr.getCamera?.() || camera);
+    handles.update(dt, renderer.xr.getCamera?.() || camera, sourcePos);
     for (const c of xrControllers) hoverController(c);
   }
   renderer.render(scene, camera);
@@ -286,26 +287,48 @@ function controllerYaw(controller) {
   return _ctrlEuler.y;
 }
 
-function tryGrab(controller) {
-  if (grabs.has(controller)) return true;
-  const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-  const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
-  raycaster.set(origin, dir);
-  const hits = raycaster.intersectObjects(handles.pickables(), true);
-  const data = hits[0]?.object?.userData;
-  if (data?.kind !== 'handle') return false;
-  const root = data.handleRoot;
-  for (const held of grabs.values()) {
-    if (held.handle === root) return false;
+function sourcePos(source, out = _ctrlPos) {
+  const tip = source.joints?.['index-finger-tip'];
+  if (tip) tip.getWorldPosition(out);
+  else source.getWorldPosition(out);
+  return out;
+}
+
+function nearestFreeHandle(source, maxDist = 0.16) {
+  sourcePos(source, _ctrlPos);
+  let best = null;
+  let bestD = maxDist;
+  for (const h of [handles.left, handles.right]) {
+    if (handles.isStuck(h)) continue;
+    const d = _ctrlPos.distanceTo(h.position);
+    if (d < bestD) {
+      bestD = d;
+      best = h;
+    }
   }
-  controller.getWorldPosition(_ctrlPos);
-  grabs.set(controller, {
+  return best;
+}
+
+function tryGrab(source) {
+  if (grabs.has(source)) return true;
+  let root = nearestFreeHandle(source);
+  if (!root) {
+    const origin = new THREE.Vector3().setFromMatrixPosition(source.matrixWorld);
+    const dir = new THREE.Vector3(0, 0, -1).transformDirection(source.matrixWorld);
+    raycaster.set(origin, dir);
+    const hits = raycaster.intersectObjects(handles.pickables(), true);
+    root = hits[0]?.object?.userData?.handleRoot;
+    if (root && handles.isStuck(root)) root = null;
+  }
+  if (!root) return false;
+  sourcePos(source, _ctrlPos);
+  grabs.set(source, {
     handle: root,
     offset: stage.position.clone().sub(_ctrlPos),
-    yaw0: controllerYaw(controller),
+    yaw0: controllerYaw(source),
     stageYaw0: stage.rotation.y,
   });
-  handles.stick(root, controller);
+  handles.stick(root, source);
   twoHand = grabs.size === 2 ? captureTwoHand() : null;
   sfx.click();
   return true;
@@ -313,8 +336,8 @@ function tryGrab(controller) {
 
 function captureTwoHand() {
   const [c0, c1] = grabs.keys();
-  c0.getWorldPosition(_handA);
-  c1.getWorldPosition(_handB);
+  sourcePos(c0, _handA);
+  sourcePos(c1, _handB);
   return {
     startDist: Math.max(0.08, _handA.distanceTo(_handB)),
     startScale: stage.scale.x,
@@ -325,14 +348,14 @@ function captureTwoHand() {
   };
 }
 
-function releaseGrab(controller) {
-  const held = grabs.get(controller);
+function releaseGrab(source) {
+  const held = grabs.get(source);
   if (held) handles.unstick(held.handle);
-  grabs.delete(controller);
+  grabs.delete(source);
   twoHand = null;
   if (grabs.size === 1) {
     const [c, grab] = grabs.entries().next().value;
-    c.getWorldPosition(_ctrlPos);
+    sourcePos(c, _ctrlPos);
     grab.offset = stage.position.clone().sub(_ctrlPos);
     grab.yaw0 = controllerYaw(c);
     grab.stageYaw0 = stage.rotation.y;
@@ -343,8 +366,8 @@ function updateGrabs() {
   if (grabs.size === 2) {
     if (!twoHand) twoHand = captureTwoHand();
     const [c0, c1] = grabs.keys();
-    c0.getWorldPosition(_handA);
-    c1.getWorldPosition(_handB);
+    sourcePos(c0, _handA);
+    sourcePos(c1, _handB);
     const dist = Math.max(0.08, _handA.distanceTo(_handB));
     const yaw = Math.atan2(_handB.x - _handA.x, _handB.z - _handA.z);
     const dyaw = yaw - twoHand.startYaw;
@@ -355,9 +378,9 @@ function updateGrabs() {
     stage.position.copy(_mid).add(_offset);
     return;
   }
-  for (const [controller, grab] of grabs) {
-    controller.getWorldPosition(_ctrlPos);
-    const dyaw = controllerYaw(controller) - grab.yaw0;
+  for (const [source, grab] of grabs) {
+    sourcePos(source, _ctrlPos);
+    const dyaw = controllerYaw(source) - grab.yaw0;
     _offset.copy(grab.offset).applyAxisAngle(_yAxis, dyaw);
     stage.position.copy(_ctrlPos).add(_offset);
     stage.rotation.y = grab.stageYaw0 + dyaw;
@@ -422,6 +445,8 @@ function hoverController(controller) {
 
 function setupXR() {
   const factory = new XRControllerModelFactory();
+  const handFactory = new XRHandModelFactory();
+  handFactory.setPath('https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles');
   const lineMat = new THREE.LineBasicMaterial({ color: 0xffe6b0 });
   const controllers = [0, 1].map((i) => {
     const controller = renderer.xr.getController(i);
@@ -452,6 +477,11 @@ function setupXR() {
     const grip = renderer.xr.getControllerGrip(i);
     grip.add(factory.createControllerModel(grip));
     scene.add(grip);
+    const hand = renderer.xr.getHand(i);
+    hand.add(handFactory.createHandModel(hand, 'mesh'));
+    hand.addEventListener('pinchstart', () => tryGrab(hand));
+    hand.addEventListener('pinchend', () => releaseGrab(hand));
+    scene.add(hand);
     return controller;
   });
   return controllers;
