@@ -379,10 +379,12 @@ function updateGrabs() {
     const dist = Math.max(0.08, _handA.distanceTo(_handB));
     const yaw = Math.atan2(_handB.x - _handA.x, _handB.z - _handA.z);
     const dyaw = yaw - twoHand.startYaw;
-    stage.scale.setScalar(Math.min(2.4, Math.max(0.45, twoHand.startScale * (dist / twoHand.startDist))));
+    const s = Math.min(2.4, Math.max(0.45, twoHand.startScale * (dist / twoHand.startDist)));
+    const scaleRatio = s / twoHand.startScale;
+    stage.scale.setScalar(s);
     stage.rotation.y = twoHand.startStageYaw + dyaw;
     _mid.copy(_handA).add(_handB).multiplyScalar(0.5);
-    _offset.copy(twoHand.startPos).sub(twoHand.startMid).applyAxisAngle(_yAxis, dyaw);
+    _offset.copy(twoHand.startPos).sub(twoHand.startMid).multiplyScalar(scaleRatio).applyAxisAngle(_yAxis, dyaw);
     stage.position.copy(_mid).add(_offset);
     return;
   }
