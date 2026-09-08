@@ -135,16 +135,16 @@ export class BoardView {
 
     for (const v of board.vertices.values()) {
       const m = new THREE.Mesh(
-        new THREE.SphereGeometry(0.018, 12, 10),
-        new THREE.MeshStandardMaterial({
-          color: '#ffe08a',
-          emissive: '#c9a44a',
-          emissiveIntensity: 0.35,
+        new THREE.SphereGeometry(0.028, 14, 12),
+        new THREE.MeshBasicMaterial({
+          color: '#fff3a8',
           transparent: true,
           opacity: 0,
+          depthTest: false,
         }),
       );
-      m.position.set(v.x, 0.08, v.z);
+      m.position.set(v.x, 0.1, v.z);
+      m.renderOrder = 4;
       m.userData = { kind: 'vertex', id: v.id };
       this.markerLayer.add(m);
       this.vertexMarkers.set(v.id, m);
@@ -156,15 +156,16 @@ export class BoardView {
       const len = Math.hypot(b.x - a.x, b.z - a.z);
       const m = new THREE.Mesh(
         new THREE.BoxGeometry(0.028, 0.018, len * 0.82),
-        new THREE.MeshStandardMaterial({
+        new THREE.MeshBasicMaterial({
           color: '#9ee7ff',
-          emissive: '#3aa0c8',
           transparent: true,
           opacity: 0,
+          depthTest: false,
         }),
       );
-      m.position.set((a.x + b.x) / 2, 0.062, (a.z + b.z) / 2);
+      m.position.set((a.x + b.x) / 2, 0.068, (a.z + b.z) / 2);
       m.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+      m.renderOrder = 4;
       m.userData = { kind: 'edge', id: e.id };
       this.markerLayer.add(m);
       this.edgeMarkers.set(e.id, m);

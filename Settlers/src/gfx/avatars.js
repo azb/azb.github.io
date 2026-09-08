@@ -3,7 +3,7 @@ import { TABLE_HEIGHT } from '../game/constants.js';
 import { labelTexture } from './textures.js';
 
 const SEAT_R = 1.22;
-const DICE_R = 0.7;
+const DICE_R = 0.95;
 
 export function seatPose(index, count, radius = SEAT_R) {
   const a = (index / Math.max(1, count)) * Math.PI * 2;

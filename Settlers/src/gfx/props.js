@@ -126,7 +126,7 @@ function makeOrb(color, label) {
 export class DicePair {
   constructor(scene) {
     this.group = new THREE.Group();
-    this.group.position.set(0, TABLE_HEIGHT + 0.045, 0.7);
+    this.group.position.set(-0.28, TABLE_HEIGHT + 0.045, 0.95);
     scene.add(this.group);
     this.dice = [makeDie(), makeDie()];
     this.dice[0].position.x = -0.04;
@@ -138,8 +138,13 @@ export class DicePair {
   }
 
   placeFor(index, count) {
+    if (index === 0) {
+      this.group.position.set(-0.28, TABLE_HEIGHT + 0.045, 0.95);
+      this.group.rotation.y = 0;
+      return;
+    }
     const a = (index / Math.max(1, count)) * Math.PI * 2;
-    const r = 0.7;
+    const r = 0.95;
     this.group.position.set(Math.sin(a) * r, TABLE_HEIGHT + 0.045, Math.cos(a) * r);
     this.group.rotation.y = a;
   }
@@ -197,16 +202,16 @@ function faceRot(n) {
 export class Tray {
   constructor(scene) {
     this.group = new THREE.Group();
-    this.group.position.set(0, TABLE_HEIGHT + 0.03, 0.52);
-    this.group.rotation.x = -0.55;
+    this.group.position.set(0.34, TABLE_HEIGHT + 0.03, 0.78);
+    this.group.rotation.x = -0.38;
     scene.add(this.group);
     this.buttons = [];
     this.status = makeStatus();
-    this.status.mesh.position.set(0, 0.2, 0);
+    this.status.mesh.position.set(0, 0.12, 0.05);
     this.group.add(this.status.mesh);
     this.resourceChips = RESOURCES.map((r, i) => {
       const chip = makeResourceChip(r);
-      chip.mesh.position.set((i - 2) * 0.11, 0.105, 0);
+      chip.mesh.position.set((i - 2) * 0.11, 0.07, 0.02);
       chip.set(0);
       this.group.add(chip.mesh);
       return chip;
@@ -228,7 +233,7 @@ export class Tray {
       });
       const col = i % 3;
       const row = Math.floor(i / 3);
-      mesh.position.set((col - 1) * 0.15, 0.03 - row * 0.08, 0);
+      mesh.position.set((col - 1) * 0.15, 0.02 - row * 0.08, 0);
       mesh.userData = { kind: 'tray', action: def.action, disabled: !!def.disabled };
       this.group.add(mesh);
       this.buttons.push({ mesh, def });
@@ -303,11 +308,11 @@ function makeResourceChip(resource) {
 }
 
 function makeStatus() {
-  const opts = { width: 1024, height: 256, font: 52, pad: 48, fill: '#2a1c12', ink: '#f3e2c4' };
+  const opts = { width: 1024, height: 256, font: 56, pad: 36, fill: '#2a1c12', ink: '#f3e2c4' };
   let tex = labelTexture(' ', opts);
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.5, 0.11),
-    new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
+    new THREE.BoxGeometry(0.44, 0.028, 0.07),
+    new THREE.MeshBasicMaterial({ map: tex }),
   );
   return {
     mesh,
