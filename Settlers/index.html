@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Settlers of Catan — WebXR</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏝️</text></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <div id="start-screen">
+        <div class="panel start-panel">
+          <p class="eyebrow">Unofficial WebXR tabletop</p>
+          <h1>Settlers of Catan</h1>
+          <p class="lede">
+            Sit at the island, roll the dice, and race to 10 victory points.
+            Works in a headset or with a mouse on your desk.
+          </p>
+
+          <label class="field">
+            <span>Players</span>
+            <div class="segmented" id="player-count">
+              <button type="button" data-count="2">2</button>
+              <button type="button" data-count="3" class="active">3</button>
+              <button type="button" data-count="4">4</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Mode</span>
+            <div class="segmented" id="play-mode">
+              <button type="button" data-mode="solo" class="active">You vs AI</button>
+              <button type="button" data-mode="hotseat">Hotseat</button>
+            </div>
+          </label>
+
+          <button id="start-btn" type="button" class="primary">Begin the voyage</button>
+          <p class="disclaimer">
+            Fan recreation of the classic island-settling rules. Catan is a trademark of Catan GmbH.
+          </p>
+        </div>
+      </div>
+
+      <div id="hud" class="hidden">
+        <header class="topbar">
+          <div>
+            <div id="turn-banner" class="turn-banner">Red's turn</div>
+            <div id="phase-label" class="phase-label">Place a settlement</div>
+          </div>
+          <div class="top-actions">
+            <button id="vr-btn" type="button" class="ghost">Enter VR</button>
+            <button id="new-game-btn" type="button" class="ghost">New island</button>
+          </div>
+        </header>
+
+        <aside class="players" id="players-panel"></aside>
+
+        <section class="hand-dock">
+          <div id="resource-bar" class="resource-bar"></div>
+          <div id="dev-bar" class="dev-bar"></div>
+          <div id="action-bar" class="action-bar"></div>
+        </section>
+
+        <aside class="journal">
+          <h2>Chronicle</h2>
+          <ol id="log"></ol>
+        </aside>
+      </div>
+
+      <div id="modal" class="modal hidden">
+        <div class="panel modal-panel" id="modal-body"></div>
+      </div>
+
+      <div id="toast" class="toast hidden"></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
