@@ -9,6 +9,7 @@ import { PHASE } from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles } from './gfx/props.js';
+import { PlayerAvatars } from './gfx/avatars.js';
 import {
   renderHud,
   bindHud,
@@ -71,6 +72,7 @@ const boardView = new BoardView(stage);
 boardView.rebuild(new Game({ seed: 2026 }).board);
 const dice = new DicePair(stage);
 const tray = new Tray(stage);
+const avatars = new PlayerAvatars(stage);
 const handles = new BoardHandles(scene, stage);
 
 const _ctrlPos = new THREE.Vector3();
@@ -150,6 +152,7 @@ function runHudAction(act, extra) {
   if (act === 'roll') {
     const d = game.roll();
     if (d) {
+      dice.placeFor(game.current, game.playerCount);
       dice.rollTo(d);
       sfx.dice();
     }
@@ -190,6 +193,7 @@ renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (!renderer.xr.isPresenting) controls.update();
   dice.update(dt);
+  avatars.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
   if (renderer.xr.isPresenting) {
     updateGrabs();
     handles.update(dt, renderer.xr.getCamera?.() || camera, sourcePos);
@@ -205,6 +209,8 @@ function startGame() {
   intent = null;
   boardView.rebuild(game.board);
   boardView.syncPieces(game);
+  avatars.rebuild(game.players);
+  dice.placeFor(game.current, game.playerCount);
   const start = document.getElementById('start-screen');
   start.classList.add('hidden');
   start.hidden = true;
@@ -235,6 +241,8 @@ function refresh() {
   const endHint = game.phase === PHASE.MAIN && game.isHuman() ? ' · point at END TURN or squeeze grip' : '';
   tray.setStatus(`${game.player().name} · ${game.phase}${endHint}`);
   tray.setButtons(trayButtons());
+  avatars.setCurrent(game.current);
+  dice.placeFor(game.current, game.playerCount);
   updateHighlights();
 }
 
@@ -592,6 +600,7 @@ async function pumpAI() {
     await sleep(game.phase === PHASE.MAIN || game.phase === PHASE.ROLL ? 700 : 320);
     const ok = takeAITurn(game);
     if (game.lastAction?.type === 'roll') {
+      dice.placeFor(game.current, game.playerCount);
       dice.rollTo(game.dice);
       sfx.dice();
     }

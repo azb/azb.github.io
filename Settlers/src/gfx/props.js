@@ -126,7 +126,7 @@ function makeOrb(color, label) {
 export class DicePair {
   constructor(scene) {
     this.group = new THREE.Group();
-    this.group.position.set(0.42, TABLE_HEIGHT + 0.04, 0.42);
+    this.group.position.set(0, TABLE_HEIGHT + 0.045, 0.7);
     scene.add(this.group);
     this.dice = [makeDie(), makeDie()];
     this.dice[0].position.x = -0.04;
@@ -135,6 +135,13 @@ export class DicePair {
     this.t = 0;
     this.rolling = false;
     this.target = [1, 1];
+  }
+
+  placeFor(index, count) {
+    const a = (index / Math.max(1, count)) * Math.PI * 2;
+    const r = 0.7;
+    this.group.position.set(Math.sin(a) * r, TABLE_HEIGHT + 0.045, Math.cos(a) * r);
+    this.group.rotation.y = a;
   }
 
   rollTo(values) {
