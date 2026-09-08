@@ -76,8 +76,12 @@ const _ctrlPos = new THREE.Vector3();
 const _ctrlQuat = new THREE.Quaternion();
 const _ctrlEuler = new THREE.Euler();
 const _offset = new THREE.Vector3();
+const _handA = new THREE.Vector3();
+const _handB = new THREE.Vector3();
+const _mid = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
 const grabs = new Map();
+let twoHand = null;
 
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -290,44 +294,73 @@ function tryGrab(controller) {
   const hits = raycaster.intersectObjects(handles.pickables(), true);
   const data = hits[0]?.object?.userData;
   if (data?.kind !== 'handle') return false;
-  controller.getWorldPosition(_ctrlPos);
-  if (data.action === 'move') {
-    grabs.set(controller, {
-      mode: 'move',
-      offset: stage.position.clone().sub(_ctrlPos),
-      yaw0: controllerYaw(controller),
-      stageYaw0: stage.rotation.y,
-    });
-  } else {
-    const center = new THREE.Vector3().setFromMatrixPosition(stage.matrixWorld);
-    grabs.set(controller, {
-      mode: 'scale',
-      startDist: Math.max(0.15, _ctrlPos.distanceTo(center)),
-      startScale: stage.scale.x,
-    });
+  const root = data.handleRoot;
+  for (const held of grabs.values()) {
+    if (held.handle === root) return false;
   }
+  controller.getWorldPosition(_ctrlPos);
+  grabs.set(controller, {
+    handle: root,
+    offset: stage.position.clone().sub(_ctrlPos),
+    yaw0: controllerYaw(controller),
+    stageYaw0: stage.rotation.y,
+  });
+  handles.stick(root, controller);
+  twoHand = grabs.size === 2 ? captureTwoHand() : null;
   sfx.click();
   return true;
 }
 
+function captureTwoHand() {
+  const [c0, c1] = grabs.keys();
+  c0.getWorldPosition(_handA);
+  c1.getWorldPosition(_handB);
+  return {
+    startDist: Math.max(0.08, _handA.distanceTo(_handB)),
+    startScale: stage.scale.x,
+    startYaw: Math.atan2(_handB.x - _handA.x, _handB.z - _handA.z),
+    startStageYaw: stage.rotation.y,
+    startMid: _handA.clone().add(_handB).multiplyScalar(0.5),
+    startPos: stage.position.clone(),
+  };
+}
+
 function releaseGrab(controller) {
+  const held = grabs.get(controller);
+  if (held) handles.unstick(held.handle);
   grabs.delete(controller);
+  twoHand = null;
+  if (grabs.size === 1) {
+    const [c, grab] = grabs.entries().next().value;
+    c.getWorldPosition(_ctrlPos);
+    grab.offset = stage.position.clone().sub(_ctrlPos);
+    grab.yaw0 = controllerYaw(c);
+    grab.stageYaw0 = stage.rotation.y;
+  }
 }
 
 function updateGrabs() {
+  if (grabs.size === 2) {
+    if (!twoHand) twoHand = captureTwoHand();
+    const [c0, c1] = grabs.keys();
+    c0.getWorldPosition(_handA);
+    c1.getWorldPosition(_handB);
+    const dist = Math.max(0.08, _handA.distanceTo(_handB));
+    const yaw = Math.atan2(_handB.x - _handA.x, _handB.z - _handA.z);
+    const dyaw = yaw - twoHand.startYaw;
+    stage.scale.setScalar(Math.min(2.4, Math.max(0.45, twoHand.startScale * (dist / twoHand.startDist))));
+    stage.rotation.y = twoHand.startStageYaw + dyaw;
+    _mid.copy(_handA).add(_handB).multiplyScalar(0.5);
+    _offset.copy(twoHand.startPos).sub(twoHand.startMid).applyAxisAngle(_yAxis, dyaw);
+    stage.position.copy(_mid).add(_offset);
+    return;
+  }
   for (const [controller, grab] of grabs) {
     controller.getWorldPosition(_ctrlPos);
-    if (grab.mode === 'move') {
-      const dyaw = controllerYaw(controller) - grab.yaw0;
-      _offset.copy(grab.offset).applyAxisAngle(_yAxis, dyaw);
-      stage.position.copy(_ctrlPos).add(_offset);
-      stage.rotation.y = grab.stageYaw0 + dyaw;
-    } else {
-      const center = new THREE.Vector3().setFromMatrixPosition(stage.matrixWorld);
-      const dist = _ctrlPos.distanceTo(center);
-      const s = Math.min(2.4, Math.max(0.45, grab.startScale * (dist / grab.startDist)));
-      stage.scale.setScalar(s);
-    }
+    const dyaw = controllerYaw(controller) - grab.yaw0;
+    _offset.copy(grab.offset).applyAxisAngle(_yAxis, dyaw);
+    stage.position.copy(_ctrlPos).add(_offset);
+    stage.rotation.y = grab.stageYaw0 + dyaw;
   }
 }
 
@@ -415,7 +448,6 @@ function setupXR() {
     controller.addEventListener('squeezeend', () => {
       releaseGrab(controller);
     });
-    tray.attachHandButton(controller);
     scene.add(controller);
     const grip = renderer.xr.getControllerGrip(i);
     grip.add(factory.createControllerModel(grip));

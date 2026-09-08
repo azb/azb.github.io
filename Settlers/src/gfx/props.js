@@ -9,38 +9,74 @@ export class BoardHandles {
     this.rig = rig;
     this.group = new THREE.Group();
     scene.add(this.group);
-    this.move = makeOrb('#4db3ff', 'MOVE');
-    this.scale = makeOrb('#f0c14b', 'SIZE');
-    this.group.add(this.move, this.scale);
+    this.left = makeOrb('#4db3ff', 'GRAB');
+    this.right = makeOrb('#f0c14b', 'GRAB');
+    this.stuck = new Map();
+    this.linkGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, 1)]);
+    this.link = new THREE.Line(this.linkGeo, new THREE.LineBasicMaterial({ color: 0xffe6b0, transparent: true, opacity: 0.7 }));
+    this.link.visible = false;
+    this.group.add(this.left, this.right, this.link);
     this.group.visible = false;
     this._pulse = 0;
   }
 
+  get move() {
+    return this.left;
+  }
+
+  get scale() {
+    return this.right;
+  }
+
   pickables() {
-    return this.group.visible ? [this.move, this.scale] : [];
+    return this.group.visible ? [this.left, this.right] : [];
   }
 
   setVisible(on) {
     this.group.visible = on;
+    if (!on) this.stuck.clear();
+  }
+
+  stick(handle, controller) {
+    this.stuck.set(handle, controller);
+  }
+
+  unstick(handle) {
+    this.stuck.delete(handle);
+  }
+
+  isStuck(handle) {
+    return this.stuck.has(handle);
   }
 
   setHover(obj) {
     const root = obj?.userData?.handleRoot;
-    this.move.scale.setScalar(root === this.move ? 1.28 : 1);
-    this.scale.scale.setScalar(root === this.scale ? 1.28 : 1);
+    this.left.scale.setScalar(root === this.left ? 1.28 : 1);
+    this.right.scale.setScalar(root === this.right ? 1.28 : 1);
   }
 
   update(dt, camera) {
     if (!this.group.visible) return;
     this._pulse += dt;
     const glow = 0.6 + Math.sin(this._pulse * 3.2) * 0.22;
-    this.move.userData.ball.material.opacity = glow;
-    this.scale.userData.ball.material.opacity = glow;
+    this.left.userData.ball.material.opacity = glow;
+    this.right.userData.ball.material.opacity = glow;
     this.rig.updateMatrixWorld();
-    placeHandle(this.move, this.rig, -0.2, TABLE_HEIGHT + 0.16, 0.4);
-    placeHandle(this.scale, this.rig, 0.2, TABLE_HEIGHT + 0.16, 0.4);
-    this.move.lookAt(camera.position);
-    this.scale.lookAt(camera.position);
+    if (!this.stuck.has(this.left)) placeHandle(this.left, this.rig, -0.18, TABLE_HEIGHT + 0.1, 1.08);
+    else this.stuck.get(this.left).getWorldPosition(this.left.position);
+    if (!this.stuck.has(this.right)) placeHandle(this.right, this.rig, 0.18, TABLE_HEIGHT + 0.1, 1.08);
+    else this.stuck.get(this.right).getWorldPosition(this.right.position);
+    this.left.lookAt(camera.position);
+    this.right.lookAt(camera.position);
+    if (this.stuck.size === 2) {
+      const pts = this.linkGeo.attributes.position;
+      pts.setXYZ(0, this.left.position.x, this.left.position.y, this.left.position.z);
+      pts.setXYZ(1, this.right.position.x, this.right.position.y, this.right.position.z);
+      pts.needsUpdate = true;
+      this.link.visible = true;
+    } else {
+      this.link.visible = false;
+    }
   }
 }
 
@@ -151,20 +187,9 @@ export class Tray {
     this.group.rotation.x = -0.55;
     scene.add(this.group);
     this.buttons = [];
-    this.handButtons = [];
     this.status = makeStatus();
     this.status.mesh.position.set(0, 0.12, 0);
     this.group.add(this.status.mesh);
-  }
-
-  attachHandButton(parent) {
-    const mesh = makeButtonMesh('END TURN', { width: 0.14, height: 0.04, depth: 0.05, font: 140, fill: '#3d8f4a', ink: '#f7fff4' });
-    mesh.position.set(0, 0.07, -0.16);
-    mesh.rotation.x = -0.55;
-    mesh.userData = { kind: 'tray', action: 'end', disabled: true };
-    parent.add(mesh);
-    this.handButtons.push(mesh);
-    return mesh;
   }
 
   setButtons(defs) {
@@ -188,40 +213,27 @@ export class Tray {
       this.buttons.push({ mesh, def });
     });
     if (end) {
-      const mesh = makeButtonMesh('END TURN', {
-        width: 0.4,
+      const mesh = makeButtonMesh('END\nTURN', {
+        width: 0.14,
         height: 0.045,
-        depth: 0.085,
-        font: 150,
+        depth: 0.15,
+        font: 130,
         fill: end.disabled ? '#5a6a55' : '#2f8a3c',
         ink: '#f7fff4',
       });
-      mesh.position.set(0, -0.14, 0);
+      mesh.position.set(0.34, -0.01, 0);
       mesh.userData = { kind: 'tray', action: 'end', disabled: !!end.disabled };
       this.group.add(mesh);
       this.buttons.push({ mesh, def: end });
-      for (const hand of this.handButtons) {
-        hand.userData.disabled = !!end.disabled;
-        hand.material.map?.dispose();
-        hand.material.map = labelTexture('END TURN', {
-          width: 1024,
-          height: 512,
-          font: 150,
-          fill: end.disabled ? '#5a6a55' : '#2f8a3c',
-          ink: '#f7fff4',
-        });
-        hand.material.needsUpdate = true;
-      }
     }
   }
 
   setHover(mesh) {
-    const all = [...this.buttons.map((b) => b.mesh), ...this.handButtons];
-    for (const m of all) m.scale.setScalar(m === mesh && !m.userData.disabled ? 1.12 : 1);
+    for (const b of this.buttons) b.mesh.scale.setScalar(b.mesh === mesh && !b.mesh.userData.disabled ? 1.12 : 1);
   }
 
   pickables() {
-    return [...this.buttons.map((b) => b.mesh), ...this.handButtons];
+    return this.buttons.map((b) => b.mesh);
   }
 
   setStatus(text) {
