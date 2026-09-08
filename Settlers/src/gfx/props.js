@@ -270,11 +270,12 @@ export class Tray {
     const stack = this.screen === 'settings' || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
     if (stack) {
       const n = Math.max(defs.length, 1);
-      const by0 = this.screen === 'settings' ? 96 : 160;
-      const bottom = TEX_H - 28;
-      const stackGap = this.screen === 'steal' || this.screen === 'win' ? 18 : 14;
-      const cap = this.screen === 'steal' || this.screen === 'win' ? 110 : 104;
-      const bh = Math.min(cap, Math.max(56, Math.floor((bottom - by0 - (n - 1) * stackGap) / n)));
+      const settings = this.screen === 'settings';
+      const by0 = settings ? 84 : 160;
+      const bottom = TEX_H - 24;
+      const stackGap = this.screen === 'steal' || this.screen === 'win' ? 18 : settings ? 10 : 14;
+      const cap = this.screen === 'steal' || this.screen === 'win' ? 110 : settings ? 82 : 104;
+      const bh = Math.min(cap, Math.max(52, Math.floor((bottom - by0 - (n - 1) * stackGap) / n)));
       return defs.map((def, i) => ({
         def,
         px: pad,
@@ -475,7 +476,7 @@ export class Tray {
       const settings = act === 'settings';
       const back = act === 'settingsBack' || act === 'cardsBack' || act === 'tradeCancel';
       const restart = act === 'restart';
-      const toggle = act === 'passthrough' || act === 'handles';
+      const toggle = act === 'passthrough' || act === 'handles' || act === 'pointer';
       const steal = act.startsWith('steal:');
       const tint = slot.def.color && (steal || /^(give|get|discard|plenty|mono):/.test(act));
       const selected = !!slot.def.selected;
