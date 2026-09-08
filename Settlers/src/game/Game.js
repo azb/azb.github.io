@@ -288,26 +288,37 @@ export class Game {
     this.dice = [a, b];
     const sum = a + b;
     this.note(`${this.player().name} rolls ${a} + ${b} = ${sum}.`);
+    let production = [];
     if (sum === 7) {
       this.startRobber();
     } else {
-      this.produce(sum);
+      production = this.produce(sum);
       this.phase = PHASE.MAIN;
     }
-    this.emit({ type: 'roll', dice: this.dice });
+    this.emit({ type: 'roll', dice: this.dice, production });
     return this.dice;
   }
 
   produce(number) {
     const grant = this.players.map(() => emptyHand());
+    const sources = [];
     for (const h of this.board.land) {
       if (h.number !== number || h.id === this.board.robberHex) continue;
+      if (!RESOURCES.includes(h.resource)) continue;
       for (const v of this.board.vertices.values()) {
         if (!v.building || !v.hexes.includes(h.id)) continue;
         const n = v.building.type === 'city' ? 2 : 1;
         grant[v.building.player][h.resource] += n;
+        sources.push({
+          hexId: h.id,
+          vertexId: v.id,
+          playerId: v.building.player,
+          resource: h.resource,
+          amount: n,
+        });
       }
     }
+    const paid = [];
     for (const r of RESOURCES) {
       const need = grant.reduce((n, g) => n + g[r], 0);
       if (need === 0) continue;
@@ -318,7 +329,9 @@ export class Game {
       for (let i = 0; i < this.players.length; i++) {
         if (grant[i][r]) this.takeFromBank(r, grant[i][r], this.players[i]);
       }
+      for (const s of sources) if (s.resource === r) paid.push(s);
     }
+    return paid;
   }
 
   startRobber() {

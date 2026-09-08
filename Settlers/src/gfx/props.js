@@ -126,7 +126,7 @@ function makeOrb(color, label) {
 export class DicePair {
   constructor(scene) {
     this.group = new THREE.Group();
-    this.group.position.set(-0.28, TABLE_HEIGHT + 0.045, 0.95);
+    this.group.position.set(0, TABLE_HEIGHT + 0.045, 0.95);
     scene.add(this.group);
     this.dice = [makeDie(), makeDie()];
     this.dice[0].position.x = -0.04;
@@ -139,7 +139,7 @@ export class DicePair {
 
   placeFor(index, count) {
     if (index === 0) {
-      this.group.position.set(-0.28, TABLE_HEIGHT + 0.045, 0.95);
+      this.group.position.set(0, TABLE_HEIGHT + 0.045, 0.95);
       this.group.rotation.y = 0;
       return;
     }
@@ -199,63 +199,137 @@ function faceRot(n) {
   }
 }
 
+const PANEL_W = 0.82;
+const PANEL_H = 0.5;
+const TEX_W = 1024;
+const TEX_H = 624;
+
 export class Tray {
   constructor(scene) {
     this.group = new THREE.Group();
-    this.group.position.set(0.34, TABLE_HEIGHT + 0.03, 0.78);
-    this.group.rotation.x = -0.38;
+    this.group.position.set(0, TABLE_HEIGHT + 0.78, -0.95);
+    this.group.rotation.x = -0.12;
     scene.add(this.group);
-    this.buttons = [];
-    this.status = makeStatus();
-    this.status.mesh.position.set(0, 0.12, 0.05);
-    this.group.add(this.status.mesh);
-    this.resourceChips = RESOURCES.map((r, i) => {
-      const chip = makeResourceChip(r);
-      chip.mesh.position.set((i - 2) * 0.132, 0.07, 0.02);
-      chip.set(0);
-      this.group.add(chip.mesh);
-      return chip;
+
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = TEX_W;
+    this.canvas.height = TEX_H;
+    this.ctx = this.canvas.getContext('2d');
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.minFilter = THREE.LinearFilter;
+    this.tex.magFilter = THREE.LinearFilter;
+    this.tex.generateMipmaps = false;
+
+    const frame = new THREE.Mesh(
+      new THREE.PlaneGeometry(PANEL_W + 0.028, PANEL_H + 0.028),
+      new THREE.MeshBasicMaterial({ color: 0xc9a44a, toneMapped: false }),
+    );
+    frame.position.z = -0.003;
+    this.panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(PANEL_W, PANEL_H),
+      new THREE.MeshBasicMaterial({ map: this.tex, toneMapped: false }),
+    );
+    this.hits = new THREE.Group();
+    this.hitMat = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
     });
+    this.group.add(frame, this.panel, this.hits);
+
+    this.buttons = [];
+    this.buttonDefs = [];
+    this.screen = 'actions';
+    this.hand = Object.fromEntries(RESOURCES.map((r) => [r, 0]));
+    this.status = '';
+    this.hoverAction = null;
+    this.draw();
   }
 
-  setButtons(defs) {
-    for (const b of this.buttons) this.group.remove(b.mesh);
-    this.buttons = [];
-    const regular = defs.filter((d) => d.action !== 'end');
-    const end = defs.find((d) => d.action === 'end');
-    regular.forEach((def, i) => {
-      const mesh = makeButtonMesh(def.label, {
-        width: 0.13,
-        height: 0.035,
-        depth: 0.07,
-        font: 150,
-        fill: def.disabled ? '#8a7a64' : '#f3e2c4',
-      });
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      mesh.position.set((col - 1) * 0.15, 0.02 - row * 0.08, 0);
-      mesh.userData = { kind: 'tray', action: def.action, disabled: !!def.disabled };
-      this.group.add(mesh);
-      this.buttons.push({ mesh, def });
-    });
-    if (end) {
-      const mesh = makeButtonMesh('END\nTURN', {
-        width: 0.14,
-        height: 0.045,
-        depth: 0.15,
-        font: 130,
-        fill: end.disabled ? '#5a6a55' : '#2f8a3c',
-        ink: '#f7fff4',
-      });
-      mesh.position.set(0.34, -0.01, 0);
-      mesh.userData = { kind: 'tray', action: 'end', disabled: !!end.disabled };
-      this.group.add(mesh);
-      this.buttons.push({ mesh, def: end });
+  pxToLocal(px, py, pw, ph) {
+    const x = ((px + pw / 2) / TEX_W - 0.5) * PANEL_W;
+    const y = (0.5 - (py + ph / 2) / TEX_H) * PANEL_H;
+    return {
+      x,
+      y,
+      w: (pw / TEX_W) * PANEL_W,
+      h: (ph / TEX_H) * PANEL_H,
+    };
+  }
+
+  buttonLayout(defs) {
+    const pad = 36;
+    const inner = TEX_W - pad * 2;
+    const gap = 16;
+    if (this.screen === 'settings') {
+      const bh = 128;
+      const by0 = 112;
+      return defs.map((def, i) => ({
+        def,
+        px: pad,
+        py: by0 + i * (bh + 22),
+        pw: inner,
+        ph: bh,
+      }));
     }
+    const regular = defs.filter((d) => d.action !== 'end' && d.action !== 'settings');
+    const end = defs.find((d) => d.action === 'end');
+    const settings = defs.find((d) => d.action === 'settings');
+    const cols = 3;
+    const bw = (inner - gap * (cols - 1)) / cols;
+    const bh = 88;
+    const by0 = 248;
+    const layout = [];
+    regular.forEach((def, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      layout.push({
+        def,
+        px: pad + col * (bw + gap),
+        py: by0 + row * (bh + gap),
+        pw: bw,
+        ph: bh,
+      });
+    });
+    const rowY = by0 + 2 * (bh + gap) + 8;
+    if (end && settings) {
+      const sw = 280;
+      layout.push({ def: end, px: pad, py: rowY, pw: inner - gap - sw, ph: 92 });
+      layout.push({ def: settings, px: pad + inner - sw, py: rowY, pw: sw, ph: 92 });
+    } else if (end) {
+      layout.push({ def: end, px: pad, py: rowY, pw: inner, ph: 92 });
+    } else if (settings) {
+      layout.push({ def: settings, px: pad, py: rowY, pw: inner, ph: 92 });
+    }
+    return layout;
+  }
+
+  setButtons(defs, screen = 'actions') {
+    this.screen = screen;
+    this.buttonDefs = defs;
+    for (const child of [...this.hits.children]) {
+      child.geometry.dispose();
+      this.hits.remove(child);
+    }
+    this.buttons = [];
+    for (const slot of this.buttonLayout(defs)) {
+      const loc = this.pxToLocal(slot.px, slot.py, slot.pw, slot.ph);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(loc.w, loc.h), this.hitMat);
+      mesh.position.set(loc.x, loc.y, 0.004);
+      mesh.userData = { kind: 'tray', action: slot.def.action, disabled: !!slot.def.disabled };
+      this.hits.add(mesh);
+      this.buttons.push({ mesh, def: slot.def });
+    }
+    this.draw();
   }
 
   setHover(mesh) {
-    for (const b of this.buttons) b.mesh.scale.setScalar(b.mesh === mesh && !b.mesh.userData.disabled ? 1.12 : 1);
+    const action = mesh?.userData?.kind === 'tray' ? mesh.userData.action : null;
+    if (action === this.hoverAction) return;
+    this.hoverAction = action;
+    this.draw();
   }
 
   pickables() {
@@ -263,66 +337,120 @@ export class Tray {
   }
 
   setStatus(text) {
-    this.status.set(text);
+    const line = String(text || '');
+    if (line === this.status) return;
+    this.status = line;
+    this.draw();
   }
 
   setResources(hand) {
-    this.resourceChips.forEach((chip, i) => chip.set(hand[RESOURCES[i]] || 0));
+    this.hand = { ...hand };
+    this.draw();
+  }
+
+  draw() {
+    const ctx = this.ctx;
+    const w = TEX_W;
+    const h = TEX_H;
+    ctx.clearRect(0, 0, w, h);
+    roundRect(ctx, 0, 0, w, h, 36, '#1a120c');
+    ctx.fillStyle = '#f3e2c4';
+    ctx.font = '700 28px Trebuchet MS, Segoe UI, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this.screen === 'settings' ? 'Settings' : 'Actions', 36, 40);
+
+    if (this.screen !== 'settings') {
+      const status = this.status.replace(/\n/g, ' · ') || 'Sit down to begin';
+      roundRect(ctx, 36, 64, w - 72, 72, 16, '#2a1c12');
+      ctx.fillStyle = '#ffe08a';
+      ctx.font = '700 32px Trebuchet MS, Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      fitText(ctx, status, w / 2, 100, w - 120, 32);
+
+      const pad = 36;
+      const inner = w - pad * 2;
+      const gap = 14;
+      const cw = (inner - gap * 4) / 5;
+      ctx.textAlign = 'center';
+      RESOURCES.forEach((r, i) => {
+        const x = pad + i * (cw + gap);
+        const dark = r === 'wood' || r === 'brick' || r === 'ore';
+        roundRect(ctx, x, 152, cw, 80, 14, RESOURCE_COLOR[r]);
+        ctx.fillStyle = dark ? '#f7efe0' : '#1a120c';
+        ctx.font = '700 34px Trebuchet MS, Segoe UI, sans-serif';
+        ctx.fillText(String(this.hand[r] ?? 0), x + cw / 2, 178);
+        ctx.font = '700 20px Trebuchet MS, Segoe UI, sans-serif';
+        ctx.fillText(RESOURCE_LABEL[r], x + cw / 2, 210);
+      });
+    }
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const slot of this.buttonLayout(this.buttonDefs)) {
+      const hot = this.hoverAction === slot.def.action && !slot.def.disabled;
+      const end = slot.def.action === 'end';
+      const settings = slot.def.action === 'settings';
+      const back = slot.def.action === 'settingsBack';
+      const toggle = slot.def.action === 'passthrough' || slot.def.action === 'handles';
+      let fill = '#f3e2c4';
+      let ink = '#2a1c12';
+      if (slot.def.disabled) {
+        fill = '#5c5348';
+        ink = '#d0c4b2';
+      } else if (end) {
+        fill = hot ? '#3aaa4c' : '#2f8a3c';
+        ink = '#f7fff4';
+      } else if (toggle && slot.def.on) {
+        fill = hot ? '#3aaa4c' : '#2f8a3c';
+        ink = '#f7fff4';
+      } else if (toggle) {
+        fill = hot ? '#6a5c4c' : '#5c5348';
+        ink = '#f3e2c4';
+      } else if (settings) {
+        fill = hot ? '#e8d4a8' : '#c9a44a';
+      } else if (hot) {
+        fill = '#fff6e0';
+      }
+      roundRect(ctx, slot.px, slot.py, slot.pw, slot.ph, 18, fill);
+      if (hot) {
+        ctx.strokeStyle = '#c9a44a';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+      }
+      ctx.fillStyle = ink;
+      const big = end || back || toggle;
+      ctx.font = big ? '700 40px Trebuchet MS, Segoe UI, sans-serif' : '700 34px Trebuchet MS, Segoe UI, sans-serif';
+      ctx.fillText(slot.def.label, slot.px + slot.pw / 2, slot.py + slot.ph / 2);
+    }
+
+    this.tex.needsUpdate = true;
   }
 }
 
-function makeButtonMesh(label, { width, height, depth, font, fill, ink = '#2a1c12' }) {
-  return new THREE.Mesh(
-    new THREE.BoxGeometry(width, height, depth),
-    new THREE.MeshBasicMaterial({
-      map: labelTexture(label, { width: 1024, height: 512, font, fill, ink }),
-    }),
-  );
+function roundRect(ctx, x, y, w, h, r, fill) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
 }
 
-function makeResourceChip(resource) {
-  const dark = resource === 'wood' || resource === 'brick' || resource === 'ore';
-  const word = RESOURCE_LABEL[resource];
-  const opts = {
-    width: 1024,
-    height: 512,
-    font: 120,
-    pad: 28,
-    fill: RESOURCE_COLOR[resource],
-    ink: dark ? '#f7efe0' : '#1a120c',
-  };
-  let tex = labelTexture(`0\n${word}`, opts);
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.124, 0.038, 0.078),
-    new THREE.MeshBasicMaterial({ map: tex }),
-  );
-  return {
-    mesh,
-    set(n) {
-      tex.dispose();
-      tex = labelTexture(`${n}\n${word}`, opts);
-      mesh.material.map = tex;
-      mesh.material.needsUpdate = true;
-    },
-  };
-}
-
-function makeStatus() {
-  const opts = { width: 1024, height: 256, font: 56, pad: 36, fill: '#2a1c12', ink: '#f3e2c4' };
-  let tex = labelTexture(' ', opts);
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.44, 0.028, 0.07),
-    new THREE.MeshBasicMaterial({ map: tex }),
-  );
-  return {
-    mesh,
-    set(text) {
-      tex.dispose();
-      tex = labelTexture(text, opts);
-      mesh.material.map = tex;
-      mesh.material.needsUpdate = true;
-    },
-  };
+function fitText(ctx, text, x, y, maxW, font) {
+  let size = font;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  while (size > 18) {
+    ctx.font = `700 ${size}px Trebuchet MS, Segoe UI, sans-serif`;
+    if (ctx.measureText(text).width <= maxW) break;
+    size -= 2;
+  }
+  ctx.fillText(text, x, y);
 }
 
 export class HelpBanner {

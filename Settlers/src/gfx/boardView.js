@@ -68,7 +68,7 @@ export class BoardView {
     this.markerLayer = new THREE.Group();
     this.group.add(this.pieceLayer, this.markerLayer);
     this.robber = null;
-    this.felt = feltMap();
+    this.felt = feltMap([46, 118, 205]);
     this.wood = woodMap();
   }
 
@@ -85,9 +85,9 @@ export class BoardView {
 
     const seaMat = new THREE.MeshStandardMaterial({
       map: this.felt,
-      color: '#1a5c78',
-      roughness: 0.55,
-      metalness: 0.05,
+      color: '#7ec8f0',
+      roughness: 0.42,
+      metalness: 0.08,
     });
     for (const h of board.sea) {
       const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.98, HEX_SIZE * 0.98, 0.02, 6), seaMat);

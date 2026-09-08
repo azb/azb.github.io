@@ -10,6 +10,7 @@ import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
 import { PlayerAvatars } from './gfx/avatars.js';
+import { ProductionFlights } from './gfx/production.js';
 import {
   renderHud,
   bindHud,
@@ -75,6 +76,7 @@ const dice = new DicePair(stage);
 const tray = new Tray(stage);
 const help = new HelpBanner(camera);
 const avatars = new PlayerAvatars(stage);
+const production = new ProductionFlights(stage);
 const handles = new BoardHandles(scene, stage);
 
 const _ctrlPos = new THREE.Vector3();
@@ -100,6 +102,10 @@ let busy = false;
 let modalOpen = false;
 let playerCount = 3;
 let solo = true;
+let passthroughOn = false;
+let handlesOn = true;
+let trayScreen = 'actions';
+const TRAY_SETTINGS = new Set(['settings', 'settingsBack', 'passthrough', 'handles']);
 
 document.getElementById('player-count').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-count]');
@@ -146,7 +152,7 @@ canvas.addEventListener('pointerup', (e) => {
   const dx = e.clientX - pointerDown.x;
   const dy = e.clientY - pointerDown.y;
   pointerDown = null;
-  if (dx * dx + dy * dy < 25) pickFromCamera();
+  if (dx * dx + dy * dy < 256) pickFromCamera();
 });
 
 function runHudAction(act, extra) {
@@ -158,6 +164,7 @@ function runHudAction(act, extra) {
       dice.placeFor(game.current, game.playerCount);
       dice.rollTo(d);
       sfx.dice();
+      playProduction();
     }
     afterAction();
     return;
@@ -201,16 +208,17 @@ renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (!renderer.xr.isPresenting) controls.update();
   dice.update(dt);
+  production.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
   boardView.pulseMarkers(clock.elapsedTime);
   avatars.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
   if (renderer.xr.isPresenting) {
     help.attach(renderer.xr.getCamera?.() || camera);
     updateGrabs();
     handles.update(dt, renderer.xr.getCamera?.() || camera, sourcePos);
-    for (const c of xrControllers) hoverController(c);
   } else {
     help.attach(camera);
   }
+  hoverPickables();
   syncSpotOverlay();
   renderer.render(scene, camera);
 });
@@ -223,6 +231,7 @@ function startGame() {
   boardView.rebuild(game.board);
   boardView.syncPieces(game);
   avatars.rebuild(game.players);
+  production.clear();
   dice.placeFor(game.current, game.playerCount);
   const start = document.getElementById('start-screen');
   start.classList.add('hidden');
@@ -255,13 +264,13 @@ function refresh() {
   tray.setStatus(trayStatus(game));
   help.set(trayStatus(game));
   tray.setResources(viewPlayer(game).resources);
-  tray.setButtons(trayButtons());
+  syncTrayButtons();
   avatars.setCurrent(game.current);
   dice.placeFor(game.current, game.playerCount);
 }
 
 function trayButtons() {
-  if (!game) return [];
+  if (!game) return [{ label: 'Settings', action: 'settings' }];
   const can = game.isHuman() && !busy;
   return [
     { label: 'Roll', action: 'roll', disabled: !(can && game.phase === PHASE.ROLL) },
@@ -271,7 +280,33 @@ function trayButtons() {
     { label: 'Dev', action: 'dev', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Trade', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'End Turn', action: 'end', disabled: !(can && game.phase === PHASE.MAIN) },
+    { label: 'Settings', action: 'settings' },
   ];
+}
+
+function settingsButtons() {
+  return [
+    { label: passthroughOn ? 'Passthrough ON' : 'Passthrough OFF', action: 'passthrough', on: passthroughOn },
+    { label: handlesOn ? 'Handles ON' : 'Handles OFF', action: 'handles', on: handlesOn },
+    { label: 'Back', action: 'settingsBack' },
+  ];
+}
+
+function syncTrayButtons() {
+  if (trayScreen === 'settings') tray.setButtons(settingsButtons(), 'settings');
+  else tray.setButtons(trayButtons(), 'actions');
+}
+
+function runTraySettings(act) {
+  if (act === 'settings') trayScreen = 'settings';
+  else if (act === 'settingsBack') trayScreen = 'actions';
+  else if (act === 'passthrough') setPassthrough(!passthroughOn);
+  else if (act === 'handles') {
+    handlesOn = !handlesOn;
+    applyHandleVisibility();
+  }
+  syncTrayButtons();
+  sfx.click();
 }
 
 function updateHighlights() {
@@ -473,12 +508,18 @@ function pickables() {
 }
 
 function applyHit(obj) {
-  if (!obj || !game) return;
+  if (!obj) return;
   const data = obj.userData;
-  if (data.kind === 'tray' && !data.disabled) {
+  if (data.kind === 'tray') {
+    if (TRAY_SETTINGS.has(data.action)) {
+      runTraySettings(data.action);
+      return;
+    }
+    if (!game || data.disabled) return;
     runHudAction(data.action);
     return;
   }
+  if (!game) return;
   if (!humanCanAct()) return;
   if (data.kind === 'vertex') {
     const mode = currentIntent();
@@ -503,19 +544,44 @@ function applyHit(obj) {
   }
 }
 
-function pickFromCamera() {
-  if (!game) return;
-  raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(pickables(), true);
-  applyHit(hits[0]?.object);
+function resolvePick(hits) {
+  if (!hits.length) return null;
+  const trayHit = hits.find((h) => h.object.userData?.kind === 'tray');
+  if (trayHit) return trayHit.object;
+  const handleHit = hits.find((h) => h.object.userData?.handleRoot);
+  if (handleHit) return handleHit.object;
+  return hits[0].object;
 }
 
-function hoverController(controller) {
-  const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-  const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
+function pickFromCamera() {
+  raycaster.setFromCamera(pointer, camera);
+  applyHit(resolvePick(raycaster.intersectObjects(pickables(), true)));
+}
+
+function hoverFromRay(origin, dir) {
   raycaster.set(origin, dir);
-  const hits = raycaster.intersectObjects(pickables(), true);
-  const obj = hits[0]?.object;
+  return resolvePick(raycaster.intersectObjects(pickables(), true));
+}
+
+function hoverPickables() {
+  let obj = null;
+  if (renderer.xr.isPresenting) {
+    const origin = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    for (const c of xrControllers) {
+      origin.setFromMatrixPosition(c.matrixWorld);
+      dir.set(0, 0, -1).transformDirection(c.matrixWorld);
+      const hit = hoverFromRay(origin, dir);
+      if (hit?.userData?.kind === 'tray' || hit?.userData?.handleRoot) {
+        obj = hit;
+        break;
+      }
+      if (hit && !obj) obj = hit;
+    }
+  } else {
+    raycaster.setFromCamera(pointer, camera);
+    obj = resolvePick(raycaster.intersectObjects(pickables(), true));
+  }
   tray.setHover(obj);
   handles.setHover(obj);
 }
@@ -527,7 +593,7 @@ function setupXR() {
   const lineMat = new THREE.LineBasicMaterial({ color: 0xffe6b0 });
   const controllers = [0, 1].map((i) => {
     const controller = renderer.xr.getController(i);
-    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -2.5)]);
+    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -4)]);
     controller.add(new THREE.Line(geo, lineMat));
     controller.addEventListener('selectstart', () => {
       tryGrab(controller);
@@ -540,8 +606,7 @@ function setupXR() {
       const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
       const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
       raycaster.set(origin, dir);
-      const hits = raycaster.intersectObjects(pickables(), true);
-      applyHit(hits[0]?.object);
+      applyHit(resolvePick(raycaster.intersectObjects(pickables(), true)));
     });
     controller.addEventListener('squeezestart', () => {
       if (tryGrab(controller)) return;
@@ -563,8 +628,7 @@ function setupXR() {
       if (tip) tip.getWorldPosition(origin);
       const dir = new THREE.Vector3(0, 0, -1).transformDirection(hand.matrixWorld);
       raycaster.set(origin, dir);
-      const hits = raycaster.intersectObjects(pickables(), true);
-      applyHit(hits[0]?.object);
+      applyHit(resolvePick(raycaster.intersectObjects(pickables(), true)));
     });
     hand.addEventListener('pinchend', () => releaseGrab(hand));
     scene.add(hand);
@@ -574,10 +638,15 @@ function setupXR() {
 }
 
 function setPassthrough(on) {
-  world.room.visible = !on;
-  scene.background = on ? null : ROOM_BG;
-  scene.fog = on ? null : new THREE.Fog('#1b140f', 6, 12);
-  renderer.setClearColor(on ? 0x000000 : 0x1b140f, on ? 0 : 1);
+  passthroughOn = !!on;
+  world.room.visible = !passthroughOn;
+  scene.background = passthroughOn ? null : ROOM_BG;
+  scene.fog = passthroughOn ? null : new THREE.Fog('#1b140f', 6, 12);
+  renderer.setClearColor(passthroughOn ? 0x000000 : 0x1b140f, passthroughOn ? 0 : 1);
+}
+
+function applyHandleVisibility() {
+  handles.setVisible(handlesOn && renderer.xr.isPresenting);
 }
 
 async function requestXRSession(mode, hud) {
@@ -623,7 +692,7 @@ async function enterVR() {
     }
     renderer.xr.setReferenceSpaceType('local-floor');
     setPassthrough(passthrough);
-    handles.setVisible(true);
+    handles.setVisible(handlesOn);
     document.documentElement.classList.add('xr-presenting');
     await renderer.xr.setSession(session);
     session.addEventListener('end', () => {
@@ -631,6 +700,7 @@ async function enterVR() {
       handles.setVisible(false);
       setPassthrough(false);
       document.documentElement.classList.remove('xr-presenting');
+      if (trayScreen === 'settings') syncTrayButtons();
       updateVRButton();
     });
   } catch {
@@ -681,6 +751,8 @@ async function pumpAI() {
       dice.placeFor(game.current, game.playerCount);
       dice.rollTo(game.dice);
       sfx.dice();
+      playProduction();
+      await sleep(Math.max(750, Math.ceil(production.timeLeft() * 1000)));
     }
     refresh();
     if (!ok) break;
@@ -737,6 +809,15 @@ function onResize() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+}
+
+function playProduction() {
+  if (!game || game.lastAction?.type !== 'roll') return;
+  production.play(game.lastAction.production, {
+    board: game.board,
+    players: game.players,
+    playerCount: game.playerCount,
+  });
 }
 
 function sleep(ms) {
