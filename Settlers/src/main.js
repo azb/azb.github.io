@@ -7,7 +7,7 @@ import { takeAITurn } from './game/ai.js';
 import { PHASE } from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
-import { DicePair, Tray } from './gfx/props.js';
+import { DicePair, Tray, BoardHandles } from './gfx/props.js';
 import {
   renderHud,
   bindHud,
@@ -70,6 +70,14 @@ const boardView = new BoardView(stage);
 boardView.rebuild(new Game({ seed: 2026 }).board);
 const dice = new DicePair(stage);
 const tray = new Tray(stage);
+const handles = new BoardHandles(scene, stage);
+
+const _ctrlPos = new THREE.Vector3();
+const _ctrlQuat = new THREE.Quaternion();
+const _ctrlEuler = new THREE.Euler();
+const _offset = new THREE.Vector3();
+const _yAxis = new THREE.Vector3(0, 1, 0);
+const grabs = new Map();
 
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -131,7 +139,7 @@ canvas.addEventListener('pointerup', (e) => {
   if (dx * dx + dy * dy < 25) pickFromCamera();
 });
 
-bindHud((act, extra) => {
+function runHudAction(act, extra) {
   if (!game || busy) return;
   sfx.click();
   if (act === 'roll') {
@@ -169,13 +177,17 @@ bindHud((act, extra) => {
   }
   intent = act;
   refresh();
-});
+}
+
+bindHud(runHudAction);
 
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (!renderer.xr.isPresenting) controls.update();
   dice.update(dt);
   if (renderer.xr.isPresenting) {
+    updateGrabs();
+    handles.update(dt, renderer.xr.getCamera?.() || camera);
     for (const c of xrControllers) hoverController(c);
   }
   renderer.render(scene, camera);
@@ -215,7 +227,8 @@ function refresh() {
   if (!game) return;
   boardView.syncPieces(game);
   renderHud(game, currentIntent());
-  tray.setStatus(game.player().name + ' · ' + game.phase);
+  const endHint = game.phase === PHASE.MAIN && game.isHuman() ? ' · point at END TURN or squeeze grip' : '';
+  tray.setStatus(`${game.player().name} · ${game.phase}${endHint}`);
   tray.setButtons(trayButtons());
   updateHighlights();
 }
@@ -230,7 +243,7 @@ function trayButtons() {
     { label: 'City', action: 'city', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Dev', action: 'dev', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Trade', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
-    { label: 'End', action: 'end', disabled: !(can && game.phase === PHASE.MAIN) },
+    { label: 'End Turn', action: 'end', disabled: !(can && game.phase === PHASE.MAIN) },
   ];
 }
 
@@ -263,8 +276,63 @@ function updateHighlights() {
   }
 }
 
+function controllerYaw(controller) {
+  _ctrlQuat.setFromRotationMatrix(controller.matrixWorld);
+  _ctrlEuler.setFromQuaternion(_ctrlQuat, 'YXZ');
+  return _ctrlEuler.y;
+}
+
+function tryGrab(controller) {
+  if (grabs.has(controller)) return true;
+  const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+  const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
+  raycaster.set(origin, dir);
+  const hits = raycaster.intersectObjects(handles.pickables(), true);
+  const data = hits[0]?.object?.userData;
+  if (data?.kind !== 'handle') return false;
+  controller.getWorldPosition(_ctrlPos);
+  if (data.action === 'move') {
+    grabs.set(controller, {
+      mode: 'move',
+      offset: stage.position.clone().sub(_ctrlPos),
+      yaw0: controllerYaw(controller),
+      stageYaw0: stage.rotation.y,
+    });
+  } else {
+    const center = new THREE.Vector3().setFromMatrixPosition(stage.matrixWorld);
+    grabs.set(controller, {
+      mode: 'scale',
+      startDist: Math.max(0.15, _ctrlPos.distanceTo(center)),
+      startScale: stage.scale.x,
+    });
+  }
+  sfx.click();
+  return true;
+}
+
+function releaseGrab(controller) {
+  grabs.delete(controller);
+}
+
+function updateGrabs() {
+  for (const [controller, grab] of grabs) {
+    controller.getWorldPosition(_ctrlPos);
+    if (grab.mode === 'move') {
+      const dyaw = controllerYaw(controller) - grab.yaw0;
+      _offset.copy(grab.offset).applyAxisAngle(_yAxis, dyaw);
+      stage.position.copy(_ctrlPos).add(_offset);
+      stage.rotation.y = grab.stageYaw0 + dyaw;
+    } else {
+      const center = new THREE.Vector3().setFromMatrixPosition(stage.matrixWorld);
+      const dist = _ctrlPos.distanceTo(center);
+      const s = Math.min(2.4, Math.max(0.45, grab.startScale * (dist / grab.startDist)));
+      stage.scale.setScalar(s);
+    }
+  }
+}
+
 function pickables() {
-  const list = [...tray.buttons.map((b) => b.mesh)];
+  const list = [...handles.pickables(), ...tray.pickables()];
   for (const m of boardView.vertexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
   for (const m of boardView.edgeMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
   for (const m of boardView.hexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
@@ -279,7 +347,7 @@ function applyHit(obj) {
   if (!obj || !game) return;
   const data = obj.userData;
   if (data.kind === 'tray' && !data.disabled) {
-    document.querySelector(`#action-bar [data-act="${data.action}"]`)?.click();
+    runHudAction(data.action);
     return;
   }
   if (!humanCanAct()) return;
@@ -313,6 +381,10 @@ function hoverController(controller) {
   const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
   const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
   raycaster.set(origin, dir);
+  const hits = raycaster.intersectObjects(pickables(), true);
+  const obj = hits[0]?.object;
+  tray.setHover(obj);
+  handles.setHover(obj);
 }
 
 function setupXR() {
@@ -320,15 +392,30 @@ function setupXR() {
   const lineMat = new THREE.LineBasicMaterial({ color: 0xffe6b0 });
   const controllers = [0, 1].map((i) => {
     const controller = renderer.xr.getController(i);
-    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1.2)]);
+    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -2.5)]);
     controller.add(new THREE.Line(geo, lineMat));
+    controller.addEventListener('selectstart', () => {
+      tryGrab(controller);
+    });
+    controller.addEventListener('selectend', () => {
+      releaseGrab(controller);
+    });
     controller.addEventListener('select', () => {
+      if (grabs.has(controller)) return;
       const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
       const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
       raycaster.set(origin, dir);
-      const hits = raycaster.intersectObjects(pickables(), false);
+      const hits = raycaster.intersectObjects(pickables(), true);
       applyHit(hits[0]?.object);
     });
+    controller.addEventListener('squeezestart', () => {
+      if (tryGrab(controller)) return;
+      if (game?.phase === PHASE.MAIN && game.isHuman() && !busy) runHudAction('end');
+    });
+    controller.addEventListener('squeezeend', () => {
+      releaseGrab(controller);
+    });
+    tray.attachHandButton(controller);
     scene.add(controller);
     const grip = renderer.xr.getControllerGrip(i);
     grip.add(factory.createControllerModel(grip));
@@ -388,15 +475,19 @@ async function enterVR() {
     }
     renderer.xr.setReferenceSpaceType('local-floor');
     setPassthrough(passthrough);
+    handles.setVisible(true);
     document.documentElement.classList.add('xr-presenting');
     await renderer.xr.setSession(session);
     session.addEventListener('end', () => {
+      grabs.clear();
+      handles.setVisible(false);
       setPassthrough(false);
       document.documentElement.classList.remove('xr-presenting');
       updateVRButton();
     });
   } catch {
     showToast('Could not start a mixed-reality session.');
+    handles.setVisible(false);
     setPassthrough(false);
     document.documentElement.classList.remove('xr-presenting');
   }
