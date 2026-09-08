@@ -46,6 +46,10 @@ body,
   pointer-events: none;
 }
 
+#modal {
+  z-index: 20;
+}
+
 #start-screen {
   display: grid;
   place-items: center;
@@ -113,7 +117,9 @@ h1 {
 .ghost,
 .primary,
 .action-bar button,
-.dev-bar button {
+.dev-bar button,
+.modal-panel button:not(.primary),
+.picker button {
   border: 2px solid var(--wood-dark);
   background: #fff6e6;
   color: var(--ink);
@@ -121,6 +127,7 @@ h1 {
   padding: 8px 10px;
   cursor: pointer;
   font-weight: 700;
+  transition: background 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
 }
 
 .segmented button.active,
@@ -136,12 +143,72 @@ h1 {
   font-size: 16px;
 }
 
-.segmented button:hover,
-.ghost:hover,
-.primary:hover,
-.action-bar button:hover,
-.dev-bar button:hover {
-  filter: brightness(1.08);
+.segmented button:hover:not(:disabled):not(.active),
+.action-bar button:hover:not(:disabled):not(.primary),
+.dev-bar button:hover:not(:disabled),
+.modal-panel button:not(.primary):hover:not(:disabled),
+.picker button:hover:not(:disabled) {
+  background: #fff8dc;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px var(--gold);
+}
+
+.ghost:hover:not(:disabled) {
+  background: rgba(42, 28, 18, 0.92);
+  border-color: #ffe08a;
+  box-shadow: 0 0 0 2px #ffe08a;
+  color: #fff6e6;
+}
+
+.primary:hover:not(:disabled),
+.segmented button.active:hover {
+  background: linear-gradient(180deg, #a32828, #7a1a1a);
+  border-color: #ffe08a;
+  box-shadow: 0 0 0 2px var(--gold);
+}
+
+.segmented button:active:not(:disabled):not(.active),
+.action-bar button:active:not(:disabled):not(.primary),
+.dev-bar button:active:not(:disabled),
+.modal-panel button:not(.primary):active:not(:disabled),
+.picker button:active:not(:disabled) {
+  background: #d4c09a;
+  box-shadow: inset 0 2px 5px rgba(42, 28, 18, 0.35);
+  filter: brightness(0.96);
+}
+
+.ghost:active:not(:disabled) {
+  background: rgba(12, 8, 5, 0.94);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+}
+
+.primary:active:not(:disabled),
+.segmented button.active:active {
+  background: linear-gradient(180deg, #6e1616, #4a0e0e);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+}
+
+.segmented button:disabled:hover:not(.active),
+.action-bar button:disabled:hover:not(.primary),
+.dev-bar button:disabled:hover,
+.modal-panel button:disabled:hover:not(.primary) {
+  background: #fff6e6;
+  border-color: var(--wood-dark);
+  box-shadow: 0 0 0 1px rgba(201, 164, 74, 0.35);
+  filter: none;
+}
+
+.ghost:disabled:hover {
+  background: rgba(20, 12, 8, 0.72);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px rgba(201, 164, 74, 0.35);
+}
+
+.primary:disabled:hover,
+.segmented button.active:disabled:hover,
+.action-bar button.primary:disabled:hover {
+  background: linear-gradient(180deg, #8b1e1e, #641414);
+  box-shadow: 0 0 0 1px rgba(201, 164, 74, 0.35);
 }
 
 #hud {
@@ -192,6 +259,19 @@ h1 {
   color: #ffe08a;
 }
 
+.roll-result {
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 16px;
+  line-height: 1.35;
+  max-width: min(36rem, calc(100vw - 48px));
+  background: rgba(20, 12, 8, 0.92);
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+  color: #ffe08a;
+  text-shadow: 0 2px 8px #000;
+}
+
 .table-help {
   position: absolute;
   left: 50%;
@@ -237,6 +317,21 @@ h1 {
   pointer-events: auto;
   cursor: pointer;
   animation: spotGlow 0.9s ease-in-out infinite;
+  transition: filter 0.12s ease, border-color 0.12s ease;
+}
+
+.spot:hover {
+  animation: none;
+  filter: brightness(1.28);
+  border-color: #ffe08a;
+  box-shadow: 0 0 26px 8px rgba(255, 210, 50, 1);
+}
+
+.spot:active {
+  animation: none;
+  filter: brightness(0.82);
+  border-color: #8a3a00;
+  box-shadow: 0 0 8px 2px rgba(160, 70, 0, 0.85);
 }
 
 @keyframes spotGlow {
@@ -280,6 +375,30 @@ html.xr-presenting .spot-layer {
 
 .player-card.active {
   outline: 2px solid #fff3c4;
+}
+
+.player-card.steal-target {
+  cursor: pointer;
+  outline: 3px solid #ffe08a;
+  box-shadow: 0 0 16px rgba(255, 200, 60, 0.55);
+  animation: stealPulse 1s ease-in-out infinite;
+}
+
+.player-card.steal-target:hover {
+  filter: brightness(1.18);
+  outline-color: #fff6c2;
+}
+
+.player-card.steal-target:active {
+  animation: none;
+  filter: brightness(0.88);
+  outline-color: #c9a44a;
+}
+
+@keyframes stealPulse {
+  50% {
+    box-shadow: 0 0 22px 4px rgba(255, 210, 80, 0.85);
+  }
 }
 
 .player-head {
@@ -428,6 +547,35 @@ html.xr-presenting .journal {
   outline: 3px solid #2f6b3a;
 }
 
+.steal-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.steal-pick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  font-size: 18px;
+  background: color-mix(in srgb, var(--steal, #fff6e6) 42%, #fff6e6);
+}
+
+.modal-panel button.steal-pick:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--steal, #fff6e6) 28%, #fff8dc);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px var(--gold);
+}
+
+.modal-panel button.steal-pick:active:not(:disabled) {
+  background: color-mix(in srgb, var(--steal, #fff6e6) 55%, #c4ad82);
+  box-shadow: inset 0 2px 5px rgba(42, 28, 18, 0.35);
+  filter: none;
+}
+
 .toast {
   position: absolute;
   left: 50%;
@@ -462,6 +610,11 @@ html.xr-presenting .turn-banner {
 }
 
 html.xr-presenting .phase-label {
+  font-size: 26px;
+  padding: 12px 16px;
+}
+
+html.xr-presenting .roll-result {
   font-size: 26px;
   padding: 12px 16px;
 }
@@ -517,6 +670,15 @@ html.xr-presenting #log {
 
 html.xr-presenting .modal-panel {
   font-size: 22px;
+}
+
+html.xr-presenting .steal-pick {
+  min-height: 64px;
+  font-size: 26px;
+}
+
+html.xr-presenting #modal {
+  display: none !important;
 }
 
 html.xr-presenting .toast {

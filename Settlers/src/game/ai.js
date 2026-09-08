@@ -45,9 +45,18 @@ export function takeAITurn(game) {
     const who = game.player(entry.player);
     const give = { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 };
     const bag = [];
-    for (const r of RESOURCES) for (let i = 0; i < who.resources[r]; i++) bag.push(r);
-    bag.sort((a, b) => who.resources[b] - who.resources[a]);
-    for (let i = 0; i < entry.must; i++) give[bag[i]] += 1;
+    for (const r of RESOURCES) {
+      const n = who.resources[r] | 0;
+      for (let i = 0; i < n; i++) bag.push(r);
+    }
+    bag.sort((a, b) => (who.resources[b] | 0) - (who.resources[a] | 0));
+    let left = entry.must;
+    for (const r of bag) {
+      if (left <= 0) break;
+      give[r] += 1;
+      left -= 1;
+    }
+    if (left > 0) return false;
     return game.discard(who.id, give);
   }
 
@@ -69,7 +78,7 @@ export function takeAITurn(game) {
       game.phase = PHASE.MAIN;
       return true;
     }
-    return game.placeRoad(bestRoad(game, p.id, roads), p.id);
+    return game.placeRoad(roadToward(game, p.id, roads), p.id);
   }
 
   if (game.phase === PHASE.PLENTY) {

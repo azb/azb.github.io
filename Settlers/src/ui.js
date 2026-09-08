@@ -18,43 +18,81 @@ export function phaseText(game) {
     case PHASE.ROLL:
       return 'Roll the dice — or play a knight first.';
     case PHASE.MAIN:
-      return 'Build, trade, play a card, or end your turn.';
+      return 'Build, trade, play a card, or end your turn. Trade and Dev are on the panel.';
     case PHASE.DISCARD:
-      return 'Discard half your hand (rounded down).';
+      return `${discardLine(game)}. Tap resources on the panel, then confirm.`;
     case PHASE.ROBBER:
       return 'Move the robber onto a land hex.';
     case PHASE.STEAL:
-      return 'Steal a random card from a neighbor.';
+      return 'Choose a player to steal from — click their name, figure, or a tray button.';
     case PHASE.FREE_ROADS:
       return `Place ${game.freeRoads} free road${game.freeRoads > 1 ? 's' : ''}.`;
     case PHASE.PLENTY:
-      return 'Take any two resources from the bank.';
+      return 'Take any two resources from the bank — use the panel buttons.';
     case PHASE.MONOPOLY:
-      return 'Name a resource. Everyone else must give you theirs.';
+      return 'Name a resource on the panel. Everyone else must give you theirs.';
     case PHASE.GAME_OVER:
-      return `${game.player(game.winner).name} wins the island!`;
+      return `${game.player(game.winner).name} wins the island! Tap New island on the panel.`;
     default:
       return '';
   }
 }
 
+export function formatRollResult(game) {
+  const roll = game.lastRoll;
+  if (!roll?.dice) return null;
+  const [a, b] = roll.dice;
+  const sum = a + b;
+  const diceLine = `${a} + ${b} = ${sum}`;
+  if (roll.seven || sum === 7) {
+    const gainsLine = 'Robber — discard if 8+ cards';
+    return { diceLine, gainsLine, seven: true, banner: `${diceLine} · ${gainsLine}` };
+  }
+  const view = viewPlayer(game);
+  const gained = Object.fromEntries(RESOURCES.map((r) => [r, 0]));
+  for (const ev of roll.production || []) {
+    if (ev.playerId !== view.id) continue;
+    gained[ev.resource] = (gained[ev.resource] || 0) + (ev.amount || 1);
+  }
+  const parts = RESOURCES.filter((r) => gained[r] > 0).map(
+    (r) => `${gained[r]} ${RESOURCE_LABEL[r]}`,
+  );
+  const gainsLine = parts.length ? `You gained ${parts.join(', ')}` : 'No resources';
+  return { diceLine, gainsLine, seven: false, banner: `${diceLine} · ${gainsLine}` };
+}
+
 export function trayStatus(game) {
+  const roll = formatRollResult(game);
+  if (game.phase === PHASE.DISCARD) {
+    const line = discardLine(game);
+    const hint = `${line}\nTap resources on the panel`;
+    return roll ? `${roll.diceLine} · ${hint}` : hint;
+  }
   const name = game.player().name;
   const line = {
     [PHASE.SETUP_SETTLEMENT]: 'Place a settlement',
     [PHASE.SETUP_ROAD]: 'Place a road',
     [PHASE.ROLL]: 'Roll the dice',
     [PHASE.MAIN]: 'Build, trade, or end turn',
-    [PHASE.DISCARD]: 'Discard half your cards',
+    [PHASE.DISCARD]: discardLine(game),
     [PHASE.ROBBER]: 'Move the robber',
-    [PHASE.STEAL]: 'Steal from a neighbor',
+    [PHASE.STEAL]: 'Click a neighbor to steal',
     [PHASE.FREE_ROADS]: `Place ${game.freeRoads} free road${game.freeRoads > 1 ? 's' : ''}`,
-    [PHASE.PLENTY]: 'Take two resources',
-    [PHASE.MONOPOLY]: 'Name a resource',
+    [PHASE.PLENTY]: 'Pick two resources on the panel',
+    [PHASE.MONOPOLY]: 'Name a resource on the panel',
     [PHASE.GAME_OVER]: game.winner != null ? `${game.player(game.winner).name} wins` : 'Game over',
   }[game.phase] || String(game.phase);
-  const extra = game.phase === PHASE.MAIN && game.isHuman() ? '\nPoint at END TURN or squeeze grip' : '';
-  return `${name} · ${line}${extra}`;
+  const extra = game.phase === PHASE.MAIN && game.isHuman()
+    ? '\nPoint at END TURN or squeeze grip'
+    : game.phase === PHASE.STEAL && game.isHuman()
+      ? '\nClick a neighbor or tray button'
+      : game.phase === PHASE.GAME_OVER
+        ? '\nTap New island on the panel'
+        : '';
+  const phaseStatus = `${name} · ${line}${extra}`;
+  if (!roll) return phaseStatus;
+  if (roll.seven) return `${roll.diceLine} · ${phaseStatus}`;
+  return `${roll.banner}\n${phaseStatus}`;
 }
 
 export function renderHud(game, intent) {
@@ -63,20 +101,30 @@ export function renderHud(game, intent) {
   $('turn-banner').style.color = p.color;
   const helpCopy = phaseText(game);
   $('phase-label').textContent = helpCopy;
+  const roll = formatRollResult(game);
   const tableHelp = $('table-help');
   if (tableHelp) {
-    tableHelp.textContent = helpCopy;
-    tableHelp.classList.toggle('hidden', !helpCopy);
+    const shown = roll ? roll.banner : helpCopy;
+    tableHelp.textContent = shown;
+    tableHelp.classList.toggle('hidden', !shown);
+  }
+  const strip = $('roll-result');
+  if (strip) {
+    strip.textContent = roll ? roll.banner : '';
+    strip.classList.toggle('hidden', !roll);
   }
 
   const view = viewPlayer(game);
+  const stealing = game.phase === PHASE.STEAL && game.isHuman();
+  const stealIds = new Set(game.stealCandidates);
   $('players-panel').innerHTML = game.players
     .map((pl) => {
       const cards = RESOURCES.reduce((n, r) => n + pl.resources[r], 0);
       const roads = pl.roads.length;
-      return `<article class="player-card ${pl.id === game.current ? 'active' : ''}">
+      const steal = stealing && stealIds.has(pl.id);
+      return `<article class="player-card ${pl.id === game.current ? 'active' : ''} ${steal ? 'steal-target' : ''}" ${steal ? `data-steal="${pl.id}"` : ''}>
         <div class="player-head">
-          <span><i class="swatch" style="background:${pl.color}"></i>${pl.name}${pl.isAI ? ' · AI' : ''}</span>
+          <span><i class="swatch" style="background:${pl.color}"></i>${pl.name}${pl.isAI ? ' · AI' : ''}${steal ? ' · steal' : ''}</span>
           <span>${game.publicVP(pl)} VP</span>
         </div>
         <div class="player-meta">${cards} cards · ${roads} roads · ${pl.knightsPlayed} knights
@@ -130,6 +178,12 @@ export function renderHud(game, intent) {
   $('log').innerHTML = [...game.log].slice(-12).reverse().map((t) => `<li>${t}</li>`).join('');
 }
 
+function discardLine(game) {
+  const names = game.discardQueue.map((d) => game.player(d.player).name);
+  if (!names.length) return 'Discard half your cards';
+  return `${names.join(', ')} must discard half`;
+}
+
 export function viewPlayer(game) {
   if (game.players.some((p) => !p.isAI) === false) return game.player();
   const humans = game.players.filter((p) => !p.isAI);
@@ -151,6 +205,10 @@ export function bindHud(onAction) {
   $('dev-bar').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-dev]');
     if (b) onAction('playDev', b.dataset.dev);
+  });
+  $('players-panel').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-steal]');
+    if (card) onAction('steal', Number(card.dataset.steal));
   });
 }
 
@@ -186,7 +244,7 @@ export function showDiscard(game, onDone) {
   const draw = () => {
     const n = RESOURCES.reduce((s, r) => s + give[r], 0);
     openModal(`<h2>${p.name}, discard ${entry.must}</h2>
-      <p>Selected ${n} / ${entry.must}</p>
+      <p>Selected ${n} / ${entry.must}. You can also tap resources on the table panel.</p>
       ${RESOURCES.map((r) => `<button data-r="${r}">${RESOURCE_LABEL[r]} ${give[r]}/${p.resources[r]}</button>`).join(' ')}
       <p><button id="discard-go" class="primary" ${n === entry.must ? '' : 'disabled'}>Discard</button></p>`);
     $('modal-body').onclick = (e) => {
@@ -206,11 +264,17 @@ export function showDiscard(game, onDone) {
 }
 
 export function showSteal(game, onDone) {
-  openModal(`<h2>Steal a card</h2><p>Choose a player adjacent to the robber.</p>
-    ${game.stealCandidates.map((id) => {
+  const picks = game.stealCandidates
+    .map((id) => {
       const p = game.player(id);
-      return `<button data-steal="${id}"><i class="swatch" style="background:${p.color}"></i>${p.name}</button>`;
-    }).join(' ')}`);
+      return `<button type="button" class="steal-pick" data-steal="${id}" style="--steal:${p.color}">
+        <i class="swatch" style="background:${p.color}"></i>${p.name}
+      </button>`;
+    })
+    .join('');
+  openModal(`<h2>Steal a card</h2>
+    <p>Choose a neighbor. You can also click their figure at the table or a tray button.</p>
+    <div class="picker steal-picker">${picks}</div>`);
   $('modal-body').onclick = (e) => {
     const id = e.target.closest('button[data-steal]')?.dataset.steal;
     if (id != null) {
@@ -227,7 +291,7 @@ export function showTrade(game, onDone) {
   const paint = () => {
     const rate = give ? game.tradeRate(p, give) : 4;
     openModal(`<h2>Bank trade</h2>
-      <p>Give ${give ? `${rate} ${RESOURCE_LABEL[give]}` : 'a resource'} for one of another.</p>
+      <p>Give ${give ? `${rate} ${RESOURCE_LABEL[give]}` : 'a resource'} for one of another. In VR, use the panel buttons.</p>
       <p>Give</p>${resourcePicker('give-p')}
       <p>Get</p>${resourcePicker('get-p')}
       <button id="trade-go" class="primary">Trade</button>
@@ -248,7 +312,10 @@ export function showTrade(game, onDone) {
         onDone(give, get);
       }
     };
-    $('trade-cancel').onclick = closeModal;
+    $('trade-cancel').onclick = () => {
+      closeModal();
+      onDone(null, null);
+    };
   };
   paint();
 }
@@ -256,7 +323,7 @@ export function showTrade(game, onDone) {
 export function showPlenty(onDone) {
   const pick = [];
   const paint = () => {
-    openModal(`<h2>Year of Plenty</h2><p>Pick two resources (${pick.length}/2)</p>
+    openModal(`<h2>Year of Plenty</h2><p>Pick two resources (${pick.length}/2) — use the panel in VR.</p>
       ${resourcePicker('pl')}
       <p>${pick.map((r) => RESOURCE_LABEL[r]).join(', ')}</p>`);
     $('pl').onclick = (e) => {
@@ -273,7 +340,7 @@ export function showPlenty(onDone) {
 }
 
 export function showMonopoly(onDone) {
-  openModal(`<h2>Monopoly</h2><p>Name a resource.</p>${resourcePicker('mo')}`);
+  openModal(`<h2>Monopoly</h2><p>Name a resource on the panel or below.</p>${resourcePicker('mo')}`);
   $('mo').onclick = (e) => {
     const r = e.target.dataset.res;
     if (!r) return;
@@ -285,7 +352,7 @@ export function showMonopoly(onDone) {
 export function showWin(game) {
   const p = game.player(game.winner);
   openModal(`<h2>${p.name} wins!</h2>
-    <p>${game.totalVP(p)} victory points. The island is theirs.</p>
+    <p>${game.totalVP(p)} victory points. The island is theirs. In VR, tap New island on the panel.</p>
     <button id="again" class="primary">New island</button>`);
   $('again').onclick = () => {
     closeModal();

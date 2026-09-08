@@ -5,7 +5,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { Game } from './game/Game.js';
 import { takeAITurn } from './game/ai.js';
-import { PHASE } from './game/constants.js';
+import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES } from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
@@ -16,6 +16,7 @@ import {
   bindHud,
   showToast,
   trayStatus,
+  formatRollResult,
   showDiscard,
   showSteal,
   showTrade,
@@ -42,7 +43,7 @@ renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 const stage = new THREE.Group();
-stage.position.set(0, 0, -0.72);
+stage.position.set(0, 0, -1.32);
 scene.add(stage);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 30);
@@ -50,7 +51,7 @@ camera.position.set(0, 1.17, 0.62);
 scene.add(camera);
 
 const controls = new OrbitControls(camera, canvas);
-controls.target.set(0, 0.57, -0.72);
+controls.target.set(0, 0.57, -1.32);
 controls.enableDamping = true;
 controls.enablePan = true;
 controls.screenSpacePanning = true;
@@ -105,7 +106,31 @@ let solo = true;
 let passthroughOn = false;
 let handlesOn = true;
 let trayScreen = 'actions';
-const TRAY_SETTINGS = new Set(['settings', 'settingsBack', 'passthrough', 'handles']);
+let tradeGive = null;
+let tradeGet = null;
+let discardGive = emptyHand();
+let discardKey = '';
+let plentyPicks = [];
+const TRAY_SETTINGS = new Set(['settings', 'settingsBack', 'passthrough', 'handles', 'restart']);
+const DEV_NAMES = {
+  [DEV_TYPES.KNIGHT]: 'Knight',
+  [DEV_TYPES.ROAD]: 'Road Building',
+  [DEV_TYPES.PLENTY]: 'Year of Plenty',
+  [DEV_TYPES.MONOPOLY]: 'Monopoly',
+};
+
+function emptyHand() {
+  return Object.fromEntries(RESOURCES.map((r) => [r, 0]));
+}
+
+function preferTrayUi() {
+  return renderer.xr.isPresenting;
+}
+
+function actionArg(action, prefix) {
+  if (typeof action !== 'string' || !action.startsWith(prefix)) return null;
+  return action.slice(prefix.length);
+}
 
 document.getElementById('player-count').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-count]');
@@ -129,11 +154,19 @@ document.getElementById('start-btn').addEventListener('click', () => {
 document.getElementById('new-game-btn').addEventListener('click', () => {
   closeModal();
   game = null;
+  modalOpen = false;
+  trayScreen = 'actions';
+  tradeGive = null;
+  tradeGet = null;
+  discardGive = emptyHand();
+  discardKey = '';
+  plentyPicks = [];
   document.getElementById('hud').classList.add('hidden');
   const start = document.getElementById('start-screen');
   start.classList.remove('hidden');
   start.hidden = false;
   start.removeAttribute('inert');
+  syncTrayButtons();
 });
 
 document.getElementById('vr-btn').addEventListener('click', enterVR);
@@ -141,11 +174,20 @@ window.addEventListener('resize', onResize);
 canvas.addEventListener('pointermove', (e) => {
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+  if (pointerDown && tray.pressAction) {
+    const dx = e.clientX - pointerDown.x;
+    const dy = e.clientY - pointerDown.y;
+    if (dx * dx + dy * dy >= 256) tray.setPressed(null);
+  }
 });
 let pointerDown = null;
 canvas.addEventListener('pointerdown', (e) => {
   sfx.unlock();
   pointerDown = { x: e.clientX, y: e.clientY };
+  if (renderer.xr.isPresenting) return;
+  raycaster.setFromCamera(pointer, camera);
+  const hit = resolvePick(raycaster.intersectObjects(pickables(), true));
+  if (hit?.userData?.kind === 'tray' && !hit.userData.disabled) tray.setPressed(hit.userData.action);
 });
 canvas.addEventListener('pointerup', (e) => {
   if (!pointerDown || renderer.xr.isPresenting) return;
@@ -153,10 +195,15 @@ canvas.addEventListener('pointerup', (e) => {
   const dy = e.clientY - pointerDown.y;
   pointerDown = null;
   if (dx * dx + dy * dy < 256) pickFromCamera();
+  else tray.setPressed(null);
 });
 
 function runHudAction(act, extra) {
   if (!game || busy) return;
+  if (act === 'steal') {
+    trySteal(extra);
+    return;
+  }
   sfx.click();
   if (act === 'roll') {
     const d = game.roll();
@@ -180,12 +227,7 @@ function runHudAction(act, extra) {
     return;
   }
   if (act === 'trade') {
-    modalOpen = true;
-    showTrade(game, (give, get) => {
-      modalOpen = false;
-      game.bankTrade(viewPlayer(game).id, give, get);
-      afterAction();
-    });
+    openTradeUi();
     return;
   }
   if (act === 'playDev') {
@@ -228,6 +270,13 @@ updateVRButton();
 function startGame() {
   game = new Game({ playerCount, solo });
   intent = null;
+  modalOpen = false;
+  trayScreen = 'actions';
+  tradeGive = null;
+  tradeGet = null;
+  discardGive = emptyHand();
+  discardKey = '';
+  plentyPicks = [];
   boardView.rebuild(game.board);
   boardView.syncPieces(game);
   avatars.rebuild(game.players);
@@ -243,7 +292,8 @@ function startGame() {
 }
 
 function humanCanAct() {
-  if (!game || busy || modalOpen) return false;
+  if (!game || busy) return false;
+  if (modalOpen && game.phase !== PHASE.STEAL) return false;
   if (game.phase === PHASE.DISCARD) return game.discardQueue.some((d) => !game.player(d.player).isAI);
   return game.isHuman();
 }
@@ -261,40 +311,239 @@ function refresh() {
   boardView.syncPieces(game);
   renderHud(game, currentIntent());
   updateHighlights();
-  tray.setStatus(trayStatus(game));
-  help.set(trayStatus(game));
-  tray.setResources(viewPlayer(game).resources);
+  const disc = humanDiscardEntry();
+  tray.setResources((disc ? game.player(disc.player) : viewPlayer(game)).resources);
   syncTrayButtons();
+  applyPanelStatus();
   avatars.setCurrent(game.current);
+  avatars.setStealTargets(game.phase === PHASE.STEAL && game.isHuman() ? game.stealCandidates : null);
   dice.placeFor(game.current, game.playerCount);
 }
 
 function trayButtons() {
   if (!game) return [{ label: 'Settings', action: 'settings' }];
   const can = game.isHuman() && !busy;
+  const playable = can && game.playableCards(game.current).length > 0;
   return [
     { label: 'Roll', action: 'roll', disabled: !(can && game.phase === PHASE.ROLL) },
     { label: 'Road', action: 'road', disabled: !(can && ((game.phase === PHASE.MAIN && game.canAfford(game.current, 'road')) || game.phase === PHASE.FREE_ROADS)) },
     { label: 'Settle', action: 'settlement', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'City', action: 'city', disabled: !(can && game.phase === PHASE.MAIN) },
-    { label: 'Dev', action: 'dev', disabled: !(can && game.phase === PHASE.MAIN) },
+    { label: 'Dev', action: 'cards', disabled: !((can && game.phase === PHASE.MAIN) || playable) },
     { label: 'Trade', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'End Turn', action: 'end', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Settings', action: 'settings' },
   ];
 }
 
+function stealButtons() {
+  return game.stealCandidates.map((id) => {
+    const p = game.player(id);
+    return { label: p.name, action: `steal:${id}`, color: p.color };
+  });
+}
+
 function settingsButtons() {
   return [
     { label: passthroughOn ? 'Passthrough ON' : 'Passthrough OFF', action: 'passthrough', on: passthroughOn },
     { label: handlesOn ? 'Handles ON' : 'Handles OFF', action: 'handles', on: handlesOn },
+    { label: 'Restart game', action: 'restart' },
     { label: 'Back', action: 'settingsBack' },
   ];
 }
 
+function cardButtons() {
+  const can = game.isHuman() && !busy;
+  const playable = game.playableCards(game.current);
+  return [
+    {
+      label: 'Buy card',
+      action: 'dev',
+      disabled: !(can && game.phase === PHASE.MAIN && game.canAfford(game.current, 'dev') && game.devDeck.length),
+    },
+    ...playable.map((c) => ({
+      label: DEV_NAMES[c.type] || c.type,
+      action: `playDev:${c.id}`,
+    })),
+    { label: 'Back', action: 'cardsBack' },
+  ];
+}
+
+function tradeButtons() {
+  const p = viewPlayer(game);
+  return [
+    ...RESOURCES.map((r) => {
+      const rate = game.tradeRate(p, r);
+      return {
+        label: RESOURCE_LABEL[r],
+        action: `give:${r}`,
+        color: RESOURCE_COLOR[r],
+        selected: tradeGive === r,
+        disabled: p.resources[r] < rate,
+      };
+    }),
+    ...RESOURCES.map((r) => ({
+      label: RESOURCE_LABEL[r],
+      action: `get:${r}`,
+      color: RESOURCE_COLOR[r],
+      selected: tradeGet === r,
+      disabled: r === tradeGive || game.bank[r] < 1,
+    })),
+    {
+      label: tradeGive ? `Trade ${game.tradeRate(p, tradeGive)}:1` : 'Trade',
+      action: 'tradeGo',
+      disabled: !(
+        tradeGive
+        && tradeGet
+        && tradeGive !== tradeGet
+        && p.resources[tradeGive] >= game.tradeRate(p, tradeGive)
+        && game.bank[tradeGet] >= 1
+      ),
+    },
+    { label: 'Cancel', action: 'tradeCancel' },
+  ];
+}
+
+function discardButtons() {
+  const entry = ensureDiscardState();
+  if (!entry) return [{ label: 'Waiting', action: 'discardGo', disabled: true }];
+  const p = game.player(entry.player);
+  const n = RESOURCES.reduce((s, r) => s + (discardGive[r] || 0), 0);
+  return [
+    ...RESOURCES.map((r) => ({
+      label: `${RESOURCE_LABEL[r]} ${discardGive[r]}/${p.resources[r]}`,
+      action: `discard:${r}`,
+      color: RESOURCE_COLOR[r],
+      disabled: !p.resources[r] || discardGive[r] >= p.resources[r] || n >= entry.must,
+    })),
+    { label: n === entry.must ? 'Discard' : `Discard ${n}/${entry.must}`, action: 'discardGo', disabled: n !== entry.must },
+    { label: 'Clear', action: 'discardClear', disabled: n === 0 },
+  ];
+}
+
+function plentyButtons() {
+  return RESOURCES.map((r) => ({
+    label: RESOURCE_LABEL[r],
+    action: `plenty:${r}`,
+    color: RESOURCE_COLOR[r],
+    selected: plentyPicks.includes(r),
+  }));
+}
+
+function monopolyButtons() {
+  return RESOURCES.map((r) => ({
+    label: RESOURCE_LABEL[r],
+    action: `mono:${r}`,
+    color: RESOURCE_COLOR[r],
+  }));
+}
+
+function winButtons() {
+  return [
+    { label: 'New island', action: 'restart' },
+    { label: 'Settings', action: 'settings' },
+  ];
+}
+
+function humanDiscardEntry() {
+  if (!game) return null;
+  return game.discardQueue.find((d) => !game.player(d.player).isAI) || null;
+}
+
+function ensureDiscardState() {
+  const entry = humanDiscardEntry();
+  const key = entry ? `${entry.player}:${entry.must}` : '';
+  if (key !== discardKey) {
+    discardKey = key;
+    discardGive = emptyHand();
+  }
+  return entry;
+}
+
+function panelStatus() {
+  if (trayScreen === 'trade' && game) {
+    const p = viewPlayer(game);
+    if (!tradeGive) return `${p.name} · Pick a resource to give, then one to get`;
+    const rate = game.tradeRate(p, tradeGive);
+    const giveLabel = `${rate} ${RESOURCE_LABEL[tradeGive]}`;
+    if (!tradeGet) return `${p.name} · Give ${giveLabel} — pick what to get`;
+    return `${p.name} · Give ${giveLabel} for ${RESOURCE_LABEL[tradeGet]}`;
+  }
+  if (trayScreen === 'cards' && game) {
+    return `${game.player().name} · Play a card or buy one`;
+  }
+  const entry = game?.phase === PHASE.DISCARD ? humanDiscardEntry() : null;
+  if (entry) {
+    const n = RESOURCES.reduce((s, r) => s + (discardGive[r] || 0), 0);
+    const p = game.player(entry.player);
+    const roll = formatRollResult(game);
+    const line = `${p.name} · discard ${n} / ${entry.must} on the panel`;
+    return roll ? `${roll.diceLine}\n${line}` : line;
+  }
+  if (game?.phase === PHASE.PLENTY && game.isHuman()) {
+    const names = plentyPicks.map((r) => RESOURCE_LABEL[r]).join(', ');
+    return names
+      ? `${game.player().name} · Picked ${names} (${plentyPicks.length}/2)`
+      : `${game.player().name} · Pick two resources on the panel`;
+  }
+  if (game?.phase === PHASE.MONOPOLY && game.isHuman()) {
+    return `${game.player().name} · Name a resource on the panel`;
+  }
+  return game ? trayStatus(game) : '';
+}
+
+function applyPanelStatus() {
+  if (!game) {
+    tray.setStatus('');
+    return;
+  }
+  const status = panelStatus();
+  const roll = formatRollResult(game);
+  tray.setStatus(status);
+  help.set(roll ? roll.banner : status);
+}
+
 function syncTrayButtons() {
-  if (trayScreen === 'settings') tray.setButtons(settingsButtons(), 'settings');
-  else tray.setButtons(trayButtons(), 'actions');
+  if (!game) {
+    tray.setButtons(trayButtons(), 'actions');
+    return;
+  }
+  if (game.phase !== PHASE.MAIN && trayScreen === 'trade') trayScreen = 'actions';
+  if (![PHASE.MAIN, PHASE.ROLL].includes(game.phase) && trayScreen === 'cards') trayScreen = 'actions';
+
+  if (game.phase === PHASE.STEAL && game.isHuman()) {
+    tray.setButtons(stealButtons(), 'steal');
+    return;
+  }
+  if (game.phase === PHASE.DISCARD && humanDiscardEntry()) {
+    tray.setButtons(discardButtons(), 'discard');
+    return;
+  }
+  if (game.phase === PHASE.PLENTY && game.isHuman()) {
+    tray.setButtons(plentyButtons(), 'plenty');
+    return;
+  }
+  if (game.phase === PHASE.MONOPOLY && game.isHuman()) {
+    tray.setButtons(monopolyButtons(), 'monopoly');
+    return;
+  }
+  if (trayScreen === 'settings') {
+    tray.setButtons(settingsButtons(), 'settings');
+    return;
+  }
+  if (game.phase === PHASE.GAME_OVER) {
+    tray.setButtons(winButtons(), 'win');
+    return;
+  }
+  if (trayScreen === 'trade') {
+    tray.setButtons(tradeButtons(), 'trade');
+    return;
+  }
+  if (trayScreen === 'cards') {
+    tray.setButtons(cardButtons(), 'cards');
+    return;
+  }
+  tray.setButtons(trayButtons(), 'actions');
 }
 
 function runTraySettings(act) {
@@ -304,9 +553,204 @@ function runTraySettings(act) {
   else if (act === 'handles') {
     handlesOn = !handlesOn;
     applyHandleVisibility();
+  } else if (act === 'restart') {
+    trayScreen = 'actions';
+    document.getElementById('new-game-btn').click();
   }
   syncTrayButtons();
+  applyPanelStatus();
   sfx.click();
+}
+
+function openTradeUi() {
+  trayScreen = 'trade';
+  tradeGive = null;
+  tradeGet = null;
+  modalOpen = true;
+  syncTrayButtons();
+  applyPanelStatus();
+  if (preferTrayUi()) return;
+  showTrade(game, (give, get) => {
+    modalOpen = false;
+    trayScreen = 'actions';
+    tradeGive = tradeGet = null;
+    if (!give || !get) {
+      refresh();
+      return;
+    }
+    game.bankTrade(viewPlayer(game).id, give, get);
+    afterAction();
+  });
+}
+
+function closeTradeUi() {
+  tradeGive = tradeGet = null;
+  trayScreen = 'actions';
+  modalOpen = false;
+  closeModal();
+  syncTrayButtons();
+  applyPanelStatus();
+  sfx.click();
+}
+
+function confirmTrade() {
+  if (busy || !tradeGive || !tradeGet) return;
+  if (!game.bankTrade(viewPlayer(game).id, tradeGive, tradeGet)) {
+    showToast('Cannot make that trade.');
+    return;
+  }
+  tradeGive = tradeGet = null;
+  trayScreen = 'actions';
+  modalOpen = false;
+  closeModal();
+  sfx.click();
+  afterAction();
+}
+
+function tapDiscard(r) {
+  if (busy) return;
+  const entry = ensureDiscardState();
+  if (!entry) return;
+  const p = game.player(entry.player);
+  const n = RESOURCES.reduce((s, x) => s + (discardGive[x] || 0), 0);
+  if (discardGive[r] >= p.resources[r] || n >= entry.must) return;
+  discardGive[r] += 1;
+  syncTrayButtons();
+  applyPanelStatus();
+  tray.setResources(p.resources);
+  sfx.click();
+}
+
+function confirmDiscard() {
+  if (busy) return;
+  const entry = ensureDiscardState();
+  if (!entry) return;
+  const n = RESOURCES.reduce((s, r) => s + (discardGive[r] || 0), 0);
+  if (n !== entry.must) return;
+  if (!game.discard(entry.player, { ...discardGive })) return;
+  discardGive = emptyHand();
+  discardKey = '';
+  modalOpen = false;
+  closeModal();
+  sfx.click();
+  afterAction();
+}
+
+function tapPlenty(r) {
+  if (busy || !game || game.phase !== PHASE.PLENTY || !game.isHuman()) return;
+  plentyPicks.push(r);
+  if (plentyPicks.length >= 2) {
+    const [a, b] = plentyPicks;
+    plentyPicks = [];
+    if (!game.yearOfPlenty(a, b)) return;
+    modalOpen = false;
+    closeModal();
+    sfx.click();
+    afterAction();
+    return;
+  }
+  syncTrayButtons();
+  applyPanelStatus();
+  sfx.click();
+}
+
+function confirmMonopoly(r) {
+  if (busy || !game || game.phase !== PHASE.MONOPOLY || !game.isHuman()) return;
+  if (!game.monopoly(r)) return;
+  modalOpen = false;
+  closeModal();
+  sfx.click();
+  afterAction();
+}
+
+function handleTrayAction(act) {
+  if (TRAY_SETTINGS.has(act)) {
+    runTraySettings(act);
+    return true;
+  }
+  if (act === 'cards') {
+    trayScreen = 'cards';
+    syncTrayButtons();
+    applyPanelStatus();
+    sfx.click();
+    return true;
+  }
+  if (act === 'cardsBack') {
+    trayScreen = 'actions';
+    syncTrayButtons();
+    applyPanelStatus();
+    sfx.click();
+    return true;
+  }
+  if (act === 'tradeCancel') {
+    closeTradeUi();
+    return true;
+  }
+  if (act === 'tradeGo') {
+    confirmTrade();
+    return true;
+  }
+  const giveRes = actionArg(act, 'give:');
+  if (giveRes) {
+    if (!busy) {
+      tradeGive = giveRes;
+      if (tradeGet === giveRes) tradeGet = null;
+      syncTrayButtons();
+      applyPanelStatus();
+      sfx.click();
+    }
+    return true;
+  }
+  const getRes = actionArg(act, 'get:');
+  if (getRes) {
+    if (!busy) {
+      tradeGet = getRes;
+      syncTrayButtons();
+      applyPanelStatus();
+      sfx.click();
+    }
+    return true;
+  }
+  const discRes = actionArg(act, 'discard:');
+  if (discRes) {
+    tapDiscard(discRes);
+    return true;
+  }
+  if (act === 'discardGo') {
+    confirmDiscard();
+    return true;
+  }
+  if (act === 'discardClear') {
+    if (!busy) {
+      discardGive = emptyHand();
+      syncTrayButtons();
+      applyPanelStatus();
+      sfx.click();
+    }
+    return true;
+  }
+  const plentyRes = actionArg(act, 'plenty:');
+  if (plentyRes) {
+    tapPlenty(plentyRes);
+    return true;
+  }
+  const monoRes = actionArg(act, 'mono:');
+  if (monoRes) {
+    confirmMonopoly(monoRes);
+    return true;
+  }
+  const devId = actionArg(act, 'playDev:');
+  if (devId != null) {
+    trayScreen = 'actions';
+    runHudAction('playDev', devId);
+    return true;
+  }
+  const stealId = stealActionId(act);
+  if (stealId != null) {
+    trySteal(stealId);
+    return true;
+  }
+  return false;
 }
 
 function updateHighlights() {
@@ -496,7 +940,7 @@ function syncSpotOverlay() {
 }
 
 function pickables() {
-  const list = [...handles.pickables(), ...tray.pickables()];
+  const list = [...handles.pickables(), ...tray.pickables(), ...avatars.pickables()];
   for (const m of boardView.vertexMarkers.values()) if (m.visible) list.push(m);
   for (const m of boardView.edgeMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
   for (const m of boardView.hexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
@@ -507,16 +951,34 @@ function pickables() {
   return list;
 }
 
+function stealActionId(action) {
+  if (typeof action !== 'string' || !action.startsWith('steal:')) return null;
+  return Number(action.slice(6));
+}
+
+function trySteal(fromId) {
+  if (!game || busy || game.phase !== PHASE.STEAL || !game.isHuman()) return false;
+  if (!game.steal(Number(fromId))) return false;
+  closeModal();
+  modalOpen = false;
+  sfx.click();
+  afterAction();
+  return true;
+}
+
 function applyHit(obj) {
   if (!obj) return;
   const data = obj.userData;
   if (data.kind === 'tray') {
-    if (TRAY_SETTINGS.has(data.action)) {
-      runTraySettings(data.action);
-      return;
-    }
+    if (data.disabled && !TRAY_SETTINGS.has(data.action)) return;
+    tray.flashPress(data.action);
+    if (handleTrayAction(data.action)) return;
     if (!game || data.disabled) return;
     runHudAction(data.action);
+    return;
+  }
+  if (data.kind === 'avatar') {
+    trySteal(data.id);
     return;
   }
   if (!game) return;
@@ -538,8 +1000,9 @@ function applyHit(obj) {
     intent = null;
     afterAction();
   } else if (data.kind === 'hex') {
-    game.moveRobber(data.id);
+    if (!game.moveRobber(data.id)) return;
     sfx.place();
+    if (game.phase !== PHASE.STEAL) showToast('No neighbor to steal from.');
     afterAction();
   }
 }
@@ -548,6 +1011,8 @@ function resolvePick(hits) {
   if (!hits.length) return null;
   const trayHit = hits.find((h) => h.object.userData?.kind === 'tray');
   if (trayHit) return trayHit.object;
+  const avatarHit = hits.find((h) => h.object.userData?.kind === 'avatar');
+  if (avatarHit) return avatarHit.object;
   const handleHit = hits.find((h) => h.object.userData?.handleRoot);
   if (handleHit) return handleHit.object;
   return hits[0].object;
@@ -584,6 +1049,7 @@ function hoverPickables() {
   }
   tray.setHover(obj);
   handles.setHover(obj);
+  avatars.setHover(obj);
 }
 
 function setupXR() {
@@ -597,6 +1063,11 @@ function setupXR() {
     controller.add(new THREE.Line(geo, lineMat));
     controller.addEventListener('selectstart', () => {
       tryGrab(controller);
+      if (grabs.has(controller)) return;
+      const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+      const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
+      const hit = hoverFromRay(origin, dir);
+      if (hit?.userData?.kind === 'tray' && !hit.userData.disabled) tray.setPressed(hit.userData.action);
     });
     controller.addEventListener('selectend', () => {
       releaseGrab(controller);
@@ -694,6 +1165,9 @@ async function enterVR() {
     setPassthrough(passthrough);
     handles.setVisible(handlesOn);
     document.documentElement.classList.add('xr-presenting');
+    closeModal();
+    syncTrayButtons();
+    applyPanelStatus();
     await renderer.xr.setSession(session);
     session.addEventListener('end', () => {
       grabs.clear();
@@ -735,73 +1209,119 @@ function needsAI() {
 
 async function afterAction() {
   refresh();
-  await pumpAI();
-  refresh();
-  presentModals();
+  try {
+    await pumpAI();
+  } finally {
+    refresh();
+    presentModals();
+  }
+}
+
+function flushAIDiscards() {
+  if (!game || game.phase !== PHASE.DISCARD) return;
+  let n = 0;
+  while (game.discardQueue.some((d) => game.player(d.player).isAI) && n++ < 8) {
+    if (!takeAITurn(game)) break;
+  }
 }
 
 async function pumpAI() {
   if (!game) return;
   busy = true;
-  let guard = 0;
-  while (needsAI() && guard++ < 60) {
-    await sleep(game.phase === PHASE.MAIN || game.phase === PHASE.ROLL ? 700 : 320);
-    const ok = takeAITurn(game);
-    if (game.lastAction?.type === 'roll') {
-      dice.placeFor(game.current, game.playerCount);
-      dice.rollTo(game.dice);
-      sfx.dice();
-      playProduction();
-      await sleep(Math.max(750, Math.ceil(production.timeLeft() * 1000)));
+  try {
+    flushAIDiscards();
+    let guard = 0;
+    let seenRoll = null;
+    while (needsAI() && guard++ < 80) {
+      await sleep(game.phase === PHASE.MAIN || game.phase === PHASE.ROLL ? 700 : 220);
+      const ok = takeAITurn(game);
+      const action = game.lastAction;
+      if (action?.type === 'roll' && action !== seenRoll) {
+        seenRoll = action;
+        dice.placeFor(game.current, game.playerCount);
+        dice.rollTo(game.dice);
+        sfx.dice();
+        if (action.production?.length) playProduction(action.production);
+        flushAIDiscards();
+        refresh();
+        const waitMs = action.production?.length
+          ? Math.min(4500, Math.max(750, Math.ceil(production.timeLeft() * 1000)))
+          : 650;
+        await sleep(waitMs);
+      } else {
+        flushAIDiscards();
+        refresh();
+      }
+      if (!ok) break;
     }
-    refresh();
-    if (!ok) break;
+  } finally {
+    busy = false;
   }
-  busy = false;
 }
 
 function presentModals() {
   if (!game) return;
+  const trayOnly = preferTrayUi();
   if (game.phase === PHASE.GAME_OVER) {
     sfx.win();
-    showWin(game);
     modalOpen = true;
+    if (!trayOnly) showWin(game);
+    syncTrayButtons();
+    applyPanelStatus();
     return;
   }
-  if (game.phase === PHASE.DISCARD && game.discardQueue.some((d) => !game.player(d.player).isAI)) {
+  if (game.phase === PHASE.DISCARD && humanDiscardEntry()) {
     modalOpen = true;
-    showDiscard(game, (id, give) => {
-      modalOpen = false;
-      game.discard(id, give);
-      afterAction();
-    });
+    ensureDiscardState();
+    if (!trayOnly) {
+      const opened = showDiscard(game, (id, give) => {
+        modalOpen = false;
+        discardGive = emptyHand();
+        discardKey = '';
+        game.discard(id, give);
+        afterAction();
+      });
+      if (!opened) modalOpen = false;
+    }
+    syncTrayButtons();
+    applyPanelStatus();
     return;
   }
   if (game.phase === PHASE.STEAL && game.isHuman()) {
     modalOpen = true;
-    showSteal(game, (id) => {
-      modalOpen = false;
-      game.steal(id);
-      afterAction();
-    });
+    if (!trayOnly) {
+      showSteal(game, (id) => {
+        trySteal(id);
+      });
+    }
     return;
   }
   if (game.phase === PHASE.PLENTY && game.isHuman()) {
     modalOpen = true;
-    showPlenty((a, b) => {
-      modalOpen = false;
-      game.yearOfPlenty(a, b);
-      afterAction();
-    });
+    plentyPicks = [];
+    if (!trayOnly) {
+      showPlenty((a, b) => {
+        modalOpen = false;
+        plentyPicks = [];
+        game.yearOfPlenty(a, b);
+        afterAction();
+      });
+    }
+    syncTrayButtons();
+    applyPanelStatus();
     return;
   }
   if (game.phase === PHASE.MONOPOLY && game.isHuman()) {
     modalOpen = true;
-    showMonopoly((r) => {
-      modalOpen = false;
-      game.monopoly(r);
-      afterAction();
-    });
+    if (!trayOnly) {
+      showMonopoly((r) => {
+        modalOpen = false;
+        game.monopoly(r);
+        afterAction();
+      });
+    }
+    syncTrayButtons();
+    applyPanelStatus();
   }
 }
 
@@ -811,9 +1331,10 @@ function onResize() {
   renderer.setSize(innerWidth, innerHeight);
 }
 
-function playProduction() {
-  if (!game || game.lastAction?.type !== 'roll') return;
-  production.play(game.lastAction.production, {
+function playProduction(events) {
+  const list = events ?? (game?.lastAction?.type === 'roll' ? game.lastAction.production : null);
+  if (!game || !list?.length) return;
+  production.play(list, {
     board: game.board,
     players: game.players,
     playerCount: game.playerCount,
@@ -828,6 +1349,15 @@ window.__catan = {
   get game() {
     return game;
   },
+  get tray() {
+    return tray;
+  },
+  get trayScreen() {
+    return trayScreen;
+  },
   afterAction,
   refresh,
+  presentModals,
+  trySteal,
+  formatRollResult,
 };

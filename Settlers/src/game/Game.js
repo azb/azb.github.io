@@ -53,6 +53,7 @@ export class Game {
     this.largestArmy = { player: null, size: 0 };
     this.winner = null;
     this.lastAction = null;
+    this.lastRoll = null;
     this.afterRobber = PHASE.MAIN;
     this.note(`Island seed ${this.seed}. ${playerCount} captains set sail.`);
   }
@@ -295,6 +296,12 @@ export class Game {
       production = this.produce(sum);
       this.phase = PHASE.MAIN;
     }
+    this.lastRoll = {
+      dice: [a, b],
+      production,
+      seven: sum === 7,
+      playerId: this.current,
+    };
     this.emit({ type: 'roll', dice: this.dice, production });
     return this.dice;
   }
@@ -386,6 +393,7 @@ export class Game {
     }
     this.stealCandidates = [...victims];
     this.phase = this.stealCandidates.length ? PHASE.STEAL : this.afterRobber;
+    if (!this.stealCandidates.length) this.note('No neighbor to steal from.');
     this.emit({ type: 'robber', hexId });
     return true;
   }

@@ -3,6 +3,9 @@ import { HEX_SIZE, TABLE_HEIGHT, RESOURCE_COLOR, PIPS } from '../game/constants.
 import { feltMap, woodMap, numberTexture, labelTexture } from './textures.js';
 
 const TILE_HEIGHT = 0.036;
+const HARBOR_SIGN = '#efe0bc';
+const HARBOR_BEAM = '#f4d27a';
+const HARBOR_GLOW = '#fff6dc';
 
 function seeded(q, r, i = 0) {
   const s = Math.sin(q * 12.9898 + r * 78.233 + i * 3.1) * 43758.5453;
@@ -68,7 +71,7 @@ export class BoardView {
     this.markerLayer = new THREE.Group();
     this.group.add(this.pieceLayer, this.markerLayer);
     this.robber = null;
-    this.felt = feltMap([46, 118, 205]);
+    this.felt = feltMap([48, 110, 255]);
     this.wood = woodMap();
   }
 
@@ -85,9 +88,11 @@ export class BoardView {
 
     const seaMat = new THREE.MeshStandardMaterial({
       map: this.felt,
-      color: '#7ec8f0',
-      roughness: 0.42,
-      metalness: 0.08,
+      color: '#c8e8ff',
+      roughness: 0.36,
+      metalness: 0.1,
+      emissive: '#1568d4',
+      emissiveIntensity: 0.4,
     });
     for (const h of board.sea) {
       const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.98, HEX_SIZE * 0.98, 0.02, 6), seaMat);
@@ -184,39 +189,110 @@ export class BoardView {
     }
 
     for (const harbor of board.harbors) {
-      const e = board.edges.get(harbor.edge);
-      const a = board.vertices.get(e.a);
-      const b = board.vertices.get(e.b);
-      const mx = (a.x + b.x) / 2;
-      const mz = (a.z + b.z) / 2;
-      const out = Math.hypot(mx, mz) || 1;
-      const px = mx + (mx / out) * 0.08;
-      const pz = mz + (mz / out) * 0.08;
-      const post = new THREE.Mesh(
-        new THREE.BoxGeometry(0.04, 0.004, 0.09),
-        new THREE.MeshStandardMaterial({ map: this.wood, color: '#8a5a32' }),
-      );
-      post.position.set(px, 0.024, pz);
-      post.lookAt(new THREE.Vector3(0, 0.024, 0));
-      const tag = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.07, 0.07),
-        new THREE.MeshBasicMaterial({
-          map: labelTexture(harbor.type === 'generic' ? '3:1' : `2:1\n${harbor.type}`, {
-            width: 512,
-            height: 512,
-            font: 110,
-            fill: '#efe0bc',
-          }),
-        }),
-      );
-      tag.position.set(px, 0.07, pz);
-      tag.lookAt(new THREE.Vector3(px, 0.2, pz + 0.4));
-      this.group.add(post, tag);
+      this.addHarbor(board, harbor);
     }
 
     this.robber = this.makeRobber();
     this.group.add(this.robber);
     this.setRobber(board);
+  }
+
+  addHarbor(board, harbor) {
+    const nodes = (harbor.vertices || [])
+      .map((id) => board.vertices.get(id))
+      .filter(Boolean);
+    if (!nodes.length) {
+      const e = board.edges.get(harbor.edge);
+      if (e) {
+        const a = board.vertices.get(e.a);
+        const b = board.vertices.get(e.b);
+        if (a) nodes.push(a);
+        if (b) nodes.push(b);
+      }
+    }
+    if (!nodes.length) return;
+
+    const mx = nodes.reduce((s, v) => s + v.x, 0) / nodes.length;
+    const mz = nodes.reduce((s, v) => s + v.z, 0) / nodes.length;
+    const out = Math.hypot(mx, mz) || 1;
+    const nx = mx / out;
+    const nz = mz / out;
+    const px = mx + nx * 0.1;
+    const pz = mz + nz * 0.1;
+    const signY = 0.078;
+    const woodMat = new THREE.MeshStandardMaterial({ map: this.wood, color: '#8a5a32' });
+    const beamMat = unlitMat(HARBOR_BEAM, 0.98);
+    const glowMat = unlitMat(HARBOR_GLOW, 0.9);
+    const haloMat = unlitMat(HARBOR_SIGN, 0.7);
+
+    const dock = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.008, 0.11), woodMat);
+    dock.position.set((px + mx) * 0.5, 0.021, (pz + mz) * 0.5);
+    orientZ(dock, px, 0.021, pz, mx, 0.021, mz);
+
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.005, 0.09), woodMat);
+    post.position.set(px, 0.028, pz);
+    post.lookAt(new THREE.Vector3(mx, 0.028, mz));
+
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.005, 0.055, 8), woodMat);
+    pole.position.set(px, 0.05, pz);
+
+    const tag = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.072, 0.072),
+      new THREE.MeshBasicMaterial({
+        map: labelTexture(harbor.type === 'generic' ? '3:1' : `2:1\n${harbor.type}`, {
+          width: 512,
+          height: 512,
+          font: 110,
+          fill: HARBOR_SIGN,
+        }),
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    tag.position.set(px, signY, pz);
+    tag.lookAt(new THREE.Vector3(mx, 0.38, mz));
+    tag.renderOrder = 8;
+
+    this.group.add(dock, post, pole, tag);
+
+    if (nodes.length >= 2) {
+      const ox = nx * 0.018;
+      const oz = nz * 0.018;
+      const rail = cylinderBetween(
+        nodes[0].x + ox, 0.024, nodes[0].z + oz,
+        nodes[1].x + ox, 0.024, nodes[1].z + oz,
+        0.0055, beamMat,
+      );
+      rail.renderOrder = 7;
+      this.group.add(rail);
+    }
+
+    for (const v of nodes) {
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.007, 0.12), woodMat);
+      const plen = Math.hypot(v.x - px, v.z - pz);
+      plank.scale.z = plen / 0.12;
+      plank.position.set((px + v.x) * 0.5, 0.02, (pz + v.z) * 0.5);
+      orientZ(plank, px, 0.02, pz, v.x, 0.02, v.z);
+
+      const beam = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.01, v.z, 0.0072, beamMat);
+      const core = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.01, v.z, 0.0032, glowMat);
+      beam.renderOrder = 7;
+      core.renderOrder = 7;
+
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.004, 16), beamMat);
+      disc.position.set(v.x, TILE_HEIGHT + 0.003, v.z);
+      disc.renderOrder = 7;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.0036, 8, 20), glowMat);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(v.x, TILE_HEIGHT + 0.008, v.z);
+      ring.renderOrder = 7;
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.0022, 6, 20), haloMat);
+      halo.rotation.x = Math.PI / 2;
+      halo.position.set(v.x, TILE_HEIGHT + 0.01, v.z);
+      halo.renderOrder = 7;
+
+      this.group.add(plank, beam, core, disc, ring, halo);
+    }
   }
 
   decorate(h, height) {
@@ -363,6 +439,42 @@ export class BoardView {
     this.showEdges([]);
     this.showHexes([]);
   }
+}
+
+function unlitMat(color, opacity = 1) {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: opacity < 1,
+    opacity,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+function cylinderBetween(ax, ay, az, bx, by, bz, radius, material) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const dz = bz - az;
+  const len = Math.hypot(dx, dy, dz) || 0.001;
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 8), material);
+  mesh.position.set((ax + bx) * 0.5, (ay + by) * 0.5, (az + bz) * 0.5);
+  mesh.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    new THREE.Vector3(dx / len, dy / len, dz / len),
+  );
+  return mesh;
+}
+
+function orientZ(mesh, ax, ay, az, bx, by, bz) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const dz = bz - az;
+  const len = Math.hypot(dx, dy, dz) || 1;
+  mesh.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(dx / len, dy / len, dz / len),
+  );
 }
 
 function houseMesh(v, color) {

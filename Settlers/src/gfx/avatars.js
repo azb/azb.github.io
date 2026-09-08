@@ -16,6 +16,9 @@ export class PlayerAvatars {
     scene.add(this.group);
     this.figures = [];
     this.t = 0;
+    this.currentId = null;
+    this.stealIds = null;
+    this.hoverId = null;
   }
 
   rebuild(players) {
@@ -29,24 +32,55 @@ export class PlayerAvatars {
       fig.position.set(seat.x, 0, seat.z);
       fig.rotation.y = seat.yaw;
       this.group.add(fig);
-      this.figures.push({ id: p.id, group: fig, glow: fig.userData.glow });
+      this.figures.push({ id: p.id, group: fig, glow: fig.userData.glow, hit: fig.userData.hit });
     });
+    this.applyHighlights();
   }
 
   setCurrent(id) {
+    this.currentId = id;
+    if (!this.stealIds) this.applyHighlights();
+  }
+
+  setStealTargets(ids) {
+    this.stealIds = ids?.length ? [...ids] : null;
+    this.applyHighlights();
+  }
+
+  setHover(obj) {
+    const id = obj?.userData?.kind === 'avatar' ? obj.userData.id : null;
+    if (id === this.hoverId) return;
+    this.hoverId = id;
+    this.applyHighlights();
+  }
+
+  pickables() {
+    if (!this.stealIds) return [];
+    const set = new Set(this.stealIds);
+    return this.figures.filter((f) => set.has(f.id)).map((f) => f.hit || f.group);
+  }
+
+  applyHighlights() {
+    const steal = this.stealIds ? new Set(this.stealIds) : null;
     for (const f of this.figures) {
-      const on = f.id === id;
+      const on = steal ? steal.has(f.id) : f.id === this.currentId;
       f.glow.visible = on;
       f.group.userData.active = on;
+      const hot = steal && this.hoverId === f.id && on;
+      f.glow.scale.setScalar(hot ? 1.55 : steal && on ? 1.28 : 1);
     }
   }
 
   update(dt, camera) {
     this.t += dt;
+    const steal = Boolean(this.stealIds);
     for (const f of this.figures) {
       const bob = Math.sin(this.t * 1.6 + f.id) * 0.008;
       f.group.position.y = bob;
-      if (f.group.userData.active) f.glow.material.opacity = 0.35 + Math.sin(this.t * 4) * 0.12;
+      if (f.group.userData.active) {
+        const pulse = steal ? 0.55 + Math.sin(this.t * 5.5) * 0.28 : 0.35 + Math.sin(this.t * 4) * 0.12;
+        f.glow.material.opacity = this.hoverId === f.id ? Math.min(1, pulse + 0.25) : pulse;
+      }
       if (camera) f.group.userData.tag.lookAt(camera.position);
     }
   }
@@ -115,14 +149,23 @@ function makeSettler(player) {
   );
   tag.position.set(0, 1.08, 0);
 
+  const hit = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.18, 1.12, 12),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+  );
+  hit.position.y = 0.56;
+
   g.add(chair, back, leg(-0.08, 0.08), leg(0.08, 0.08), leg(-0.08, -0.08), leg(0.08, -0.08));
-  g.add(hips, torso, head, hair, eye(-1), eye(1), arm(-1), arm(1), glow, tag);
-  g.userData = { glow, tag, active: false };
+  g.add(hips, torso, head, hair, eye(-1), eye(1), arm(-1), arm(1), glow, tag, hit);
+  const data = { glow, tag, hit, active: false, kind: 'avatar', id: player.id };
+  g.userData = data;
   g.traverse((o) => {
+    o.userData = { ...o.userData, kind: 'avatar', id: player.id };
     if (o.isMesh) o.castShadow = true;
   });
   glow.castShadow = false;
   tag.castShadow = false;
+  hit.castShadow = false;
   return g;
 }
 

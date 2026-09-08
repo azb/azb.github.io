@@ -123,10 +123,12 @@ function makeOrb(color, label) {
   return g;
 }
 
+const DICE_R = 0.82;
+
 export class DicePair {
   constructor(scene) {
     this.group = new THREE.Group();
-    this.group.position.set(0, TABLE_HEIGHT + 0.045, 0.95);
+    this.group.position.set(0, TABLE_HEIGHT + 0.045, DICE_R);
     scene.add(this.group);
     this.dice = [makeDie(), makeDie()];
     this.dice[0].position.x = -0.04;
@@ -139,12 +141,12 @@ export class DicePair {
 
   placeFor(index, count) {
     if (index === 0) {
-      this.group.position.set(0, TABLE_HEIGHT + 0.045, 0.95);
+      this.group.position.set(0, TABLE_HEIGHT + 0.045, DICE_R);
       this.group.rotation.y = 0;
       return;
     }
     const a = (index / Math.max(1, count)) * Math.PI * 2;
-    const r = 0.95;
+    const r = DICE_R;
     this.group.position.set(Math.sin(a) * r, TABLE_HEIGHT + 0.045, Math.cos(a) * r);
     this.group.rotation.y = a;
   }
@@ -245,6 +247,8 @@ export class Tray {
     this.hand = Object.fromEntries(RESOURCES.map((r) => [r, 0]));
     this.status = '';
     this.hoverAction = null;
+    this.pressAction = null;
+    this._pressTimer = 0;
     this.draw();
   }
 
@@ -263,16 +267,49 @@ export class Tray {
     const pad = 36;
     const inner = TEX_W - pad * 2;
     const gap = 16;
-    if (this.screen === 'settings') {
-      const bh = 128;
-      const by0 = 112;
+    const stack = this.screen === 'settings' || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
+    if (stack) {
+      const n = Math.max(defs.length, 1);
+      const by0 = this.screen === 'settings' ? 96 : 160;
+      const bottom = TEX_H - 28;
+      const stackGap = this.screen === 'steal' || this.screen === 'win' ? 18 : 14;
+      const cap = this.screen === 'steal' || this.screen === 'win' ? 110 : 104;
+      const bh = Math.min(cap, Math.max(56, Math.floor((bottom - by0 - (n - 1) * stackGap) / n)));
       return defs.map((def, i) => ({
         def,
         px: pad,
-        py: by0 + i * (bh + 22),
+        py: by0 + i * (bh + stackGap),
         pw: inner,
         ph: bh,
       }));
+    }
+    if (this.screen === 'trade' || this.screen === 'discard' || this.screen === 'plenty' || this.screen === 'monopoly') {
+      const give = defs.filter((d) => String(d.action).startsWith('give:'));
+      const get = defs.filter((d) => String(d.action).startsWith('get:'));
+      const res = defs.filter((d) => /^(discard|plenty|mono):/.test(String(d.action)));
+      const extra = defs.filter((d) => {
+        const a = String(d.action);
+        return !a.startsWith('give:') && !a.startsWith('get:') && !/^(discard|plenty|mono):/.test(a);
+      });
+      const layout = [];
+      const row = (list, y, h) => {
+        if (!list.length) return;
+        const n = list.length;
+        const bw = (inner - gap * (n - 1)) / n;
+        list.forEach((def, i) => {
+          layout.push({ def, px: pad + i * (bw + gap), py: y, pw: bw, ph: h });
+        });
+      };
+      if (this.screen === 'trade') {
+        row(give, 250, 76);
+        row(get, 348, 76);
+        row(extra, 446, 88);
+      } else {
+        const bh = this.screen === 'discard' ? 90 : 110;
+        row(res, 248, bh);
+        row(extra, 248 + bh + 20, 88);
+      }
+      return layout;
     }
     const regular = defs.filter((d) => d.action !== 'end' && d.action !== 'settings');
     const end = defs.find((d) => d.action === 'end');
@@ -332,6 +369,26 @@ export class Tray {
     this.draw();
   }
 
+  setPressed(action) {
+    const next = action || null;
+    if (next === this.pressAction) return;
+    this.pressAction = next;
+    this.draw();
+  }
+
+  flashPress(action) {
+    if (!action) return;
+    clearTimeout(this._pressTimer);
+    this.pressAction = action;
+    this.draw();
+    this._pressTimer = setTimeout(() => {
+      if (this.pressAction === action) {
+        this.pressAction = null;
+        this.draw();
+      }
+    }, 140);
+  }
+
   pickables() {
     return this.buttons.map((b) => b.mesh);
   }
@@ -358,70 +415,103 @@ export class Tray {
     ctx.font = '700 28px Trebuchet MS, Segoe UI, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(this.screen === 'settings' ? 'Settings' : 'Actions', 36, 40);
+    const titles = {
+      settings: 'Settings',
+      steal: 'Steal a card',
+      trade: 'Bank trade',
+      discard: 'Discard',
+      plenty: 'Year of Plenty',
+      monopoly: 'Monopoly',
+      cards: 'Dev cards',
+      win: 'Victory',
+    };
+    ctx.fillText(titles[this.screen] || 'Actions', 36, 40);
 
-    if (this.screen !== 'settings') {
-      const status = this.status.replace(/\n/g, ' · ') || 'Sit down to begin';
+    const hideStatus = this.screen === 'settings';
+    const hideChips = hideStatus || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
+    if (!hideStatus) {
+      const lines = String(this.status || 'Sit down to begin')
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
       roundRect(ctx, 36, 64, w - 72, 72, 16, '#2a1c12');
       ctx.fillStyle = '#ffe08a';
-      ctx.font = '700 32px Trebuchet MS, Segoe UI, sans-serif';
       ctx.textAlign = 'center';
-      fitText(ctx, status, w / 2, 100, w - 120, 32);
+      if (lines.length >= 2) {
+        fitText(ctx, lines[0], w / 2, 86, w - 120, 28);
+        fitText(ctx, lines.slice(1).join(' · '), w / 2, 114, w - 120, 24);
+      } else {
+        ctx.font = '700 32px Trebuchet MS, Segoe UI, sans-serif';
+        fitText(ctx, lines[0], w / 2, 100, w - 120, 32);
+      }
 
-      const pad = 36;
-      const inner = w - pad * 2;
-      const gap = 14;
-      const cw = (inner - gap * 4) / 5;
-      ctx.textAlign = 'center';
-      RESOURCES.forEach((r, i) => {
-        const x = pad + i * (cw + gap);
-        const dark = r === 'wood' || r === 'brick' || r === 'ore';
-        roundRect(ctx, x, 152, cw, 80, 14, RESOURCE_COLOR[r]);
-        ctx.fillStyle = dark ? '#f7efe0' : '#1a120c';
-        ctx.font = '700 34px Trebuchet MS, Segoe UI, sans-serif';
-        ctx.fillText(String(this.hand[r] ?? 0), x + cw / 2, 178);
-        ctx.font = '700 20px Trebuchet MS, Segoe UI, sans-serif';
-        ctx.fillText(RESOURCE_LABEL[r], x + cw / 2, 210);
-      });
+      if (!hideChips) {
+        const pad = 36;
+        const inner = w - pad * 2;
+        const gap = 14;
+        const cw = (inner - gap * 4) / 5;
+        ctx.textAlign = 'center';
+        RESOURCES.forEach((r, i) => {
+          const x = pad + i * (cw + gap);
+          const dark = r === 'wood' || r === 'brick' || r === 'ore';
+          roundRect(ctx, x, 152, cw, 80, 14, RESOURCE_COLOR[r]);
+          ctx.fillStyle = dark ? '#f7efe0' : '#1a120c';
+          ctx.font = '700 34px Trebuchet MS, Segoe UI, sans-serif';
+          ctx.fillText(String(this.hand[r] ?? 0), x + cw / 2, 178);
+          ctx.font = '700 20px Trebuchet MS, Segoe UI, sans-serif';
+          ctx.fillText(RESOURCE_LABEL[r], x + cw / 2, 210);
+        });
+      }
     }
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const slot of this.buttonLayout(this.buttonDefs)) {
-      const hot = this.hoverAction === slot.def.action && !slot.def.disabled;
-      const end = slot.def.action === 'end';
-      const settings = slot.def.action === 'settings';
-      const back = slot.def.action === 'settingsBack';
-      const toggle = slot.def.action === 'passthrough' || slot.def.action === 'handles';
+      const hovered = this.hoverAction === slot.def.action;
+      const pressed = this.pressAction === slot.def.action && !slot.def.disabled;
+      const hot = hovered && !pressed;
+      const act = String(slot.def.action);
+      const end = act === 'end';
+      const settings = act === 'settings';
+      const back = act === 'settingsBack' || act === 'cardsBack' || act === 'tradeCancel';
+      const restart = act === 'restart';
+      const toggle = act === 'passthrough' || act === 'handles';
+      const steal = act.startsWith('steal:');
+      const tint = slot.def.color && (steal || /^(give|get|discard|plenty|mono):/.test(act));
+      const selected = !!slot.def.selected;
+      const confirm = act === 'tradeGo' || act === 'discardGo' || restart;
       let fill = '#f3e2c4';
       let ink = '#2a1c12';
       if (slot.def.disabled) {
-        fill = '#5c5348';
+        fill = hot ? '#6e665c' : '#5c5348';
         ink = '#d0c4b2';
-      } else if (end) {
-        fill = hot ? '#3aaa4c' : '#2f8a3c';
-        ink = '#f7fff4';
-      } else if (toggle && slot.def.on) {
-        fill = hot ? '#3aaa4c' : '#2f8a3c';
+      } else if (tint) {
+        fill = pressed ? '#2a1c12' : hot || selected ? '#fff8dc' : slot.def.color;
+        ink = pressed ? '#f7efe0' : hot || selected ? '#1a120c' : inkFor(slot.def.color);
+      } else if (end || confirm || (toggle && slot.def.on)) {
+        fill = pressed ? '#1f6a2c' : hot ? '#4ec45f' : '#2f8a3c';
         ink = '#f7fff4';
       } else if (toggle) {
-        fill = hot ? '#6a5c4c' : '#5c5348';
+        fill = pressed ? '#3f382f' : hot ? '#7a6c5a' : '#5c5348';
         ink = '#f3e2c4';
       } else if (settings) {
-        fill = hot ? '#e8d4a8' : '#c9a44a';
-      } else if (hot) {
-        fill = '#fff6e0';
+        fill = pressed ? '#a68630' : hot ? '#e8c86a' : '#c9a44a';
+      } else {
+        fill = pressed ? '#c4ad82' : hot ? '#fff8dc' : '#f3e2c4';
       }
       roundRect(ctx, slot.px, slot.py, slot.pw, slot.ph, 18, fill);
-      if (hot) {
-        ctx.strokeStyle = '#c9a44a';
+      if (pressed) {
+        ctx.strokeStyle = '#3a1f0c';
         ctx.lineWidth = 6;
+        ctx.stroke();
+      } else if (hot || steal || selected) {
+        ctx.strokeStyle = slot.def.disabled ? '#a09070' : '#ffe08a';
+        ctx.lineWidth = slot.def.disabled ? 4 : steal && !hot && !selected ? 6 : 8;
         ctx.stroke();
       }
       ctx.fillStyle = ink;
-      const big = end || back || toggle;
-      ctx.font = big ? '700 40px Trebuchet MS, Segoe UI, sans-serif' : '700 34px Trebuchet MS, Segoe UI, sans-serif';
-      ctx.fillText(slot.def.label, slot.px + slot.pw / 2, slot.py + slot.ph / 2);
+      const big = end || back || restart || toggle || steal || confirm || this.screen === 'cards' || this.screen === 'win';
+      fitText(ctx, slot.def.label, slot.px + slot.pw / 2, slot.py + slot.ph / 2, slot.pw - 28, big ? 40 : 30);
     }
 
     this.tex.needsUpdate = true;
@@ -439,6 +529,15 @@ function roundRect(ctx, x, y, w, h, r, fill) {
   ctx.closePath();
   ctx.fillStyle = fill;
   ctx.fill();
+}
+
+function inkFor(hex) {
+  const c = String(hex || '').replace('#', '');
+  if (c.length < 6) return '#f7efe0';
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 160 ? '#1a120c' : '#f7efe0';
 }
 
 function fitText(ctx, text, x, y, maxW, font) {
