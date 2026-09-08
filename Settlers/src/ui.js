@@ -51,7 +51,7 @@ export function trayStatus(game) {
     [PHASE.FREE_ROADS]: `Place ${game.freeRoads} free road${game.freeRoads > 1 ? 's' : ''}`,
     [PHASE.PLENTY]: 'Take two resources',
     [PHASE.MONOPOLY]: 'Name a resource',
-    [PHASE.GAME_OVER]: `${game.player(game.winner).name} wins`,
+    [PHASE.GAME_OVER]: game.winner != null ? `${game.player(game.winner).name} wins` : 'Game over',
   }[game.phase] || String(game.phase);
   const extra = game.phase === PHASE.MAIN && game.isHuman() ? '\nPoint at END TURN or squeeze grip' : '';
   return `${name} · ${line}${extra}`;
@@ -83,7 +83,7 @@ export function renderHud(game, intent) {
           ${game.longestRoad.player === pl.id ? ' · Road' : ''}
           ${game.largestArmy.player === pl.id ? ' · Army' : ''}
         </div>
-        ${pl.id === view.id ? `<div class="player-res">${RESOURCES.map((r) => `${RESOURCE_LABEL[r][0]}${pl.resources[r]}`).join(' · ')}</div>` : ''}
+        ${pl.id === view.id ? `<div class="player-res">${RESOURCES.map((r) => `${RESOURCE_LABEL[r]} ${pl.resources[r]}`).join(' · ')}</div>` : ''}
       </article>`;
     })
     .join('');
@@ -137,12 +137,10 @@ export function viewPlayer(game) {
   return game.player();
 }
 
-const COST_ABBR = { wood: 'L', brick: 'B', sheep: 'W', wheat: 'G', ore: 'O' };
-
 function cost(map) {
   return Object.entries(map)
-    .map(([k, n]) => `${n}${COST_ABBR[k] || k[0].toUpperCase()}`)
-    .join(' ');
+    .map(([k, n]) => `${n} ${RESOURCE_LABEL[k] || k}`)
+    .join(', ');
 }
 
 export function bindHud(onAction) {

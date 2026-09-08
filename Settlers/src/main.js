@@ -85,6 +85,7 @@ const _handA = new THREE.Vector3();
 const _handB = new THREE.Vector3();
 const _mid = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
+const _spotPos = new THREE.Vector3();
 const grabs = new Map();
 let twoHand = null;
 
@@ -190,6 +191,11 @@ function runHudAction(act, extra) {
 }
 
 bindHud(runHudAction);
+document.getElementById('spot-layer')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-vertex]');
+  if (!b) return;
+  applyHit({ userData: { kind: 'vertex', id: b.dataset.vertex } });
+});
 
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
@@ -205,6 +211,7 @@ renderer.setAnimationLoop(() => {
   } else {
     help.attach(camera);
   }
+  syncSpotOverlay();
   renderer.render(scene, camera);
 });
 
@@ -244,13 +251,13 @@ function refresh() {
   if (!game) return;
   boardView.syncPieces(game);
   renderHud(game, currentIntent());
+  updateHighlights();
   tray.setStatus(trayStatus(game));
   help.set(trayStatus(game));
   tray.setResources(viewPlayer(game).resources);
   tray.setButtons(trayButtons());
   avatars.setCurrent(game.current);
   dice.placeFor(game.current, game.playerCount);
-  updateHighlights();
 }
 
 function trayButtons() {
@@ -411,6 +418,48 @@ function updateGrabs() {
   }
 }
 
+function syncSpotOverlay() {
+  const layer = document.getElementById('spot-layer');
+  if (!layer) return;
+  const xr = renderer.xr.isPresenting;
+  for (const m of boardView.vertexMarkers.values()) {
+    for (const child of m.children) child.visible = xr && m.visible;
+  }
+  if (!game || xr) {
+    if (layer.childElementCount) layer.replaceChildren();
+    return;
+  }
+  const needed = [];
+  for (const [id, m] of boardView.vertexMarkers) {
+    if (m.visible) needed.push([id, m]);
+  }
+  if (layer.childElementCount !== needed.length) {
+    layer.replaceChildren(
+      ...needed.map(([id]) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'spot';
+        b.dataset.vertex = id;
+        b.setAttribute('aria-label', 'Place here');
+        return b;
+      }),
+    );
+  }
+  const w = innerWidth;
+  const h = innerHeight;
+  const kids = layer.children;
+  for (let i = 0; i < needed.length; i++) {
+    const [id, m] = needed[i];
+    m.getWorldPosition(_spotPos);
+    _spotPos.project(camera);
+    const el = kids[i];
+    if (el.dataset.vertex !== id) el.dataset.vertex = id;
+    const onScreen = _spotPos.z > -1 && _spotPos.z < 1 && Math.abs(_spotPos.x) <= 1.2 && Math.abs(_spotPos.y) <= 1.2;
+    el.style.display = onScreen ? 'block' : 'none';
+    el.style.transform = `translate(${_spotPos.x * 0.5 * w + w * 0.5 - 9}px, ${-_spotPos.y * 0.5 * h + h * 0.5 - 9}px)`;
+  }
+}
+
 function pickables() {
   const list = [...handles.pickables(), ...tray.pickables()];
   for (const m of boardView.vertexMarkers.values()) if (m.visible) list.push(m);
@@ -457,7 +506,7 @@ function applyHit(obj) {
 function pickFromCamera() {
   if (!game) return;
   raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(pickables(), false);
+  const hits = raycaster.intersectObjects(pickables(), true);
   applyHit(hits[0]?.object);
 }
 

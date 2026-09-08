@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { HEX_SIZE, TABLE_HEIGHT, RESOURCE_COLOR, PIPS } from '../game/constants.js';
 import { feltMap, woodMap, numberTexture, labelTexture } from './textures.js';
 
+const TILE_HEIGHT = 0.036;
+
 function seeded(q, r, i = 0) {
   const s = Math.sin(q * 12.9898 + r * 78.233 + i * 3.1) * 43758.5453;
   return s - Math.floor(s);
@@ -96,7 +98,7 @@ export class BoardView {
     }
 
     for (const h of board.land) {
-      const height = { desert: 0.03, sheep: 0.032, wheat: 0.034, wood: 0.038, brick: 0.05, ore: 0.07 }[h.resource] || 0.035;
+      const height = TILE_HEIGHT;
       const mat = new THREE.MeshStandardMaterial({
         color: RESOURCE_COLOR[h.resource],
         roughness: 0.78,
@@ -133,35 +135,30 @@ export class BoardView {
       this.hexMarkers.set(h.id, glow);
     }
 
+    const pinMat = new THREE.MeshBasicMaterial({
+      color: 0xffc400,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
     for (const v of board.vertices.values()) {
-      const m = new THREE.Mesh(
-        new THREE.SphereGeometry(0.052, 16, 12),
-        new THREE.MeshBasicMaterial({
-          color: '#ffb000',
-          depthTest: false,
-          depthWrite: false,
-          toneMapped: false,
-        }),
-      );
-      const halo = new THREE.Mesh(
-        new THREE.SphereGeometry(0.078, 12, 10),
-        new THREE.MeshBasicMaterial({
-          color: '#ff6a00',
-          transparent: true,
-          opacity: 0.45,
-          depthTest: false,
-          depthWrite: false,
-          toneMapped: false,
-        }),
-      );
-      m.add(halo);
-      m.position.set(v.x, 0.1, v.z);
-      m.visible = false;
-      m.renderOrder = 10;
-      m.userData = { kind: 'vertex', id: v.id, halo };
-      halo.userData = m.userData;
-      this.markerLayer.add(m);
-      this.vertexMarkers.set(v.id, m);
+      const g = new THREE.Group();
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 10), pinMat);
+      bulb.position.y = 0.018;
+      g.add(bulb);
+      g.position.set(v.x, TILE_HEIGHT, v.z);
+      g.visible = false;
+      g.frustumCulled = false;
+      g.userData = { kind: 'vertex', id: v.id };
+      g.traverse((o) => {
+        o.frustumCulled = false;
+        o.renderOrder = 30;
+        o.userData = g.userData;
+      });
+      this.group.add(g);
+      this.vertexMarkers.set(v.id, g);
     }
 
     for (const e of board.edges.values()) {
@@ -178,7 +175,7 @@ export class BoardView {
           toneMapped: false,
         }),
       );
-      m.position.set((a.x + b.x) / 2, 0.068, (a.z + b.z) / 2);
+      m.position.set((a.x + b.x) / 2, TILE_HEIGHT + 0.01, (a.z + b.z) / 2);
       m.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
       m.renderOrder = 4;
       m.userData = { kind: 'edge', id: e.id };
@@ -319,7 +316,7 @@ export class BoardView {
         new THREE.BoxGeometry(0.016, 0.012, len * 0.78),
         new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.5 }),
       );
-      road.position.set((a.x + b.x) / 2, 0.048, (a.z + b.z) / 2);
+      road.position.set((a.x + b.x) / 2, TILE_HEIGHT + 0.007, (a.z + b.z) / 2);
       road.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
       road.castShadow = true;
       this.pieceLayer.add(road);
@@ -333,20 +330,17 @@ export class BoardView {
   }
 
   showVertices(ids) {
+    const set = new Set(ids);
     for (const [id, m] of this.vertexMarkers) {
-      const on = ids.includes(id);
-      m.visible = on;
+      m.visible = set.has(id);
       m.scale.setScalar(1);
     }
   }
 
   pulseMarkers(t) {
-    const s = 1 + Math.sin(t * 5) * 0.18;
-    const glow = 0.28 + Math.sin(t * 5) * 0.18;
+    const s = 1 + Math.sin(t * 5) * 0.12;
     for (const m of this.vertexMarkers.values()) {
-      if (!m.visible) continue;
-      m.scale.setScalar(s);
-      if (m.userData.halo) m.userData.halo.material.opacity = glow;
+      if (m.visible) m.scale.setScalar(s);
     }
   }
 
@@ -375,12 +369,12 @@ function houseMesh(v, color) {
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.45 });
   const base = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.024, 0.028), mat);
-  base.position.y = 0.06;
+  base.position.y = TILE_HEIGHT + 0.012;
   const roof = new THREE.Mesh(
     new THREE.ConeGeometry(0.026, 0.022, 4),
     new THREE.MeshStandardMaterial({ color: '#3b2414', roughness: 0.7 }),
   );
-  roof.position.y = 0.082;
+  roof.position.y = TILE_HEIGHT + 0.034;
   roof.rotation.y = Math.PI / 4;
   g.add(base, roof);
   g.position.set(v.x, 0, v.z);
@@ -394,14 +388,14 @@ function cityMesh(v, color) {
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
   const keep = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.036), mat);
-  keep.position.y = 0.07;
+  keep.position.y = TILE_HEIGHT + 0.02;
   const tower = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.055, 0.018), mat);
-  tower.position.set(0.016, 0.08, 0.01);
+  tower.position.set(0.016, TILE_HEIGHT + 0.03, 0.01);
   const roof = new THREE.Mesh(
     new THREE.ConeGeometry(0.016, 0.02, 4),
     new THREE.MeshStandardMaterial({ color: '#3b2414' }),
   );
-  roof.position.set(0.016, 0.118, 0.01);
+  roof.position.set(0.016, TILE_HEIGHT + 0.068, 0.01);
   g.add(keep, tower, roof);
   g.position.set(v.x, 0, v.z);
   g.traverse((o) => {

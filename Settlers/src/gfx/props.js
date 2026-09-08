@@ -211,7 +211,7 @@ export class Tray {
     this.group.add(this.status.mesh);
     this.resourceChips = RESOURCES.map((r, i) => {
       const chip = makeResourceChip(r);
-      chip.mesh.position.set((i - 2) * 0.11, 0.07, 0.02);
+      chip.mesh.position.set((i - 2) * 0.132, 0.07, 0.02);
       chip.set(0);
       this.group.add(chip.mesh);
       return chip;
@@ -282,25 +282,25 @@ function makeButtonMesh(label, { width, height, depth, font, fill, ink = '#2a1c1
 
 function makeResourceChip(resource) {
   const dark = resource === 'wood' || resource === 'brick' || resource === 'ore';
+  const word = RESOURCE_LABEL[resource];
   const opts = {
-    width: 512,
+    width: 1024,
     height: 512,
-    font: 200,
-    pad: 20,
+    font: 120,
+    pad: 28,
     fill: RESOURCE_COLOR[resource],
     ink: dark ? '#f7efe0' : '#1a120c',
   };
-  let tex = labelTexture('0', opts);
+  let tex = labelTexture(`0\n${word}`, opts);
   const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.1, 0.036, 0.07),
+    new THREE.BoxGeometry(0.124, 0.038, 0.078),
     new THREE.MeshBasicMaterial({ map: tex }),
   );
-  const short = RESOURCE_LABEL[resource][0];
   return {
     mesh,
     set(n) {
       tex.dispose();
-      tex = labelTexture(`${n}\n${short}`, opts);
+      tex = labelTexture(`${n}\n${word}`, opts);
       mesh.material.map = tex;
       mesh.material.needsUpdate = true;
     },
