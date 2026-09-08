@@ -316,7 +316,7 @@ export class Tray {
     const settings = defs.find((d) => d.action === 'settings');
     const cols = 3;
     const bw = (inner - gap * (cols - 1)) / cols;
-    const bh = 88;
+    const bh = 96;
     const by0 = 248;
     const layout = [];
     regular.forEach((def, i) => {
@@ -511,7 +511,7 @@ export class Tray {
       }
       ctx.fillStyle = ink;
       const big = end || back || restart || toggle || steal || confirm || this.screen === 'cards' || this.screen === 'win';
-      fitText(ctx, slot.def.label, slot.px + slot.pw / 2, slot.py + slot.ph / 2, slot.pw - 28, big ? 40 : 30);
+      drawSlotLabel(ctx, slot, big);
     }
 
     this.tex.needsUpdate = true;
@@ -544,12 +544,68 @@ function fitText(ctx, text, x, y, maxW, font) {
   let size = font;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  while (size > 18) {
+  while (size > 14) {
     ctx.font = `700 ${size}px Trebuchet MS, Segoe UI, sans-serif`;
     if (ctx.measureText(text).width <= maxW) break;
     size -= 2;
   }
   ctx.fillText(text, x, y);
+}
+
+function wrapJoin(ctx, parts, maxW, startSize, minSize = 13) {
+  let size = startSize;
+  while (size >= minSize) {
+    ctx.font = `700 ${size}px Trebuchet MS, Segoe UI, sans-serif`;
+    let ok = true;
+    const lines = [];
+    let cur = '';
+    for (const part of parts) {
+      if (ctx.measureText(part).width > maxW) {
+        ok = false;
+        break;
+      }
+      const next = cur ? `${cur} · ${part}` : part;
+      if (ctx.measureText(next).width <= maxW) cur = next;
+      else {
+        if (cur) lines.push(cur);
+        cur = part;
+      }
+    }
+    if (ok) {
+      if (cur) lines.push(cur);
+      return { lines, size };
+    }
+    size -= 1;
+  }
+  ctx.font = `700 ${minSize}px Trebuchet MS, Segoe UI, sans-serif`;
+  return { lines: [parts.join(' · ')], size: minSize };
+}
+
+function drawSlotLabel(ctx, slot, big) {
+  const title = String(slot.def.label || '');
+  const detail = String(slot.def.detail || '').trim();
+  const cx = slot.px + slot.pw / 2;
+  const cy = slot.py + slot.ph / 2;
+  const maxW = slot.pw - 28;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (!detail) {
+    fitText(ctx, title, cx, cy, maxW, big ? 40 : 30);
+    return;
+  }
+  const parts = detail.split(' · ').map((s) => s.trim()).filter(Boolean);
+  const wrapped = wrapJoin(ctx, parts, maxW, Math.min(18, Math.max(14, Math.floor(slot.ph * 0.2))));
+  const titleSize = Math.min(big ? 32 : 26, Math.max(18, Math.floor(slot.ph * 0.3)));
+  const gap = 4;
+  const block = titleSize + gap + wrapped.lines.length * (wrapped.size + 2);
+  let y = cy - block / 2 + titleSize / 2;
+  fitText(ctx, title, cx, y, maxW, titleSize);
+  y += titleSize / 2 + gap + wrapped.size / 2;
+  ctx.font = `700 ${wrapped.size}px Trebuchet MS, Segoe UI, sans-serif`;
+  for (const line of wrapped.lines) {
+    ctx.fillText(line, cx, y);
+    y += wrapped.size + 2;
+  }
 }
 
 export class HelpBanner {

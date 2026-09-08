@@ -71,11 +71,15 @@ export class BoardView {
     this.markerLayer = new THREE.Group();
     this.group.add(this.pieceLayer, this.markerLayer);
     this.robber = null;
+    this.hoverObj = null;
+    this._flashTimer = 0;
     this.felt = feltMap([48, 110, 255]);
     this.wood = woodMap();
   }
 
   rebuild(board) {
+    this.restoreHover(this.hoverObj);
+    this.hoverObj = null;
     this.group.clear();
     this.pieceLayer = new THREE.Group();
     this.markerLayer = new THREE.Group();
@@ -150,7 +154,7 @@ export class BoardView {
     });
     for (const v of board.vertices.values()) {
       const g = new THREE.Group();
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 10), pinMat);
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 10), pinMat.clone());
       bulb.position.y = 0.018;
       g.add(bulb);
       g.position.set(v.x, TILE_HEIGHT, v.z);
@@ -383,38 +387,143 @@ export class BoardView {
   }
 
   showVertices(ids) {
+    this.restoreHover(this.hoverObj);
     const set = new Set(ids);
     for (const [id, m] of this.vertexMarkers) {
       m.visible = set.has(id);
       m.scale.setScalar(1);
     }
+    this.repaintHover();
   }
 
   pulseMarkers(t) {
     const s = 1 + Math.sin(t * 5) * 0.12;
     for (const m of this.vertexMarkers.values()) {
-      if (m.visible) m.scale.setScalar(s);
+      if (m.visible) m.scale.setScalar(m === this.hoverObj ? s * 1.2 : s);
     }
   }
 
   showEdges(ids) {
+    this.restoreHover(this.hoverObj);
     for (const [id, m] of this.edgeMarkers) {
       m.material.opacity = ids.includes(id) ? 0.8 : 0;
       m.visible = ids.includes(id);
     }
+    this.repaintHover();
   }
 
   showHexes(ids) {
+    this.restoreHover(this.hoverObj);
     for (const [id, m] of this.hexMarkers) {
       m.material.opacity = ids.includes(id) ? 0.45 : 0;
       m.visible = ids.includes(id);
     }
+    this.repaintHover();
   }
 
   clearHighlights() {
     this.showVertices([]);
     this.showEdges([]);
     this.showHexes([]);
+  }
+
+  setHover(obj) {
+    const target = this.hoverTarget(obj);
+    if (target === this.hoverObj) return;
+    this.restoreHover(this.hoverObj);
+    this.hoverObj = target;
+    this.paintHover(target, false);
+  }
+
+  flashPick(obj) {
+    const target = this.hoverTarget(obj) || this.hoverObj;
+    if (!target) return;
+    if (target !== this.hoverObj) {
+      this.restoreHover(this.hoverObj);
+      this.hoverObj = target;
+    }
+    this.paintHover(target, true);
+    clearTimeout(this._flashTimer);
+    this._flashTimer = setTimeout(() => {
+      if (this.hoverObj !== target) return;
+      this.restoreHover(target);
+      this.paintHover(target, false);
+    }, 120);
+  }
+
+  hoverTarget(obj) {
+    if (!obj) return null;
+    const { kind, id } = obj.userData || {};
+    if (kind === 'vertex') {
+      const m = this.vertexMarkers.get(id);
+      return m?.visible ? m : null;
+    }
+    if (kind === 'edge') {
+      const m = this.edgeMarkers.get(id);
+      return m?.visible && m.material.opacity > 0 ? m : null;
+    }
+    if (kind === 'hex') {
+      const m = this.hexMarkers.get(id);
+      return m?.visible && m.material.opacity > 0 ? m : null;
+    }
+    return null;
+  }
+
+  markerMats(obj) {
+    const mats = [];
+    obj.traverse((o) => {
+      if (o.material && !mats.includes(o.material)) mats.push(o.material);
+    });
+    return mats;
+  }
+
+  restoreHover(m) {
+    if (!m) return;
+    const rest = m.userData._hoverRest;
+    if (!rest) return;
+    for (const entry of rest) {
+      entry.mat.color.setHex(entry.color);
+      entry.mat.opacity = entry.opacity;
+    }
+    m.userData._hoverRest = null;
+  }
+
+  paintHover(m, flash) {
+    if (!m) return;
+    const mats = this.markerMats(m);
+    if (!m.userData._hoverRest) {
+      m.userData._hoverRest = mats.map((mat) => ({
+        mat,
+        color: mat.color.getHex(),
+        opacity: mat.opacity,
+      }));
+    }
+    const kind = m.userData.kind;
+    for (const mat of mats) {
+      if (flash) {
+        mat.color.set('#ffffff');
+        mat.opacity = 1;
+      } else if (kind === 'vertex') {
+        mat.color.set('#fff6c8');
+        mat.opacity = 1;
+      } else if (kind === 'edge') {
+        mat.color.set('#f4ffff');
+        mat.opacity = 1;
+      } else {
+        mat.color.set('#ffe9a0');
+        mat.opacity = 0.88;
+      }
+    }
+  }
+
+  repaintHover() {
+    const t = this.hoverObj;
+    if (!t) return;
+    if (!this.hoverTarget(t)) {
+      this.hoverObj = null;
+      return;
+    }
+    this.paintHover(t, false);
   }
 }
 

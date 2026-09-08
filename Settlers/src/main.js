@@ -5,7 +5,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { Game } from './game/Game.js';
 import { takeAITurn } from './game/ai.js';
-import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES } from './game/constants.js';
+import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES, BUILD_COST, formatCost } from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
@@ -240,6 +240,15 @@ function runHudAction(act, extra) {
 }
 
 bindHud(runHudAction);
+let hoverSpotId = null;
+document.getElementById('spot-layer')?.addEventListener('pointerover', (e) => {
+  const b = e.target.closest('[data-vertex]');
+  hoverSpotId = b?.dataset.vertex ?? null;
+});
+document.getElementById('spot-layer')?.addEventListener('pointerout', (e) => {
+  const b = e.target.closest('[data-vertex]');
+  if (b && hoverSpotId === b.dataset.vertex) hoverSpotId = null;
+});
 document.getElementById('spot-layer')?.addEventListener('click', (e) => {
   const b = e.target.closest('[data-vertex]');
   if (!b) return;
@@ -324,13 +333,19 @@ function trayButtons() {
   if (!game) return [{ label: 'Settings', action: 'settings' }];
   const can = game.isHuman() && !busy;
   const playable = can && game.playableCards(game.current).length > 0;
+  const freeRoad = game.phase === PHASE.FREE_ROADS;
   return [
     { label: 'Roll', action: 'roll', disabled: !(can && game.phase === PHASE.ROLL) },
-    { label: 'Road', action: 'road', disabled: !(can && ((game.phase === PHASE.MAIN && game.canAfford(game.current, 'road')) || game.phase === PHASE.FREE_ROADS)) },
-    { label: 'Settle', action: 'settlement', disabled: !(can && game.phase === PHASE.MAIN) },
-    { label: 'City', action: 'city', disabled: !(can && game.phase === PHASE.MAIN) },
-    { label: 'Dev', action: 'cards', disabled: !((can && game.phase === PHASE.MAIN) || playable) },
-    { label: 'Trade', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
+    {
+      label: 'Road',
+      detail: freeRoad ? 'Free' : formatCost(BUILD_COST.road),
+      action: 'road',
+      disabled: !(can && ((game.phase === PHASE.MAIN && game.canAfford(game.current, 'road')) || freeRoad)),
+    },
+    { label: 'Settle', detail: formatCost(BUILD_COST.settlement), action: 'settlement', disabled: !(can && game.phase === PHASE.MAIN) },
+    { label: 'City', detail: formatCost(BUILD_COST.city), action: 'city', disabled: !(can && game.phase === PHASE.MAIN) },
+    { label: 'Dev', detail: formatCost(BUILD_COST.dev), action: 'cards', disabled: !((can && game.phase === PHASE.MAIN) || playable) },
+    { label: 'Trade', detail: 'Bank', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'End Turn', action: 'end', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Settings', action: 'settings' },
   ];
@@ -358,6 +373,7 @@ function cardButtons() {
   return [
     {
       label: 'Buy card',
+      detail: formatCost(BUILD_COST.dev),
       action: 'dev',
       disabled: !(can && game.phase === PHASE.MAIN && game.canAfford(game.current, 'dev') && game.devDeck.length),
     },
@@ -376,6 +392,7 @@ function tradeButtons() {
       const rate = game.tradeRate(p, r);
       return {
         label: RESOURCE_LABEL[r],
+        detail: `${rate}:1`,
         action: `give:${r}`,
         color: RESOURCE_COLOR[r],
         selected: tradeGive === r,
@@ -902,7 +919,7 @@ function syncSpotOverlay() {
   if (!layer) return;
   const xr = renderer.xr.isPresenting;
   for (const m of boardView.vertexMarkers.values()) {
-    for (const child of m.children) child.visible = xr && m.visible;
+    for (const child of m.children) child.visible = m.visible && (xr || m === boardView.hoverObj);
   }
   if (!game || xr) {
     if (layer.childElementCount) layer.replaceChildren();
@@ -991,16 +1008,19 @@ function applyHit(obj) {
         ? game.placeSettlement(data.id)
         : game.placeCity(data.id) || game.placeSettlement(data.id);
     if (!ok) return;
+    boardView.flashPick(obj);
     sfx.place();
     intent = null;
     afterAction();
   } else if (data.kind === 'edge') {
     if (!game.placeRoad(data.id)) return;
+    boardView.flashPick(obj);
     sfx.place();
     intent = null;
     afterAction();
   } else if (data.kind === 'hex') {
     if (!game.moveRobber(data.id)) return;
+    boardView.flashPick(obj);
     sfx.place();
     if (game.phase !== PHASE.STEAL) showToast('No neighbor to steal from.');
     afterAction();
@@ -1046,10 +1066,12 @@ function hoverPickables() {
   } else {
     raycaster.setFromCamera(pointer, camera);
     obj = resolvePick(raycaster.intersectObjects(pickables(), true));
+    if (hoverSpotId) obj = { userData: { kind: 'vertex', id: hoverSpotId } };
   }
   tray.setHover(obj);
   handles.setHover(obj);
   avatars.setHover(obj);
+  boardView.setHover(obj);
 }
 
 function setupXR() {
@@ -1114,6 +1136,7 @@ function setPassthrough(on) {
   scene.background = passthroughOn ? null : ROOM_BG;
   scene.fog = passthroughOn ? null : new THREE.Fog('#1b140f', 6, 12);
   renderer.setClearColor(passthroughOn ? 0x000000 : 0x1b140f, passthroughOn ? 0 : 1);
+  renderer.setClearAlpha(passthroughOn ? 0 : 1);
 }
 
 function applyHandleVisibility() {

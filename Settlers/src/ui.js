@@ -5,6 +5,7 @@ import {
   PHASE,
   BUILD_COST,
   DEV_TYPES,
+  formatCost,
 } from './game/constants.js';
 
 const $ = (id) => document.getElementById(id);
@@ -161,17 +162,22 @@ export function renderHud(game, intent) {
   if (vp) cards.push(`<button disabled>${vp} VP card${vp > 1 ? 's' : ''}</button>`);
   $('dev-bar').innerHTML = cards.join('') || '<button disabled>No development cards</button>';
 
-  const btn = (id, label, on) =>
-    `<button data-act="${id}" class="${intent === id ? 'primary' : ''}" ${on ? '' : 'disabled'}>${label}</button>`;
+  const btn = (id, title, on, detail) =>
+    `<button data-act="${id}" class="${intent === id ? 'primary' : ''}" ${on ? '' : 'disabled'}>${
+      detail
+        ? `<span class="act-name">${title}</span><span class="act-cost">${detail}</span>`
+        : title
+    }</button>`;
 
   const main = game.phase === PHASE.MAIN && canAct;
+  const freeRoad = game.phase === PHASE.FREE_ROADS && canAct;
   $('action-bar').innerHTML = [
     btn('roll', 'Roll dice', game.phase === PHASE.ROLL && canAct),
-    btn('road', `Road (${cost(BUILD_COST.road)})`, (main && game.canAfford(human.id, 'road')) || (game.phase === PHASE.FREE_ROADS && canAct)),
-    btn('settlement', `Settlement (${cost(BUILD_COST.settlement)})`, main && game.canAfford(human.id, 'settlement')),
-    btn('city', `City (${cost(BUILD_COST.city)})`, main && game.canAfford(human.id, 'city')),
-    btn('dev', 'Buy dev card', main && game.canAfford(human.id, 'dev') && game.devDeck.length),
-    btn('trade', 'Bank trade', main),
+    btn('road', 'Road', (main && game.canAfford(human.id, 'road')) || freeRoad, freeRoad ? 'Free' : formatCost(BUILD_COST.road)),
+    btn('settlement', 'Settlement', main && game.canAfford(human.id, 'settlement'), formatCost(BUILD_COST.settlement)),
+    btn('city', 'City', main && game.canAfford(human.id, 'city'), formatCost(BUILD_COST.city)),
+    btn('dev', 'Dev', main && game.canAfford(human.id, 'dev') && game.devDeck.length, formatCost(BUILD_COST.dev)),
+    btn('trade', 'Trade', main, 'Bank'),
     btn('end', 'End turn', main),
   ].join('');
 
@@ -189,12 +195,6 @@ export function viewPlayer(game) {
   const humans = game.players.filter((p) => !p.isAI);
   if (humans.length === 1) return humans[0];
   return game.player();
-}
-
-function cost(map) {
-  return Object.entries(map)
-    .map(([k, n]) => `${n} ${RESOURCE_LABEL[k] || k}`)
-    .join(', ');
 }
 
 export function bindHud(onAction) {
@@ -292,7 +292,10 @@ export function showTrade(game, onDone) {
     const rate = give ? game.tradeRate(p, give) : 4;
     openModal(`<h2>Bank trade</h2>
       <p>Give ${give ? `${rate} ${RESOURCE_LABEL[give]}` : 'a resource'} for one of another. In VR, use the panel buttons.</p>
-      <p>Give</p>${resourcePicker('give-p')}
+      <p>Give</p>
+      <div class="picker" id="give-p">${RESOURCES.map(
+        (r) => `<button type="button" data-res="${r}" style="border-color:${RESOURCE_COLOR[r]}">${RESOURCE_LABEL[r]} ${game.tradeRate(p, r)}:1</button>`,
+      ).join('')}</div>
       <p>Get</p>${resourcePicker('get-p')}
       <button id="trade-go" class="primary">Trade</button>
       <button id="trade-cancel">Cancel</button>`);

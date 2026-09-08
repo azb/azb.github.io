@@ -20,20 +20,53 @@ export function createWorld(scene) {
   floor.receiveShadow = true;
   room.add(floor);
 
-  const wallMat = new THREE.MeshStandardMaterial({ map: plaster, color: '#6d5a48', roughness: 0.95 });
+  const ROOM_H = 3.2;
+  const ROOM_W = 7;
+  const WALL_T = 0.12;
+  const WALL_R = 3.4;
+  const wallMat = new THREE.MeshStandardMaterial({
+    map: plaster,
+    color: '#6d5a48',
+    roughness: 0.95,
+    depthWrite: true,
+    transparent: false,
+  });
   const walls = [
-    [0, 1.6, -3.4, 0],
-    [0, 1.6, 3.4, Math.PI],
-    [-3.4, 1.6, 0, Math.PI / 2],
-    [3.4, 1.6, 0, -Math.PI / 2],
+    [0, ROOM_H / 2, -WALL_R, 0],
+    [0, ROOM_H / 2, WALL_R, Math.PI],
+    [-WALL_R, ROOM_H / 2, 0, Math.PI / 2],
+    [WALL_R, ROOM_H / 2, 0, -Math.PI / 2],
   ];
   for (const [x, y, z, ry] of walls) {
-    const w = new THREE.Mesh(new THREE.BoxGeometry(7, 3.2, 0.12), wallMat);
+    const w = new THREE.Mesh(new THREE.BoxGeometry(ROOM_W, ROOM_H, WALL_T), wallMat);
     w.position.set(x, y, z);
     w.rotation.y = ry;
     w.receiveShadow = true;
     room.add(w);
   }
+
+  // Lid on the walls so looking up is never empty sky (AR passthrough).
+  const ceiling = new THREE.Mesh(new THREE.BoxGeometry(ROOM_W, WALL_T, ROOM_W), wallMat);
+  ceiling.name = 'ceiling';
+  ceiling.position.set(0, ROOM_H + WALL_T / 2, 0);
+  ceiling.receiveShadow = true;
+  room.add(ceiling);
+
+  // Inward shell behind the room: WebXR AR ignores scene.background, so any
+  // missed ray would otherwise composite the camera. Opaque + depthWrite.
+  const sky = new THREE.Mesh(
+    new THREE.BoxGeometry(9.2, ROOM_H + 0.5, 9.2),
+    new THREE.MeshBasicMaterial({
+      color: '#1b140f',
+      side: THREE.BackSide,
+      depthWrite: true,
+      transparent: false,
+      fog: false,
+    }),
+  );
+  sky.name = 'sky';
+  sky.position.y = ROOM_H / 2 + 0.05;
+  room.add(sky);
 
   const table = new THREE.Mesh(
     new THREE.CylinderGeometry(0.95, 0.98, 0.08, 32),

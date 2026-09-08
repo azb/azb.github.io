@@ -51,6 +51,13 @@ export const BUILD_COST = {
   dev: { sheep: 1, wheat: 1, ore: 1 },
 };
 
+export function formatCost(cost, sep = ' · ') {
+  return Object.entries(cost)
+    .filter(([, n]) => n)
+    .map(([k, n]) => `${RESOURCE_LABEL[k] || k} ${n}`)
+    .join(sep);
+}
+
 export const PIECE_LIMIT = { settlement: 5, city: 4, road: 15 };
 export const BANK_START = 19;
 
