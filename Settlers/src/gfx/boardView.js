@@ -268,16 +268,12 @@ export class BoardView {
     }
 
     for (const v of nodes) {
-      const plank = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.007, 0.12), woodMat);
-      const plen = Math.hypot(v.x - px, v.z - pz);
-      plank.scale.z = plen / 0.12;
-      plank.position.set((px + v.x) * 0.5, 0.02, (pz + v.z) * 0.5);
-      orientZ(plank, px, 0.02, pz, v.x, 0.02, v.z);
-
-      const beam = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.01, v.z, 0.0072, beamMat);
-      const core = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.01, v.z, 0.0032, glowMat);
+      const beam = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.012, v.z, 0.008, glowMat);
+      const core = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.012, v.z, 0.0034, beamMat);
       beam.renderOrder = 7;
       core.renderOrder = 7;
+      beam.frustumCulled = false;
+      core.frustumCulled = false;
 
       const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.004, 16), beamMat);
       disc.position.set(v.x, TILE_HEIGHT + 0.003, v.z);
@@ -291,7 +287,7 @@ export class BoardView {
       halo.position.set(v.x, TILE_HEIGHT + 0.01, v.z);
       halo.renderOrder = 7;
 
-      this.group.add(plank, beam, core, disc, ring, halo);
+      this.group.add(beam, core, disc, ring, halo);
     }
   }
 
@@ -457,7 +453,7 @@ function cylinderBetween(ax, ay, az, bx, by, bz, radius, material) {
   const dy = by - ay;
   const dz = bz - az;
   const len = Math.hypot(dx, dy, dz) || 0.001;
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 8), material);
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 12), material);
   mesh.position.set((ax + bx) * 0.5, (ay + by) * 0.5, (az + bz) * 0.5);
   mesh.quaternion.setFromUnitVectors(
     new THREE.Vector3(0, 1, 0),
