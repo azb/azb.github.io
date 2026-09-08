@@ -89,7 +89,7 @@ export class BoardView {
     });
     for (const h of board.sea) {
       const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.98, HEX_SIZE * 0.98, 0.02, 6), seaMat);
-      mesh.rotation.y = Math.PI / 6;
+      mesh.rotation.y = Math.PI / 3;
       mesh.position.set(h.x, 0.01, h.z);
       mesh.receiveShadow = true;
       this.group.add(mesh);
@@ -103,7 +103,7 @@ export class BoardView {
         metalness: 0.04,
       });
       const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.96, HEX_SIZE * 0.96, height, 6), mat);
-      mesh.rotation.y = Math.PI / 6;
+      mesh.rotation.y = Math.PI / 3;
       mesh.position.set(h.x, height / 2, h.z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -126,7 +126,7 @@ export class BoardView {
         new THREE.CylinderGeometry(HEX_SIZE * 0.9, HEX_SIZE * 0.9, 0.004, 6),
         new THREE.MeshBasicMaterial({ color: '#ffcc66', transparent: true, opacity: 0.0 }),
       );
-      glow.rotation.y = Math.PI / 6;
+      glow.rotation.y = Math.PI / 3;
       glow.position.set(h.x, height + 0.01, h.z);
       glow.userData = { kind: 'hex', id: h.id };
       this.markerLayer.add(glow);
@@ -135,17 +135,31 @@ export class BoardView {
 
     for (const v of board.vertices.values()) {
       const m = new THREE.Mesh(
-        new THREE.SphereGeometry(0.028, 14, 12),
+        new THREE.SphereGeometry(0.052, 16, 12),
         new THREE.MeshBasicMaterial({
-          color: '#fff3a8',
-          transparent: true,
-          opacity: 0,
+          color: '#ffb000',
           depthTest: false,
+          depthWrite: false,
+          toneMapped: false,
         }),
       );
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.078, 12, 10),
+        new THREE.MeshBasicMaterial({
+          color: '#ff6a00',
+          transparent: true,
+          opacity: 0.45,
+          depthTest: false,
+          depthWrite: false,
+          toneMapped: false,
+        }),
+      );
+      m.add(halo);
       m.position.set(v.x, 0.1, v.z);
-      m.renderOrder = 4;
-      m.userData = { kind: 'vertex', id: v.id };
+      m.visible = false;
+      m.renderOrder = 10;
+      m.userData = { kind: 'vertex', id: v.id, halo };
+      halo.userData = m.userData;
       this.markerLayer.add(m);
       this.vertexMarkers.set(v.id, m);
     }
@@ -161,6 +175,7 @@ export class BoardView {
           transparent: true,
           opacity: 0,
           depthTest: false,
+          toneMapped: false,
         }),
       );
       m.position.set((a.x + b.x) / 2, 0.068, (a.z + b.z) / 2);
@@ -319,8 +334,19 @@ export class BoardView {
 
   showVertices(ids) {
     for (const [id, m] of this.vertexMarkers) {
-      m.material.opacity = ids.includes(id) ? 0.85 : 0;
-      m.visible = ids.includes(id);
+      const on = ids.includes(id);
+      m.visible = on;
+      m.scale.setScalar(1);
+    }
+  }
+
+  pulseMarkers(t) {
+    const s = 1 + Math.sin(t * 5) * 0.18;
+    const glow = 0.28 + Math.sin(t * 5) * 0.18;
+    for (const m of this.vertexMarkers.values()) {
+      if (!m.visible) continue;
+      m.scale.setScalar(s);
+      if (m.userData.halo) m.userData.halo.material.opacity = glow;
     }
   }
 

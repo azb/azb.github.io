@@ -8,7 +8,7 @@ import { takeAITurn } from './game/ai.js';
 import { PHASE } from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
-import { DicePair, Tray, BoardHandles } from './gfx/props.js';
+import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
 import { PlayerAvatars } from './gfx/avatars.js';
 import {
   renderHud,
@@ -73,6 +73,7 @@ const boardView = new BoardView(stage);
 boardView.rebuild(new Game({ seed: 2026 }).board);
 const dice = new DicePair(stage);
 const tray = new Tray(stage);
+const help = new HelpBanner(camera);
 const avatars = new PlayerAvatars(stage);
 const handles = new BoardHandles(scene, stage);
 
@@ -194,11 +195,15 @@ renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (!renderer.xr.isPresenting) controls.update();
   dice.update(dt);
+  boardView.pulseMarkers(clock.elapsedTime);
   avatars.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
   if (renderer.xr.isPresenting) {
+    help.attach(renderer.xr.getCamera?.() || camera);
     updateGrabs();
     handles.update(dt, renderer.xr.getCamera?.() || camera, sourcePos);
     for (const c of xrControllers) hoverController(c);
+  } else {
+    help.attach(camera);
   }
   renderer.render(scene, camera);
 });
@@ -240,6 +245,7 @@ function refresh() {
   boardView.syncPieces(game);
   renderHud(game, currentIntent());
   tray.setStatus(trayStatus(game));
+  help.set(trayStatus(game));
   tray.setResources(viewPlayer(game).resources);
   tray.setButtons(trayButtons());
   avatars.setCurrent(game.current);
@@ -262,7 +268,7 @@ function trayButtons() {
 }
 
 function updateHighlights() {
-  if (!game || !humanCanAct()) {
+  if (!game || !game.isHuman()) {
     boardView.clearHighlights();
     return;
   }
@@ -407,7 +413,7 @@ function updateGrabs() {
 
 function pickables() {
   const list = [...handles.pickables(), ...tray.pickables()];
-  for (const m of boardView.vertexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
+  for (const m of boardView.vertexMarkers.values()) if (m.visible) list.push(m);
   for (const m of boardView.edgeMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
   for (const m of boardView.hexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
   if (game && currentIntent() === 'robber') {

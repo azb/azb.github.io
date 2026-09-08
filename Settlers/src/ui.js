@@ -61,7 +61,13 @@ export function renderHud(game, intent) {
   const p = game.player();
   $('turn-banner').textContent = `${p.name}'s turn`;
   $('turn-banner').style.color = p.color;
-  $('phase-label').textContent = phaseText(game);
+  const helpCopy = phaseText(game);
+  $('phase-label').textContent = helpCopy;
+  const tableHelp = $('table-help');
+  if (tableHelp) {
+    tableHelp.textContent = helpCopy;
+    tableHelp.classList.toggle('hidden', !helpCopy);
+  }
 
   const view = viewPlayer(game);
   $('players-panel').innerHTML = game.players

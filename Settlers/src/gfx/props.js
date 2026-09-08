@@ -324,3 +324,40 @@ function makeStatus() {
     },
   };
 }
+
+export class HelpBanner {
+  constructor(camera) {
+    this.opts = { width: 1024, height: 256, font: 72, pad: 28, fill: '#1a120c', ink: '#ffe08a' };
+    this.tex = labelTexture(' ', this.opts);
+    this.mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.3, 0.065),
+      new THREE.MeshBasicMaterial({
+        map: this.tex,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        toneMapped: false,
+      }),
+    );
+    this.mesh.position.set(0, -0.22, -0.52);
+    this.mesh.renderOrder = 20;
+    this.mesh.frustumCulled = false;
+    this.mesh.visible = false;
+    camera.add(this.mesh);
+  }
+
+  attach(parent) {
+    if (!parent || this.mesh.parent === parent) return;
+    parent.add(this.mesh);
+  }
+
+  set(text) {
+    const line = String(text || '').trim();
+    this.mesh.visible = Boolean(line);
+    if (!line) return;
+    this.tex.dispose();
+    this.tex = labelTexture(line, this.opts);
+    this.mesh.material.map = this.tex;
+    this.mesh.material.needsUpdate = true;
+  }
+}
