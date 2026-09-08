@@ -66,8 +66,8 @@ export class BoardHandles {
     this.right.userData.ball.material.opacity = glow;
     this.rig.updateMatrixWorld();
     for (const [handle, local] of [
-      [this.left, [-0.18, TABLE_HEIGHT + 0.1, 1.08]],
-      [this.right, [0.18, TABLE_HEIGHT + 0.1, 1.08]],
+      [this.left, [-0.18, TABLE_HEIGHT - 0.05, 1.08]],
+      [this.right, [0.18, TABLE_HEIGHT - 0.05, 1.08]],
     ]) {
       const src = this.stuck.get(handle);
       if (src && sourcePos) sourcePos(src, handle.position);
