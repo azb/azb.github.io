@@ -14,6 +14,7 @@ import {
   renderHud,
   bindHud,
   showToast,
+  trayStatus,
   showDiscard,
   showSteal,
   showTrade,
@@ -238,8 +239,8 @@ function refresh() {
   if (!game) return;
   boardView.syncPieces(game);
   renderHud(game, currentIntent());
-  const endHint = game.phase === PHASE.MAIN && game.isHuman() ? ' · point at END TURN or squeeze grip' : '';
-  tray.setStatus(`${game.player().name} · ${game.phase}${endHint}`);
+  tray.setStatus(trayStatus(game));
+  tray.setResources(viewPlayer(game).resources);
   tray.setButtons(trayButtons());
   avatars.setCurrent(game.current);
   dice.placeFor(game.current, game.playerCount);
@@ -251,7 +252,7 @@ function trayButtons() {
   const can = game.isHuman() && !busy;
   return [
     { label: 'Roll', action: 'roll', disabled: !(can && game.phase === PHASE.ROLL) },
-    { label: 'Road', action: 'road', disabled: !(can && (game.phase === PHASE.MAIN || game.phase === PHASE.FREE_ROADS)) },
+    { label: 'Road', action: 'road', disabled: !(can && ((game.phase === PHASE.MAIN && game.canAfford(game.current, 'road')) || game.phase === PHASE.FREE_ROADS)) },
     { label: 'Settle', action: 'settlement', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'City', action: 'city', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Dev', action: 'dev', disabled: !(can && game.phase === PHASE.MAIN) },
@@ -284,6 +285,13 @@ function updateHighlights() {
     boardView.showVertices([]);
     boardView.showEdges([]);
     boardView.showHexes(game.board.land.filter((h) => h.id !== game.board.robberHex).map((h) => h.id));
+  } else if (game.phase === PHASE.MAIN) {
+    const verts = [];
+    if (game.canAfford(pid, 'settlement')) verts.push(...game.validSettlements(pid));
+    if (game.canAfford(pid, 'city')) verts.push(...game.validCities(pid));
+    boardView.showVertices(verts);
+    boardView.showEdges(game.canAfford(pid, 'road') ? game.validRoads(pid) : []);
+    boardView.showHexes([]);
   } else {
     boardView.clearHighlights();
   }
@@ -419,13 +427,17 @@ function applyHit(obj) {
   if (!humanCanAct()) return;
   if (data.kind === 'vertex') {
     const mode = currentIntent();
-    if (mode === 'city') game.placeCity(data.id);
-    else game.placeSettlement(data.id);
+    const ok = mode === 'city'
+      ? game.placeCity(data.id)
+      : mode === 'settlement'
+        ? game.placeSettlement(data.id)
+        : game.placeCity(data.id) || game.placeSettlement(data.id);
+    if (!ok) return;
     sfx.place();
     intent = null;
     afterAction();
   } else if (data.kind === 'edge') {
-    game.placeRoad(data.id);
+    if (!game.placeRoad(data.id)) return;
     sfx.place();
     intent = null;
     afterAction();
@@ -489,7 +501,16 @@ function setupXR() {
     scene.add(grip);
     const hand = renderer.xr.getHand(i);
     hand.add(handFactory.createHandModel(hand, 'mesh'));
-    hand.addEventListener('pinchstart', () => tryGrab(hand));
+    hand.addEventListener('pinchstart', () => {
+      if (tryGrab(hand)) return;
+      const origin = new THREE.Vector3().setFromMatrixPosition(hand.matrixWorld);
+      const tip = hand.joints?.['index-finger-tip'];
+      if (tip) tip.getWorldPosition(origin);
+      const dir = new THREE.Vector3(0, 0, -1).transformDirection(hand.matrixWorld);
+      raycaster.set(origin, dir);
+      const hits = raycaster.intersectObjects(pickables(), true);
+      applyHit(hits[0]?.object);
+    });
     hand.addEventListener('pinchend', () => releaseGrab(hand));
     scene.add(hand);
     return controller;

@@ -7,7 +7,7 @@ const DICE_R = 0.7;
 
 export function seatPose(index, count, radius = SEAT_R) {
   const a = (index / Math.max(1, count)) * Math.PI * 2;
-  return { x: Math.sin(a) * radius, z: Math.cos(a) * radius, yaw: a + Math.PI };
+  return { x: Math.sin(a) * radius, z: Math.cos(a) * radius, yaw: a };
 }
 
 export class PlayerAvatars {
@@ -75,6 +75,11 @@ function makeSettler(player) {
   torso.position.set(0, 0.68, -0.01);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.072, 16, 12), skin);
   head.position.set(0, 0.9, 0);
+  const eye = (side) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.012, 8, 6), dark);
+    m.position.set(side * 0.025, 0.91, -0.058);
+    return m;
+  };
   const hair = new THREE.Mesh(
     new THREE.SphereGeometry(0.076, 12, 10),
     new THREE.MeshStandardMaterial({ color: darken(player.color, 0.45), roughness: 0.9 }),
@@ -88,7 +93,7 @@ function makeSettler(player) {
     upper.position.set(side * 0.12, 0.7, 0);
     upper.rotation.z = side * 0.35;
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), skin);
-    hand.position.set(side * 0.16, 0.58, -0.06);
+    hand.position.set(side * 0.16, 0.58, -0.08);
     a.add(upper, hand);
     return a;
   };
@@ -111,7 +116,7 @@ function makeSettler(player) {
   tag.position.set(0, 1.08, 0);
 
   g.add(chair, back, leg(-0.08, 0.08), leg(0.08, 0.08), leg(-0.08, -0.08), leg(0.08, -0.08));
-  g.add(hips, torso, head, hair, arm(-1), arm(1), glow, tag);
+  g.add(hips, torso, head, hair, eye(-1), eye(1), arm(-1), arm(1), glow, tag);
   g.userData = { glow, tag, active: false };
   g.traverse((o) => {
     if (o.isMesh) o.castShadow = true;

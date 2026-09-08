@@ -113,10 +113,10 @@ export class BoardView {
       this.decorate(h, height);
       if (h.number) {
         const tok = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.038, 0.038, 0.01, 24),
+          new THREE.CylinderGeometry(0.038, 0.038, 0.004, 24),
           new THREE.MeshStandardMaterial({ map: numberTexture(h.number, PIPS[h.number]), roughness: 0.45 }),
         );
-        tok.position.set(h.x, height + 0.042, h.z);
+        tok.position.set(h.x, height + 0.0022, h.z);
         tok.renderOrder = 2;
         tok.userData = { kind: 'hex', id: h.id };
         this.group.add(tok);
@@ -155,7 +155,7 @@ export class BoardView {
       const b = board.vertices.get(e.b);
       const len = Math.hypot(b.x - a.x, b.z - a.z);
       const m = new THREE.Mesh(
-        new THREE.BoxGeometry(0.018, 0.01, len * 0.72),
+        new THREE.BoxGeometry(0.028, 0.018, len * 0.82),
         new THREE.MeshStandardMaterial({
           color: '#9ee7ff',
           emissive: '#3aa0c8',
@@ -163,7 +163,7 @@ export class BoardView {
           opacity: 0,
         }),
       );
-      m.position.set((a.x + b.x) / 2, 0.055, (a.z + b.z) / 2);
+      m.position.set((a.x + b.x) / 2, 0.062, (a.z + b.z) / 2);
       m.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
       m.userData = { kind: 'edge', id: e.id };
       this.markerLayer.add(m);

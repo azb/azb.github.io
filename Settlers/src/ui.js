@@ -38,12 +38,32 @@ export function phaseText(game) {
   }
 }
 
+export function trayStatus(game) {
+  const name = game.player().name;
+  const line = {
+    [PHASE.SETUP_SETTLEMENT]: 'Place a settlement',
+    [PHASE.SETUP_ROAD]: 'Place a road',
+    [PHASE.ROLL]: 'Roll the dice',
+    [PHASE.MAIN]: 'Build, trade, or end turn',
+    [PHASE.DISCARD]: 'Discard half your cards',
+    [PHASE.ROBBER]: 'Move the robber',
+    [PHASE.STEAL]: 'Steal from a neighbor',
+    [PHASE.FREE_ROADS]: `Place ${game.freeRoads} free road${game.freeRoads > 1 ? 's' : ''}`,
+    [PHASE.PLENTY]: 'Take two resources',
+    [PHASE.MONOPOLY]: 'Name a resource',
+    [PHASE.GAME_OVER]: `${game.player(game.winner).name} wins`,
+  }[game.phase] || String(game.phase);
+  const extra = game.phase === PHASE.MAIN && game.isHuman() ? '\nPoint at END TURN or squeeze grip' : '';
+  return `${name} · ${line}${extra}`;
+}
+
 export function renderHud(game, intent) {
   const p = game.player();
   $('turn-banner').textContent = `${p.name}'s turn`;
   $('turn-banner').style.color = p.color;
   $('phase-label').textContent = phaseText(game);
 
+  const view = viewPlayer(game);
   $('players-panel').innerHTML = game.players
     .map((pl) => {
       const cards = RESOURCES.reduce((n, r) => n + pl.resources[r], 0);
@@ -57,13 +77,13 @@ export function renderHud(game, intent) {
           ${game.longestRoad.player === pl.id ? ' · Road' : ''}
           ${game.largestArmy.player === pl.id ? ' · Army' : ''}
         </div>
+        ${pl.id === view.id ? `<div class="player-res">${RESOURCES.map((r) => `${RESOURCE_LABEL[r][0]}${pl.resources[r]}`).join(' · ')}</div>` : ''}
       </article>`;
     })
     .join('');
 
-  const view = viewPlayer(game);
   $('resource-bar').innerHTML = RESOURCES.map(
-    (r) => `<div class="resource-chip" style="border-color:${RESOURCE_COLOR[r]}">
+    (r) => `<div class="resource-chip" style="border-color:${RESOURCE_COLOR[r]};--chip:${RESOURCE_COLOR[r]}">
       <div class="n">${view.resources[r]}</div>
       <div class="k">${RESOURCE_LABEL[r]}</div>
     </div>`,

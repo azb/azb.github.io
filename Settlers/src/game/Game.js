@@ -153,7 +153,7 @@ export class Game {
     const out = [];
     if (!free && !setup && p.roads.length >= PIECE_LIMIT.road) return out;
     for (const e of this.board.edges.values()) {
-      if (e.road) continue;
+      if (e.road != null) continue;
       const va = this.board.vertices.get(e.a);
       const vb = this.board.vertices.get(e.b);
       const land = [...va.hexes, ...vb.hexes].some((id) => this.board.hexes.get(id).isLand);
@@ -164,15 +164,15 @@ export class Game {
         out.push(e.id);
         continue;
       }
-      const touchesBuilding =
-        (va.building && va.building.player === playerId) ||
-        (vb.building && vb.building.player === playerId);
-      const touchesRoad =
-        va.edges.some((eid) => this.board.edges.get(eid).road === playerId) ||
-        vb.edges.some((eid) => this.board.edges.get(eid).road === playerId);
-      if (touchesBuilding || touchesRoad) out.push(e.id);
+      if (this.roadConnects(va, playerId) || this.roadConnects(vb, playerId)) out.push(e.id);
     }
     return out;
+  }
+
+  roadConnects(vertex, playerId) {
+    if (vertex.building && vertex.building.player !== playerId) return false;
+    if (vertex.building?.player === playerId) return true;
+    return vertex.edges.some((eid) => this.board.edges.get(eid).road === playerId);
   }
 
   validCities(playerId) {
@@ -233,6 +233,7 @@ export class Game {
     const setup = this.phase === PHASE.SETUP_ROAD;
     const free = this.phase === PHASE.FREE_ROADS;
     if (!this.validRoads(playerId, { setup, free }).includes(edgeId)) return false;
+    if (this.board.edges.get(edgeId).road != null) return false;
     const p = this.player(playerId);
     if (!setup && !free) {
       if (!this.canAfford(playerId, 'road')) return false;

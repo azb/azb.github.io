@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TABLE_HEIGHT } from '../game/constants.js';
+import { TABLE_HEIGHT, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR } from '../game/constants.js';
 import { dieFace, labelTexture } from './textures.js';
 
 const _handlePos = new THREE.Vector3();
@@ -202,8 +202,15 @@ export class Tray {
     scene.add(this.group);
     this.buttons = [];
     this.status = makeStatus();
-    this.status.mesh.position.set(0, 0.12, 0);
+    this.status.mesh.position.set(0, 0.2, 0);
     this.group.add(this.status.mesh);
+    this.resourceChips = RESOURCES.map((r, i) => {
+      const chip = makeResourceChip(r);
+      chip.mesh.position.set((i - 2) * 0.11, 0.105, 0);
+      chip.set(0);
+      this.group.add(chip.mesh);
+      return chip;
+    });
   }
 
   setButtons(defs) {
@@ -253,6 +260,10 @@ export class Tray {
   setStatus(text) {
     this.status.set(text);
   }
+
+  setResources(hand) {
+    this.resourceChips.forEach((chip, i) => chip.set(hand[RESOURCES[i]] || 0));
+  }
 }
 
 function makeButtonMesh(label, { width, height, depth, font, fill, ink = '#2a1c12' }) {
@@ -264,11 +275,38 @@ function makeButtonMesh(label, { width, height, depth, font, fill, ink = '#2a1c1
   );
 }
 
+function makeResourceChip(resource) {
+  const dark = resource === 'wood' || resource === 'brick' || resource === 'ore';
+  const opts = {
+    width: 512,
+    height: 512,
+    font: 200,
+    pad: 20,
+    fill: RESOURCE_COLOR[resource],
+    ink: dark ? '#f7efe0' : '#1a120c',
+  };
+  let tex = labelTexture('0', opts);
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.1, 0.036, 0.07),
+    new THREE.MeshBasicMaterial({ map: tex }),
+  );
+  const short = RESOURCE_LABEL[resource][0];
+  return {
+    mesh,
+    set(n) {
+      tex.dispose();
+      tex = labelTexture(`${n}\n${short}`, opts);
+      mesh.material.map = tex;
+      mesh.material.needsUpdate = true;
+    },
+  };
+}
+
 function makeStatus() {
-  const opts = { width: 1024, height: 256, font: 72, fill: '#2a1c12', ink: '#f3e2c4' };
+  const opts = { width: 1024, height: 256, font: 52, pad: 48, fill: '#2a1c12', ink: '#f3e2c4' };
   let tex = labelTexture(' ', opts);
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.5, 0.08),
+    new THREE.PlaneGeometry(0.5, 0.11),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
   );
   return {

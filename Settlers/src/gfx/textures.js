@@ -61,6 +61,29 @@ export function sharpenTexture(tex) {
   return tex;
 }
 
+function wrapLabelLines(ctx, text, maxW) {
+  const lines = [];
+  for (const para of String(text).split('\n')) {
+    const words = para.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lines.push('');
+      continue;
+    }
+    let cur = words[0];
+    for (let i = 1; i < words.length; i++) {
+      const next = `${cur} ${words[i]}`;
+      if (ctx.measureText(next).width > maxW) {
+        lines.push(cur);
+        cur = words[i];
+      } else {
+        cur = next;
+      }
+    }
+    lines.push(cur);
+  }
+  return lines;
+}
+
 export function labelTexture(text, {
   fill = '#f3e2c4',
   ink = '#2a1c12',
@@ -68,6 +91,7 @@ export function labelTexture(text, {
   width = 512,
   height = 256,
   font = 72,
+  pad = 40,
 } = {}) {
   const w = size || width;
   const h = size || height;
@@ -80,12 +104,24 @@ export function labelTexture(text, {
   ctx.fillStyle = fill;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = ink;
-  ctx.font = `700 ${font}px Trebuchet MS, Segoe UI, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const lines = String(text).split('\n');
+  const maxW = Math.max(32, w - pad * 2);
+  let fontSize = font;
+  const fit = (fs) => {
+    ctx.font = `700 ${fs}px Trebuchet MS, Segoe UI, sans-serif`;
+    return wrapLabelLines(ctx, text, maxW);
+  };
+  let lines = fit(fontSize);
+  while (fontSize > 28) {
+    const tooWide = lines.some((line) => ctx.measureText(line).width > maxW);
+    const tooTall = lines.length * fontSize * 1.12 > h - pad;
+    if (!tooWide && !tooTall) break;
+    fontSize -= 4;
+    lines = fit(fontSize);
+  }
   lines.forEach((line, i) => {
-    ctx.fillText(line, w / 2, h / 2 + (i - (lines.length - 1) / 2) * font * 1.05);
+    ctx.fillText(line, w / 2, h / 2 + (i - (lines.length - 1) / 2) * fontSize * 1.12);
   });
   return sharpenTexture(new THREE.CanvasTexture(c));
 }
