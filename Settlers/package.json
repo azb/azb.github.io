@@ -14,5 +14,10 @@
   },
   "devDependencies": {
     "vite": "^6.0.0"
-  }
+  },
+  "description": "An unofficial, original-art tabletop recreation of the classic island-settling game. Play in a VR headset or with a mouse in the browser.",
+  "main": "vite.config.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

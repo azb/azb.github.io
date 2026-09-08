@@ -255,26 +255,7 @@ export class BoardView {
 
     this.group.add(dock, post, pole, tag);
 
-    if (nodes.length >= 2) {
-      const ox = nx * 0.018;
-      const oz = nz * 0.018;
-      const rail = cylinderBetween(
-        nodes[0].x + ox, 0.024, nodes[0].z + oz,
-        nodes[1].x + ox, 0.024, nodes[1].z + oz,
-        0.0055, beamMat,
-      );
-      rail.renderOrder = 7;
-      this.group.add(rail);
-    }
-
     for (const v of nodes) {
-      const beam = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.012, v.z, 0.008, glowMat);
-      const core = cylinderBetween(px, signY - 0.01, pz, v.x, TILE_HEIGHT + 0.012, v.z, 0.0034, beamMat);
-      beam.renderOrder = 7;
-      core.renderOrder = 7;
-      beam.frustumCulled = false;
-      core.frustumCulled = false;
-
       const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.004, 16), beamMat);
       disc.position.set(v.x, TILE_HEIGHT + 0.003, v.z);
       disc.renderOrder = 7;
@@ -287,7 +268,7 @@ export class BoardView {
       halo.position.set(v.x, TILE_HEIGHT + 0.01, v.z);
       halo.renderOrder = 7;
 
-      this.group.add(beam, core, disc, ring, halo);
+      this.group.add(disc, ring, halo);
     }
   }
 
@@ -446,20 +427,6 @@ function unlitMat(color, opacity = 1) {
     depthWrite: false,
     toneMapped: false,
   });
-}
-
-function cylinderBetween(ax, ay, az, bx, by, bz, radius, material) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const dz = bz - az;
-  const len = Math.hypot(dx, dy, dz) || 0.001;
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 12), material);
-  mesh.position.set((ax + bx) * 0.5, (ay + by) * 0.5, (az + bz) * 0.5);
-  mesh.quaternion.setFromUnitVectors(
-    new THREE.Vector3(0, 1, 0),
-    new THREE.Vector3(dx / len, dy / len, dz / len),
-  );
-  return mesh;
 }
 
 function orientZ(mesh, ax, ay, az, bx, by, bz) {
