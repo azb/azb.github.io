@@ -10,15 +10,15 @@ function seeded(q, r, i = 0) {
 function tree(scale = 1) {
   const g = new THREE.Group();
   const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.006, 0.009, 0.03, 5),
+    new THREE.CylinderGeometry(0.005, 0.007, 0.018, 5),
     new THREE.MeshStandardMaterial({ color: '#5a3418', roughness: 0.9 }),
   );
-  trunk.position.y = 0.015;
+  trunk.position.y = 0.009;
   const leaves = new THREE.Mesh(
-    new THREE.ConeGeometry(0.028 * scale, 0.07 * scale, 6),
+    new THREE.ConeGeometry(0.02 * scale, 0.038 * scale, 6),
     new THREE.MeshStandardMaterial({ color: '#1f5a2c', roughness: 0.8 }),
   );
-  leaves.position.y = 0.05 * scale;
+  leaves.position.y = 0.026 * scale;
   g.add(trunk, leaves);
   return g;
 }
@@ -113,10 +113,11 @@ export class BoardView {
       this.decorate(h, height);
       if (h.number) {
         const tok = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.034, 0.034, 0.008, 24),
+          new THREE.CylinderGeometry(0.038, 0.038, 0.01, 24),
           new THREE.MeshStandardMaterial({ map: numberTexture(h.number, PIPS[h.number]), roughness: 0.45 }),
         );
-        tok.position.set(h.x, height + 0.02, h.z);
+        tok.position.set(h.x, height + 0.042, h.z);
+        tok.renderOrder = 2;
         tok.userData = { kind: 'hex', id: h.id };
         this.group.add(tok);
         this.tokenMeshes.set(h.id, tok);
@@ -207,12 +208,16 @@ export class BoardView {
 
   decorate(h, height) {
     const top = height;
+    const ring = (i, n, minR = 0.082, maxR = 0.104) => {
+      const a = (i / n) * Math.PI * 2 + seeded(h.q, h.r, i + 11) * 0.28;
+      const d = minR + seeded(h.q, h.r, i + 4) * (maxR - minR);
+      return { x: h.x + Math.cos(a) * d, z: h.z + Math.sin(a) * d };
+    };
     if (h.resource === 'wood') {
       for (let i = 0; i < 5; i++) {
-        const t = tree(0.8 + seeded(h.q, h.r, i) * 0.5);
-        const a = seeded(h.q, h.r, i + 9) * Math.PI * 2;
-        const d = 0.03 + seeded(h.q, h.r, i + 4) * 0.045;
-        t.position.set(h.x + Math.cos(a) * d, top, h.z + Math.sin(a) * d);
+        const t = tree(0.7 + seeded(h.q, h.r, i) * 0.25);
+        const p = ring(i, 5, 0.084, 0.105);
+        t.position.set(p.x, top, p.z);
         t.traverse((o) => {
           if (o.isMesh) o.castShadow = true;
         });
@@ -221,38 +226,43 @@ export class BoardView {
     } else if (h.resource === 'sheep') {
       for (let i = 0; i < 3; i++) {
         const s = sheep();
-        const a = seeded(h.q, h.r, i + 2) * Math.PI * 2;
-        s.position.set(h.x + Math.cos(a) * 0.04, top, h.z + Math.sin(a) * 0.04);
-        s.rotation.y = a;
+        const p = ring(i, 3, 0.082, 0.1);
+        s.position.set(p.x, top, p.z);
+        s.rotation.y = seeded(h.q, h.r, i + 2) * Math.PI * 2;
         this.group.add(s);
       }
     } else if (h.resource === 'wheat') {
       const mat = new THREE.MeshStandardMaterial({ color: '#c9a227', roughness: 0.8 });
-      for (let i = 0; i < 8; i++) {
-        const row = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.016, 0.008), mat);
-        row.position.set(h.x + (i - 3.5) * 0.012, top + 0.008, h.z);
-        row.rotation.y = 0.2;
+      for (let i = 0; i < 6; i++) {
+        const side = i < 3 ? -1 : 1;
+        const k = i % 3;
+        const row = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.016, 0.008), mat);
+        row.position.set(h.x + side * 0.08, top + 0.008, h.z + (k - 1) * 0.022);
+        row.rotation.y = 0.15 * side;
         this.group.add(row);
       }
     } else if (h.resource === 'ore') {
       const mat = new THREE.MeshStandardMaterial({ color: '#8b909a', roughness: 0.7 });
       for (let i = 0; i < 3; i++) {
-        const rock = new THREE.Mesh(new THREE.ConeGeometry(0.03 + i * 0.008, 0.05 + i * 0.02, 5), mat);
-        rock.position.set(h.x + (i - 1) * 0.03, top + 0.02, h.z + (i === 1 ? 0.02 : -0.01));
+        const rock = new THREE.Mesh(new THREE.ConeGeometry(0.02 + i * 0.004, 0.028 + i * 0.008, 5), mat);
+        const p = ring(i, 3, 0.084, 0.1);
+        rock.position.set(p.x, top + 0.012, p.z);
         rock.castShadow = true;
         this.group.add(rock);
       }
     } else if (h.resource === 'brick') {
       const mat = new THREE.MeshStandardMaterial({ color: '#9a4a2c', roughness: 0.9 });
       for (let i = 0; i < 4; i++) {
-        const slab = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.012, 0.022), mat);
-        slab.position.set(h.x + (i - 1.5) * 0.02, top + 0.008, h.z + (i % 2) * 0.02);
-        slab.rotation.y = i * 0.2;
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.012, 0.02), mat);
+        const p = ring(i, 4, 0.082, 0.1);
+        slab.position.set(p.x, top + 0.008, p.z);
+        slab.rotation.y = i * 0.4;
         this.group.add(slab);
       }
     } else if (h.resource === 'desert') {
       const c = cactus();
-      c.position.set(h.x + 0.03, top, h.z - 0.02);
+      const p = ring(0, 1, 0.08, 0.09);
+      c.position.set(p.x, top, p.z);
       this.group.add(c);
     }
   }
