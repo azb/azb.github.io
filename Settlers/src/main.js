@@ -107,6 +107,7 @@ const _yAxis = new THREE.Vector3(0, 1, 0);
 const _spotPos = new THREE.Vector3();
 const _rayOrigin = new THREE.Vector3();
 const _rayDir = new THREE.Vector3();
+const _gazeRight = new THREE.Vector3();
 const _hitN = new THREE.Vector3();
 const grabs = new Map();
 let twoHand = null;
@@ -117,9 +118,12 @@ let xrStageSnapPending = false;
 let xrStageSnapTries = 0;
 const xrEventGuard = { select: false, selectstart: false, selectend: false };
 // Spectacles often double-fires one pinch (session select + controller/transient/gaze, or selectstart + select).
+// visionOS may fire only one of those; both session and input-source events must be able to activate.
 const XR_SELECT_DEBOUNCE_MS = 320;
 let lastXRSelectAt = 0;
+let lastXRHover = null;
 const XR_CONTROLLER_SLOTS = 4;
+// visionOS pinch is a transient-pointer; request it or look+pinch may never emit select.
 const XR_OPTIONAL_FEATURES = ['local-floor', 'bounded-floor', 'hand-tracking', 'transient-pointer', 'unbounded'];
 const LASER_MAX = 4;
 const LASER_EPS = 0.003;
@@ -132,6 +136,13 @@ let pointerMode = 'controller';
 try {
   const stored = localStorage.getItem('catan-pointer-mode');
   if (stored === 'gaze' || stored === 'controller') pointerMode = stored;
+} catch { /* ignore */ }
+const POINTER_TILT_STEP = 2;
+const POINTER_TILT_MAX = 20;
+let pointerPitchDeg = 0;
+try {
+  const storedTilt = localStorage.getItem('catan-pointer-tilt');
+  if (storedTilt != null) pointerPitchDeg = clampPointerTilt(storedTilt);
 } catch { /* ignore */ }
 const xrControllers = setupXR();
 applyPointerVisuals();
@@ -150,7 +161,18 @@ let tradeGet = null;
 let discardGive = emptyHand();
 let discardKey = '';
 let plentyPicks = [];
-const TRAY_SETTINGS = new Set(['settings', 'settingsBack', 'passthrough', 'handles', 'restart', 'pointer']);
+const TRAY_SETTINGS = new Set([
+  'settings',
+  'settingsBack',
+  'passthrough',
+  'handles',
+  'restart',
+  'pointer',
+  'pointerTilt',
+  'pointerTiltUp',
+  'pointerTiltDown',
+  'pointerTiltBack',
+]);
 const BUILD_TRAY = new Set(['road', 'settlement', 'city', 'dev', 'cards']);
 const _floatPos = new THREE.Vector3();
 const DEV_NAMES = {
@@ -162,6 +184,23 @@ const DEV_NAMES = {
 
 function emptyHand() {
   return Object.fromEntries(RESOURCES.map((r) => [r, 0]));
+}
+
+function clampPointerTilt(n) {
+  const v = Math.round(Number(n) / POINTER_TILT_STEP) * POINTER_TILT_STEP;
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(-POINTER_TILT_MAX, Math.min(POINTER_TILT_MAX, v));
+}
+
+function formatPointerTilt() {
+  return pointerPitchDeg > 0 ? `+${pointerPitchDeg}°` : `${pointerPitchDeg}°`;
+}
+
+function setPointerTilt(deg) {
+  pointerPitchDeg = clampPointerTilt(deg);
+  try {
+    localStorage.setItem('catan-pointer-tilt', String(pointerPitchDeg));
+  } catch { /* ignore */ }
 }
 
 function preferTrayUi() {
@@ -403,10 +442,20 @@ function stealButtons() {
 function settingsButtons() {
   return [
     { label: pointerMode === 'gaze' ? 'Pointer: Face' : 'Pointer: Hand', action: 'pointer', on: pointerMode === 'gaze' },
+    { label: 'Pointer tilt', detail: formatPointerTilt(), action: 'pointerTilt' },
     { label: passthroughOn ? 'Passthrough ON' : 'Passthrough OFF', action: 'passthrough', on: passthroughOn },
     { label: handlesOn ? 'Handles ON' : 'Handles OFF', action: 'handles', on: handlesOn },
     { label: 'Restart game', action: 'restart' },
     { label: 'Back', action: 'settingsBack' },
+  ];
+}
+
+function pointerTiltButtons() {
+  return [
+    { label: '▲ Up', action: 'pointerTiltUp' },
+    { label: formatPointerTilt(), action: 'pointerTiltValue', disabled: true },
+    { label: '▼ Down', action: 'pointerTiltDown' },
+    { label: 'Back', action: 'pointerTiltBack' },
   ];
 }
 
@@ -603,6 +652,10 @@ function syncTrayButtons() {
     tray.setButtons(settingsButtons(), 'settings');
     return;
   }
+  if (trayScreen === 'pointerTilt') {
+    tray.setButtons(pointerTiltButtons(), 'pointerTilt');
+    return;
+  }
   if (game.phase === PHASE.GAME_OVER) {
     tray.setButtons(winButtons(), 'win');
     return;
@@ -621,6 +674,10 @@ function syncTrayButtons() {
 function runTraySettings(act) {
   if (act === 'settings') trayScreen = 'settings';
   else if (act === 'settingsBack') trayScreen = 'actions';
+  else if (act === 'pointerTilt') trayScreen = 'pointerTilt';
+  else if (act === 'pointerTiltBack') trayScreen = 'settings';
+  else if (act === 'pointerTiltUp') setPointerTilt(pointerPitchDeg + POINTER_TILT_STEP);
+  else if (act === 'pointerTiltDown') setPointerTilt(pointerPitchDeg - POINTER_TILT_STEP);
   else if (act === 'passthrough') setPassthrough(!passthroughOn);
   else if (act === 'pointer') setPointerMode(pointerMode === 'gaze' ? 'controller' : 'gaze');
   else if (act === 'handles') {
@@ -1235,6 +1292,9 @@ function fillGazeRay(origin, dir) {
   cam.updateMatrixWorld();
   cam.getWorldPosition(origin);
   cam.getWorldDirection(dir);
+  if (!pointerPitchDeg) return;
+  _gazeRight.setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+  dir.applyAxisAngle(_gazeRight, THREE.MathUtils.degToRad(pointerPitchDeg)).normalize();
 }
 
 function fillControllerRay(origin, dir, source) {
@@ -1263,6 +1323,7 @@ function fillRayFromTargetRay(origin, dir, inputSource, frame) {
 
 function fillPickRay(origin, dir, event, fallbackSource) {
   // Face / head hover: always activate the gaze hit sphere, not a second transient ray.
+  // visionOS pinch often arrives on a different input source than gaze (transient-pointer vs gaze).
   if (pointerMode === 'gaze' || useHeadHover()) {
     fillGazeRay(origin, dir);
     return;
@@ -1277,7 +1338,10 @@ function fillPickRay(origin, dir, event, fallbackSource) {
 
 function hitFromXREvent(event, fallbackSource) {
   fillPickRay(_rayOrigin, _rayDir, event, fallbackSource);
-  return hoverFromRay(_rayOrigin, _rayDir);
+  const hit = hoverFromRay(_rayOrigin, _rayDir);
+  if (hit) return hit;
+  if (pointerMode === 'gaze' || useHeadHover()) return lastXRHover;
+  return null;
 }
 
 function withXREventGuard(type, fn) {
@@ -1300,12 +1364,13 @@ function shouldDebounceXRSelect(inputSource) {
 }
 
 function isDuplicateXRSelect(inputSource) {
+  const dt = performance.now() - lastXRSelectAt;
+  if (dt < 80) return true;
   if (!shouldDebounceXRSelect(inputSource)) return false;
-  return performance.now() - lastXRSelectAt < XR_SELECT_DEBOUNCE_MS;
+  return dt < XR_SELECT_DEBOUNCE_MS;
 }
 
-function markXRSelectHandled(inputSource) {
-  if (!shouldDebounceXRSelect(inputSource)) return;
+function markXRSelectHandled() {
   lastXRSelectAt = performance.now();
 }
 
@@ -1313,6 +1378,15 @@ function shouldTryGrab(inputSource, source) {
   if (!source) return false;
   if (isTransientAim(inputSource)) return false;
   if (!hasPersistentPointer() && (sawTransientPointer || isLikelyVisionOS())) return false;
+  return true;
+}
+
+function applyXRSelect(event, fallbackSource) {
+  const inputSource = xrEventInputSource(event);
+  if (isDuplicateXRSelect(inputSource)) return false;
+  if (fallbackSource && grabs.has(fallbackSource) && !isTransientAim(inputSource)) return false;
+  markXRSelectHandled();
+  applyHit(hitFromXREvent(event, fallbackSource));
   return true;
 }
 
@@ -1325,16 +1399,14 @@ function handleXRSelectStart(event, fallbackSource) {
     }
     const hit = hitFromXREvent(event, fallbackSource);
     if (hit?.userData?.kind === 'tray' && !hit.userData.disabled) tray.setPressed(hit.userData.action);
+    // visionOS often fires selectstart without select; pinch-like gestures activate here too.
+    if (shouldDebounceXRSelect(inputSource)) applyXRSelect(event, fallbackSource);
   });
 }
 
 function handleXRSelect(event, fallbackSource) {
   withXREventGuard('select', () => {
-    const inputSource = xrEventInputSource(event);
-    if (isDuplicateXRSelect(inputSource)) return;
-    if (fallbackSource && grabs.has(fallbackSource) && !isTransientAim(inputSource)) return;
-    markXRSelectHandled(inputSource);
-    applyHit(hitFromXREvent(event, fallbackSource));
+    applyXRSelect(event, fallbackSource);
   });
 }
 
@@ -1345,25 +1417,18 @@ function handleXRSelectEnd(fallbackSource) {
   });
 }
 
-function sessionOwnsSelect(inputSource) {
-  if (isTransientAim(inputSource)) return true;
-  if (!hasPersistentPointer()) return true;
-  if (sawTransientPointer || isLikelyVisionOS()) return true;
-  return false;
-}
-
 function onXRSessionSelectStart(event) {
-  if (!sessionOwnsSelect(event.inputSource)) return;
+  // Session + transient-pointer/controller must both activate Face-mode gaze targets on visionOS:
+  // Safari may deliver only XRSession select, only a short-lived transient-pointer select, or only selectstart.
   handleXRSelectStart(event, null);
 }
 
 function onXRSessionSelect(event) {
-  if (!sessionOwnsSelect(event.inputSource)) return;
+  // Same as selectstart: do not wait for the session to "own" the pinch; debounce collapses duplicates.
   handleXRSelect(event, null);
 }
 
-function onXRSessionSelectEnd(event) {
-  if (event?.inputSource && !sessionOwnsSelect(event.inputSource)) return;
+function onXRSessionSelectEnd() {
   handleXRSelectEnd(null);
 }
 
@@ -1483,6 +1548,7 @@ function hoverPickables() {
         obj = hoverFromRay(_rayOrigin, _rayDir);
       }
     }
+    lastXRHover = obj;
   } else {
     raycaster.setFromCamera(pointer, camera);
     obj = resolvePick(raycaster.intersectObjects(pickables(), true));
@@ -1513,14 +1579,13 @@ function setupXR() {
     controller.userData.laser = laser;
     controller.add(laser);
     controller.addEventListener('selectstart', (event) => {
-      if (sessionOwnsSelect(xrEventInputSource(event))) return;
       handleXRSelectStart(event, controller);
     });
     controller.addEventListener('selectend', () => {
       handleXRSelectEnd(controller);
     });
+    // Transient-pointer select on visionOS is dispatched here; Face hover still uses the gaze target.
     controller.addEventListener('select', (event) => {
-      if (sessionOwnsSelect(xrEventInputSource(event))) return;
       handleXRSelect(event, controller);
     });
     controller.addEventListener('squeezestart', () => {
@@ -1541,8 +1606,7 @@ function setupXR() {
         const src = hand.userData?.inputSource || null;
         const fake = { inputSource: src, frame: renderer.xr.getFrame?.() };
         handleXRSelectStart(fake, hand);
-        // Spectacles / AVP already activate via session select; don't also fire on pinchstart.
-        if (sessionOwnsSelect(src)) return;
+        // visionOS may omit pinchstart; if it does fire, still apply once (debounce skips a later session select).
         handleXRSelect(fake, hand);
       });
       hand.addEventListener('pinchend', () => handleXRSelectEnd(hand));
@@ -1771,6 +1835,7 @@ renderer.xr.addEventListener('sessionstart', () => {
 renderer.xr.addEventListener('sessionend', () => {
   xrStageSnapPending = false;
   xrStageSnapTries = 0;
+  lastXRHover = null;
   resetStageHome();
 });
 
@@ -2035,6 +2100,9 @@ window.__catan = {
   },
   get pointerMode() {
     return pointerMode;
+  },
+  get pointerPitchDeg() {
+    return pointerPitchDeg;
   },
   get gazeReticle() {
     return gazeReticle;
