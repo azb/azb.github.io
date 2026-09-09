@@ -18,6 +18,7 @@ import {
   showToast,
   trayStatus,
   formatRollResult,
+  formatStealResult,
   showDiscard,
   showSteal,
   showTrade,
@@ -545,11 +546,17 @@ function applyPanelStatus() {
   }
   const status = panelStatus();
   const roll = formatRollResult(game);
+  const stealLine = formatStealResult(game);
+  const eventBanner = stealLine
+    ? roll
+      ? `${roll.diceLine} · ${stealLine}`
+      : stealLine
+    : roll?.banner;
   tray.setStatus(status);
   if (headHint) {
-    help.set(roll ? roll.banner : 'Point with your view, pinch to select.');
+    help.set(eventBanner || 'Point with your view, pinch to select.');
   } else {
-    help.set(roll ? roll.banner : status);
+    help.set(eventBanner || status);
   }
 }
 
@@ -1018,12 +1025,20 @@ function stealActionId(action) {
   return Number(action.slice(6));
 }
 
+function announceSteal() {
+  const line = formatStealResult(game);
+  if (!line) return;
+  showToast(line);
+  floatLabels.spawn(line, tray.group.getWorldPosition(_floatPos));
+}
+
 function trySteal(fromId) {
   if (!game || busy || game.phase !== PHASE.STEAL || !game.isHuman()) return false;
   if (!game.steal(Number(fromId))) return false;
   closeModal();
   modalOpen = false;
   sfx.click();
+  announceSteal();
   afterAction();
   return true;
 }
@@ -1793,6 +1808,11 @@ async function pumpAI() {
       } else {
         flushAIDiscards();
         refresh();
+        if (action?.type === 'steal' && g.lastSteal) {
+          announceSteal();
+          await sleep(900);
+          if (game !== g) return;
+        }
       }
       if (!ok) break;
     }
@@ -1928,4 +1948,5 @@ window.__catan = {
   presentModals,
   trySteal,
   formatRollResult,
+  formatStealResult,
 };

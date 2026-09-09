@@ -39,14 +39,28 @@ export function phaseText(game) {
   }
 }
 
+export function formatStealResult(game) {
+  const s = game.lastSteal;
+  if (!s?.resource) return null;
+  const thief = game.player(s.playerId);
+  const victim = game.player(s.fromId);
+  if (!thief || !victim) return null;
+  const label = RESOURCE_LABEL[s.resource] || s.resource;
+  const view = viewPlayer(game);
+  if (thief.id === view.id) return `You stole ${label} from ${victim.name}`;
+  if (victim.id === view.id) return `${thief.name} stole ${label} from you`;
+  return `${thief.name} stole ${label} from ${victim.name}`;
+}
+
 export function formatRollResult(game) {
   const roll = game.lastRoll;
   if (!roll?.dice) return null;
   const [a, b] = roll.dice;
   const sum = a + b;
   const diceLine = `${a} + ${b} = ${sum}`;
+  const stealLine = formatStealResult(game);
   if (roll.seven || sum === 7) {
-    const gainsLine = 'Robber — discard if 8+ cards';
+    const gainsLine = stealLine || 'Robber — discard if 8+ cards';
     return { diceLine, gainsLine, seven: true, banner: `${diceLine} · ${gainsLine}` };
   }
   const view = viewPlayer(game);
@@ -64,6 +78,7 @@ export function formatRollResult(game) {
 
 export function trayStatus(game) {
   const roll = formatRollResult(game);
+  const stealLine = formatStealResult(game);
   if (game.phase === PHASE.DISCARD) {
     const line = discardLine(game);
     const hint = `${line}\nTap resources on the panel`;
@@ -91,6 +106,13 @@ export function trayStatus(game) {
         ? '\nTap New island on the panel'
         : '';
   const phaseStatus = `${name} · ${line}${extra}`;
+  const showSteal =
+    stealLine && game.phase !== PHASE.STEAL && game.phase !== PHASE.ROBBER;
+  if (showSteal) {
+    if (roll?.seven) return `${roll.diceLine} · ${stealLine}\n${phaseStatus}`;
+    if (roll) return `${roll.banner}\n${stealLine}`;
+    return `${stealLine}\n${phaseStatus}`;
+  }
   if (!roll) return phaseStatus;
   if (roll.seven) return `${roll.diceLine} · ${phaseStatus}`;
   return `${roll.banner}\n${phaseStatus}`;
@@ -103,16 +125,23 @@ export function renderHud(game, intent) {
   const helpCopy = phaseText(game);
   $('phase-label').textContent = helpCopy;
   const roll = formatRollResult(game);
+  const stealLine = formatStealResult(game);
+  const eventLine = stealLine
+    ? roll
+      ? `${roll.diceLine} · ${stealLine}`
+      : stealLine
+    : roll
+      ? roll.banner
+      : helpCopy;
   const tableHelp = $('table-help');
   if (tableHelp) {
-    const shown = roll ? roll.banner : helpCopy;
-    tableHelp.textContent = shown;
-    tableHelp.classList.toggle('hidden', !shown);
+    tableHelp.textContent = eventLine;
+    tableHelp.classList.toggle('hidden', !eventLine);
   }
   const strip = $('roll-result');
   if (strip) {
-    strip.textContent = roll ? roll.banner : '';
-    strip.classList.toggle('hidden', !roll);
+    strip.textContent = stealLine ? eventLine : roll ? roll.banner : '';
+    strip.classList.toggle('hidden', !strip.textContent);
   }
 
   const view = viewPlayer(game);

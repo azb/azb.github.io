@@ -56,6 +56,7 @@ export class Game {
     this.winner = null;
     this.lastAction = null;
     this.lastRoll = null;
+    this.lastSteal = null;
     this.afterRobber = PHASE.MAIN;
     this.note(`Island seed ${this.seed}. ${playerCount} captains set sail.`);
   }
@@ -390,6 +391,7 @@ export class Game {
 
   roll() {
     if (this.phase !== PHASE.ROLL) return null;
+    this.lastSteal = null;
     const a = 1 + Math.floor(this.rand() * 6);
     const b = 1 + Math.floor(this.rand() * 6);
     this.dice = [a, b];
@@ -448,6 +450,7 @@ export class Game {
   }
 
   startRobber() {
+    this.lastSteal = null;
     this.discardQueue = this.players
       .filter((p) => totalCards(p.resources) >= 8)
       .map((p) => ({
@@ -486,6 +489,7 @@ export class Game {
 
   moveRobber(hexId, playerId = this.current) {
     if (this.phase !== PHASE.ROBBER) return false;
+    this.lastSteal = null;
     const h = this.board.hexes.get(hexId);
     if (!h?.isLand || hexId === this.board.robberHex) return false;
     this.board.robberHex = hexId;
@@ -511,15 +515,20 @@ export class Game {
     const bag = [];
     for (const r of RESOURCES) for (let i = 0; i < from.resources[r]; i++) bag.push(r);
     if (!bag.length) {
+      this.lastSteal = null;
       this.phase = this.afterRobber;
+      this.emit({ type: 'steal', fromId, playerId, resource: null });
       return true;
     }
     const take = bag[Math.floor(this.rand() * bag.length)];
     from.resources[take] -= 1;
     this.player(playerId).resources[take] += 1;
-    this.note(`${this.player(playerId).name} steals from ${from.name}.`);
+    this.lastSteal = { playerId, fromId, resource: take };
+    this.note(
+      `${this.player(playerId).name} steals ${RESOURCE_LABEL[take] || take} from ${from.name}.`,
+    );
     this.phase = this.afterRobber;
-    this.emit({ type: 'steal', fromId, playerId });
+    this.emit({ type: 'steal', fromId, playerId, resource: take });
     return true;
   }
 
@@ -566,6 +575,7 @@ export class Game {
     if (card.type === DEV_TYPES.KNIGHT) {
       p.knightsPlayed += 1;
       this.updateArmy();
+      this.lastSteal = null;
       this.note(`${p.name} plays a knight.`);
       this.afterRobber = this.phase === PHASE.ROLL ? PHASE.ROLL : PHASE.MAIN;
       this.phase = PHASE.ROBBER;

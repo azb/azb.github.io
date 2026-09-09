@@ -3,7 +3,7 @@ import { TABLE_HEIGHT } from '../game/constants.js';
 import { woodMap, feltMap } from './textures.js';
 import { QUALITY } from './quality.js';
 
-const LAMP_INTENSITY = 8;
+const LAMP_INTENSITY = 11;
 const LAMP_DISTANCE = 6;
 
 export function createWorld(stage) {

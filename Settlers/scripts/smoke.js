@@ -1,7 +1,7 @@
 import { Game } from '../src/game/Game.js';
 import { takeAITurn } from '../src/game/ai.js';
 import { PHASE } from '../src/game/constants.js';
-import { formatRollResult, trayStatus } from '../src/ui.js';
+import { formatRollResult, formatStealResult, trayStatus } from '../src/ui.js';
 
 function play(seed) {
   const g = new Game({ playerCount: 4, solo: true, seed });
@@ -113,9 +113,59 @@ function rollResultCheck() {
   return { stuck: false, rollResult: true, banner };
 }
 
+function stealResultCheck() {
+  const empty = { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 };
+  const g = new Game({ playerCount: 3, solo: true, seed: 1 });
+  g.phase = PHASE.STEAL;
+  g.afterRobber = PHASE.MAIN;
+  g.current = 0;
+  g.stealCandidates = [1];
+  g.players[0].resources = { ...empty };
+  g.players[1].resources = { ...empty, wheat: 3 };
+  g.rand = () => 0;
+  if (!g.steal(1)) return { stuck: true, why: 'nosteal' };
+  if (g.lastSteal?.resource !== 'wheat') return { stuck: true, why: 'resource', last: g.lastSteal };
+  if (!g.log.at(-1)?.includes('Grain') || /wheat/i.test(g.log.at(-1))) {
+    return { stuck: true, why: 'log', log: g.log.at(-1) };
+  }
+  const you = formatStealResult(g);
+  if (you !== 'You stole Grain from Blue') return { stuck: true, why: 'you', got: you };
+  const tray = trayStatus(g);
+  if (!tray.includes('You stole Grain from Blue')) return { stuck: true, why: 'tray', tray };
+
+  g.lastSteal = { playerId: 1, fromId: 0, resource: 'sheep' };
+  const fromYou = formatStealResult(g);
+  if (fromYou !== 'Blue stole Wool from you') return { stuck: true, why: 'fromYou', got: fromYou };
+
+  g.lastSteal = { playerId: 1, fromId: 2, resource: 'brick' };
+  const other = formatStealResult(g);
+  if (other !== 'Blue stole Brick from Orange') return { stuck: true, why: 'other', got: other };
+
+  g.phase = PHASE.STEAL;
+  g.stealCandidates = [2];
+  g.players[2].resources = { ...empty };
+  g.lastSteal = { playerId: 1, fromId: 2, resource: 'brick' };
+  if (!g.steal(2)) return { stuck: true, why: 'empty' };
+  if (g.lastSteal) return { stuck: true, why: 'empty-claimed', last: g.lastSteal };
+  if (formatStealResult(g)) return { stuck: true, why: 'empty-line' };
+
+  g.lastRoll = { dice: [6, 1], production: [], seven: true, playerId: 0 };
+  g.lastSteal = { playerId: 0, fromId: 1, resource: 'wheat' };
+  g.phase = PHASE.MAIN;
+  const sev = formatRollResult(g);
+  if (sev?.banner !== '6 + 1 = 7 · You stole Grain from Blue') {
+    return { stuck: true, why: 'seven-banner', got: sev?.banner };
+  }
+  return { stuck: false, steal: true };
+}
+
 const rollUi = rollResultCheck();
 console.log(JSON.stringify(rollUi));
 if (rollUi.stuck) process.exitCode = 1;
+
+const stealUi = stealResultCheck();
+console.log(JSON.stringify(stealUi));
+if (stealUi.stuck) process.exitCode = 1;
 
 const seven = sevenDiscard();
 console.log(JSON.stringify(seven));
