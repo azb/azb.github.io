@@ -11,6 +11,7 @@ import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
 import { PlayerAvatars } from './gfx/avatars.js';
 import { ProductionFlights } from './gfx/production.js';
+import { FloatLabels } from './gfx/floatText.js';
 import {
   renderHud,
   bindHud,
@@ -79,6 +80,7 @@ const help = new HelpBanner(camera);
 const gazeReticle = createGazeReticle();
 const avatars = new PlayerAvatars(stage);
 const production = new ProductionFlights(stage);
+const floatLabels = new FloatLabels(stage);
 const handles = new BoardHandles(scene, stage);
 
 const _ctrlPos = new THREE.Vector3();
@@ -99,6 +101,8 @@ let xrSessionBound = null;
 const xrEventGuard = { select: false, selectstart: false, selectend: false };
 const XR_CONTROLLER_SLOTS = 4;
 const XR_OPTIONAL_FEATURES = ['local-floor', 'bounded-floor', 'hand-tracking', 'transient-pointer', 'unbounded'];
+const LASER_MAX = 4;
+const LASER_EPS = 0.003;
 
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -126,6 +130,8 @@ let discardGive = emptyHand();
 let discardKey = '';
 let plentyPicks = [];
 const TRAY_SETTINGS = new Set(['settings', 'settingsBack', 'passthrough', 'handles', 'restart', 'pointer']);
+const BUILD_TRAY = new Set(['road', 'settlement', 'city', 'dev', 'cards']);
+const _floatPos = new THREE.Vector3();
 const DEV_NAMES = {
   [DEV_TYPES.KNIGHT]: 'Knight',
   [DEV_TYPES.ROAD]: 'Road Building',
@@ -218,6 +224,16 @@ function runHudAction(act, extra) {
     trySteal(extra);
     return;
   }
+  if (act === 'dev') {
+    const pid = viewPlayer(game).id;
+    if (!game.buyDev(pid)) {
+      showBuildFail(game.whyNotDev(pid), { userData: { kind: 'tray', action: 'dev' } });
+      return;
+    }
+    sfx.click();
+    afterAction();
+    return;
+  }
   sfx.click();
   if (act === 'roll') {
     const d = game.roll();
@@ -232,11 +248,6 @@ function runHudAction(act, extra) {
   }
   if (act === 'end') {
     game.endTurn();
-    afterAction();
-    return;
-  }
-  if (act === 'dev') {
-    game.buyDev(viewPlayer(game).id);
     afterAction();
     return;
   }
@@ -273,7 +284,9 @@ renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (!renderer.xr.isPresenting) controls.update();
   dice.update(dt);
-  production.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
+  const viewCam = renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera;
+  production.update(dt, viewCam);
+  floatLabels.update(dt, viewCam);
   boardView.pulseMarkers(clock.elapsedTime);
   avatars.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
   if (renderer.xr.isPresenting) {
@@ -307,6 +320,7 @@ function startGame() {
   boardView.syncPieces(game);
   avatars.rebuild(game.players);
   production.clear();
+  floatLabels.clear();
   dice.placeFor(game.current, game.playerCount);
   const start = document.getElementById('start-screen');
   start.classList.add('hidden');
@@ -1012,7 +1026,13 @@ function applyHit(obj) {
   if (!obj) return;
   const data = obj.userData;
   if (data.kind === 'tray') {
-    if (data.disabled && !TRAY_SETTINGS.has(data.action)) return;
+    if (data.disabled && !TRAY_SETTINGS.has(data.action)) {
+      if (game && humanCanAct() && BUILD_TRAY.has(data.action)) {
+        tray.flashPress(data.action);
+        showBuildFail(trayBuildFail(data.action), obj);
+      }
+      return;
+    }
     tray.flashPress(data.action);
     if (handleTrayAction(data.action)) return;
     if (!game || data.disabled) return;
@@ -1032,13 +1052,19 @@ function applyHit(obj) {
       : mode === 'settlement'
         ? game.placeSettlement(data.id)
         : game.placeCity(data.id) || game.placeSettlement(data.id);
-    if (!ok) return;
+    if (!ok) {
+      showBuildFail(vertexBuildFail(data.id, mode), obj);
+      return;
+    }
     boardView.flashPick(obj);
     sfx.place();
     intent = null;
     afterAction();
   } else if (data.kind === 'edge') {
-    if (!game.placeRoad(data.id)) return;
+    if (!game.placeRoad(data.id)) {
+      showBuildFail(game.whyNotRoad(data.id), obj);
+      return;
+    }
     boardView.flashPick(obj);
     sfx.place();
     intent = null;
@@ -1050,6 +1076,52 @@ function applyHit(obj) {
     if (game.phase !== PHASE.STEAL) showToast('No neighbor to steal from.');
     afterAction();
   }
+}
+
+function trayBuildFail(act) {
+  if (act === 'road') return game.whyNotRoad();
+  if (act === 'settlement') return game.whyNotSettlement();
+  if (act === 'city') return game.whyNotCity();
+  if (act === 'dev' || act === 'cards') return game.whyNotDev();
+  return "Can't build";
+}
+
+function vertexBuildFail(id, mode) {
+  if (mode === 'city') return game.whyNotCity(id);
+  if (mode === 'settlement') return game.whyNotSettlement(id);
+  const v = game.board.vertices.get(id);
+  if (v?.building?.player === game.current && v.building.type === 'settlement') {
+    return game.whyNotCity(id);
+  }
+  return game.whyNotSettlement(id);
+}
+
+function hitWorldPos(obj, target) {
+  const data = obj?.userData || {};
+  if (data.kind === 'vertex') {
+    const m = boardView.vertexMarkers.get(data.id);
+    if (m) return m.getWorldPosition(target);
+  }
+  if (data.kind === 'edge') {
+    const m = boardView.edgeMarkers.get(data.id);
+    if (m) return m.getWorldPosition(target);
+  }
+  if (data.kind === 'hex') {
+    const m = boardView.hexMarkers.get(data.id) || boardView.hexMeshes.get(data.id);
+    if (m) return m.getWorldPosition(target);
+  }
+  if (data.kind === 'tray' || data.action) {
+    return tray.buttonWorldPos(data.action, target);
+  }
+  if (obj?.isObject3D) return obj.getWorldPosition(target);
+  return tray.group.getWorldPosition(target);
+}
+
+function showBuildFail(message, obj) {
+  const line = String(message || '').trim();
+  if (!line) return;
+  sfx.bad();
+  floatLabels.spawn(line, hitWorldPos(obj, _floatPos));
 }
 
 function resolvePick(hits) {
@@ -1258,9 +1330,65 @@ function unbindXRSession() {
   xrSessionBound = null;
 }
 
+function laserBlockers() {
+  const list = [stage];
+  if (handles.group.visible) list.push(handles.group);
+  return list;
+}
+
+function ignoreLaserHit(obj) {
+  if (!obj || obj.isLine || obj.isPoints || obj.isSprite) return true;
+  if (obj.userData?.pointerLaser) return true;
+  const mat = obj.material;
+  if (mat) {
+    const mats = Array.isArray(mat) ? mat : [mat];
+    if (mats.every((m) => m && m.transparent && m.opacity < 0.02)) return true;
+  }
+  for (let p = obj; p; p = p.parent) {
+    if (p === gazeReticle || p === help.mesh || p.userData?.pointerLaser) return true;
+  }
+  return false;
+}
+
+function setLaserLength(laser, distance) {
+  const z = -Math.min(LASER_MAX, Math.max(0.02, distance));
+  const attr = laser.geometry.attributes.position;
+  if (attr.getZ(1) === z) return;
+  attr.setZ(1, z);
+  attr.needsUpdate = true;
+  laser.geometry.computeBoundingSphere();
+}
+
+function pointerLaserHitDistance(origin, dir) {
+  const prevNear = raycaster.near;
+  const prevFar = raycaster.far;
+  raycaster.near = 0;
+  raycaster.far = LASER_MAX;
+  raycaster.set(origin, dir);
+  const hits = raycaster.intersectObjects(laserBlockers(), true);
+  raycaster.near = prevNear;
+  raycaster.far = prevFar;
+  for (const hit of hits) {
+    if (ignoreLaserHit(hit.object)) continue;
+    return Math.max(0.02, hit.distance - LASER_EPS);
+  }
+  return LASER_MAX;
+}
+
+function updatePointerLasers() {
+  for (const c of xrControllers) {
+    const laser = c.userData.laser;
+    if (!laser) continue;
+    _rayOrigin.setFromMatrixPosition(c.matrixWorld);
+    _rayDir.set(0, 0, -1).transformDirection(c.matrixWorld).normalize();
+    setLaserLength(laser, pointerLaserHitDistance(_rayOrigin, _rayDir));
+  }
+}
+
 function hoverPickables() {
   let obj = null;
   if (renderer.xr.isPresenting) {
+    updatePointerLasers();
     if (useHeadHover()) {
       fillGazeRay(_rayOrigin, _rayDir);
       obj = hoverFromRay(_rayOrigin, _rayDir);
@@ -1299,8 +1427,12 @@ function setupXR() {
   const controllers = [];
   for (let i = 0; i < XR_CONTROLLER_SLOTS; i++) {
     const controller = renderer.xr.getController(i);
-    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -4)]);
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, -LASER_MAX),
+    ]);
     const laser = new THREE.Line(geo, lineMat);
+    laser.userData.pointerLaser = true;
     controller.userData.laser = laser;
     controller.add(laser);
     controller.addEventListener('selectstart', (event) => {
@@ -1671,6 +1803,8 @@ window.__catan = {
     return xrSessionBound;
   },
   fillPickRay,
+  pointerLaserHitDistance,
+  setLaserLength,
   useHeadHover,
   hasPersistentPointer,
   afterAction,

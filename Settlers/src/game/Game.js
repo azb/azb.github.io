@@ -8,6 +8,7 @@ import {
   PLAYERS,
   PHASE,
   VP_TO_WIN,
+  formatMissing,
 } from './constants.js';
 import { createBoard, vertexScore } from './board.js';
 import { shuffle, hasCost, payCost, addResource, mulberry32 } from './hex.js';
@@ -184,6 +185,112 @@ export class Game {
 
   canAfford(playerId, kind) {
     return hasCost(this.player(playerId).resources, BUILD_COST[kind]);
+  }
+
+  missingCostLabel(playerId, kind) {
+    return formatMissing(this.player(playerId).resources, BUILD_COST[kind]);
+  }
+
+  whyNotSettlement(vertexId, playerId = this.current) {
+    const setup = this.phase === PHASE.SETUP_SETTLEMENT;
+    const p = this.player(playerId);
+    if (vertexId == null) {
+      if (!setup && this.phase !== PHASE.MAIN) return "Can't settle now";
+      if (!setup) {
+        const miss = this.missingCostLabel(playerId, 'settlement');
+        if (miss) return miss;
+      }
+      if (!setup && p.settlements.length >= PIECE_LIMIT.settlement) return 'No settlements left';
+      return "Can't settle now";
+    }
+    if (this.validSettlements(playerId, { setup }).includes(vertexId)) {
+      if (!setup) {
+        const miss = this.missingCostLabel(playerId, 'settlement');
+        if (miss) return miss;
+      }
+      return "Can't settle here";
+    }
+    const v = this.board.vertices.get(vertexId);
+    if (!v) return "Can't settle here";
+    if (v.building) return 'Already occupied';
+    const landTouch = v.hexes.some((id) => this.board.hexes.get(id).isLand);
+    if (!landTouch) return "Can't settle here";
+    if (v.neighbors.some((nid) => this.board.vertices.get(nid).building)) {
+      return 'Too close to another settlement';
+    }
+    if (!setup) {
+      const connected = v.edges.some((eid) => this.board.edges.get(eid).road === playerId);
+      if (!connected) return 'Need a road connection';
+    }
+    if (!setup && p.settlements.length >= PIECE_LIMIT.settlement) return 'No settlements left';
+    return "Can't settle here";
+  }
+
+  whyNotRoad(edgeId, playerId = this.current) {
+    const setup = this.phase === PHASE.SETUP_ROAD;
+    const free = this.phase === PHASE.FREE_ROADS;
+    const p = this.player(playerId);
+    if (edgeId == null) {
+      if (!setup && !free && this.phase !== PHASE.MAIN) return "Can't build a road now";
+      if (!setup && !free) {
+        const miss = this.missingCostLabel(playerId, 'road');
+        if (miss) return miss;
+      }
+      if (!free && !setup && p.roads.length >= PIECE_LIMIT.road) return 'No roads left';
+      return "Can't build a road now";
+    }
+    const e = this.board.edges.get(edgeId);
+    if (!e) return "Can't build here";
+    if (e.road != null) return 'Already occupied';
+    if (this.validRoads(playerId, { setup, free }).includes(edgeId)) {
+      if (!setup && !free) {
+        const miss = this.missingCostLabel(playerId, 'road');
+        if (miss) return miss;
+      }
+      return "Can't build here";
+    }
+    const va = this.board.vertices.get(e.a);
+    const vb = this.board.vertices.get(e.b);
+    const land = [...va.hexes, ...vb.hexes].some((id) => this.board.hexes.get(id).isLand);
+    if (!land) return "Can't build here";
+    if (setup) {
+      const last = p.lastSettlement;
+      if (e.a !== last && e.b !== last) return 'Must touch your new settlement';
+    } else if (!this.roadConnects(va, playerId) && !this.roadConnects(vb, playerId)) {
+      return 'Need a road connection';
+    }
+    if (!free && !setup && p.roads.length >= PIECE_LIMIT.road) return 'No roads left';
+    return "Can't build here";
+  }
+
+  whyNotCity(vertexId, playerId = this.current) {
+    const p = this.player(playerId);
+    if (vertexId == null) {
+      if (this.phase !== PHASE.MAIN) return "Can't build a city now";
+      const miss = this.missingCostLabel(playerId, 'city');
+      if (miss) return miss;
+      if (p.cities.length >= PIECE_LIMIT.city) return 'No cities left';
+      if (!this.validCities(playerId).length) return 'Need a settlement here';
+      return "Can't build a city now";
+    }
+    if (this.phase !== PHASE.MAIN) return "Can't build a city now";
+    if (p.cities.length >= PIECE_LIMIT.city) return 'No cities left';
+    const v = this.board.vertices.get(vertexId);
+    if (v?.building?.type === 'city') return 'Already a city';
+    if (!v?.building) return 'Need a settlement here';
+    if (v.building.player !== playerId) return 'Already occupied';
+    if (v.building.type !== 'settlement') return 'Need a settlement here';
+    const miss = this.missingCostLabel(playerId, 'city');
+    if (miss) return miss;
+    return "Can't build a city now";
+  }
+
+  whyNotDev(playerId = this.current) {
+    if (this.phase !== PHASE.MAIN) return "Can't buy a card now";
+    const miss = this.missingCostLabel(playerId, 'dev');
+    if (miss) return miss;
+    if (!this.devDeck.length) return 'No development cards left';
+    return "Can't buy a card now";
   }
 
   takeFromBank(type, n, player) {

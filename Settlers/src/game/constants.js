@@ -58,6 +58,20 @@ export function formatCost(cost, sep = ' · ') {
     .join(sep);
 }
 
+export function missingResourceNames(hand, cost) {
+  return Object.entries(cost || {})
+    .filter(([k, n]) => n && (hand[k] || 0) < n)
+    .map(([k]) => RESOURCE_LABEL[k] || k);
+}
+
+export function formatMissing(hand, cost) {
+  const names = missingResourceNames(hand, cost);
+  if (!names.length) return null;
+  if (names.length === 1) return `Not enough ${names[0]}`;
+  if (names.length === 2) return `Not enough ${names[0]} and ${names[1]}`;
+  return `Not enough ${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+}
+
 export const PIECE_LIMIT = { settlement: 5, city: 4, road: 15 };
 export const BANK_START = 19;
 

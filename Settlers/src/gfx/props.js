@@ -394,6 +394,12 @@ export class Tray {
     return this.buttons.map((b) => b.mesh);
   }
 
+  buttonWorldPos(action, target) {
+    const hit = this.buttons.find((b) => b.def.action === action);
+    const obj = hit?.mesh || this.panel;
+    return obj.getWorldPosition(target);
+  }
+
   setStatus(text) {
     const line = String(text || '');
     if (line === this.status) return;
