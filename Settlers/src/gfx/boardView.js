@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HEX_SIZE, TABLE_HEIGHT, RESOURCE_COLOR, PIPS } from '../game/constants.js';
+import { HEX_SIZE, TABLE_HEIGHT, RESOURCE_COLOR, RESOURCE_LABEL, PIPS } from '../game/constants.js';
 import { feltMap, woodMap, numberTexture, labelTexture } from './textures.js';
 import { QUALITY, markShared, disposeChildren } from './quality.js';
 
@@ -287,7 +287,8 @@ export class BoardView {
   }
 
   harborLabel(harbor) {
-    const text = harbor.type === 'generic' ? '3:1' : `2:1\n${harbor.type}`;
+    const name = RESOURCE_LABEL[harbor.type] || harbor.type;
+    const text = harbor.type === 'generic' ? '3:1' : `2:1\n${name}`;
     let tex = this.harborTex.get(text);
     if (tex) return tex;
     tex = markShared(labelTexture(text, {

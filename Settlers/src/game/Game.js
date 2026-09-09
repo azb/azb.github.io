@@ -1,5 +1,6 @@
 import {
   RESOURCES,
+  RESOURCE_LABEL,
   BUILD_COST,
   PIECE_LIMIT,
   BANK_START,
@@ -435,7 +436,7 @@ export class Game {
       const need = grant.reduce((n, g) => n + g[r], 0);
       if (need === 0) continue;
       if (need > this.bank[r]) {
-        this.note(`The ${r} supply is too scarce to pay everyone.`);
+        this.note(`The ${RESOURCE_LABEL[r] || r} supply is too scarce to pay everyone.`);
         continue;
       }
       for (let i = 0; i < this.players.length; i++) {
@@ -530,7 +531,7 @@ export class Game {
     if (p.resources[giveType] < rate || this.bank[getType] < 1) return false;
     this.returnToBank(p, giveType, rate);
     this.takeFromBank(getType, 1, p);
-    this.note(`${p.name} trades ${rate} ${giveType} to the bank for ${getType}.`);
+    this.note(`${p.name} trades ${rate} ${RESOURCE_LABEL[giveType] || giveType} to the bank for ${RESOURCE_LABEL[getType] || getType}.`);
     this.emit({ type: 'trade' });
     return true;
   }
@@ -590,7 +591,7 @@ export class Game {
     this.takeFromBank(r1, 1, p);
     this.takeFromBank(r2, 1, p);
     this.phase = PHASE.MAIN;
-    this.note(`${p.name} takes ${r1} and ${r2} from the bank.`);
+    this.note(`${p.name} takes ${RESOURCE_LABEL[r1] || r1} and ${RESOURCE_LABEL[r2] || r2} from the bank.`);
     this.emit({ type: 'plenty' });
     return true;
   }
@@ -606,7 +607,7 @@ export class Game {
     }
     p.resources[resource] += n;
     this.phase = PHASE.MAIN;
-    this.note(`${p.name} monopolizes ${resource} (${n} cards).`);
+    this.note(`${p.name} monopolizes ${RESOURCE_LABEL[resource] || resource} (${n} cards).`);
     this.emit({ type: 'monopoly' });
     return true;
   }
