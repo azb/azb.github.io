@@ -45,6 +45,7 @@ renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 const stage = new THREE.Group();
+stage.name = 'stage';
 stage.position.set(0, 0, -1.32);
 scene.add(stage);
 
@@ -177,21 +178,7 @@ document.getElementById('start-btn').addEventListener('click', () => {
 });
 
 document.getElementById('new-game-btn').addEventListener('click', () => {
-  closeModal();
-  game = null;
-  modalOpen = false;
-  trayScreen = 'actions';
-  tradeGive = null;
-  tradeGet = null;
-  discardGive = emptyHand();
-  discardKey = '';
-  plentyPicks = [];
-  document.getElementById('hud').classList.add('hidden');
-  const start = document.getElementById('start-screen');
-  start.classList.remove('hidden');
-  start.hidden = false;
-  start.removeAttribute('inert');
-  syncTrayButtons();
+  startGame();
 });
 
 document.getElementById('vr-btn').addEventListener('click', enterVR);
@@ -306,13 +293,16 @@ renderer.setAnimationLoop(() => {
   }
   hoverPickables();
   syncSpotOverlay();
+  world.syncBoardLight(stage.scale.x);
   renderer.render(scene, camera);
 });
 
 updateVRButton();
 
 function startGame() {
+  closeModal();
   game = new Game({ playerCount, solo });
+  busy = false;
   intent = null;
   modalOpen = false;
   trayScreen = 'actions';
@@ -615,8 +605,9 @@ function runTraySettings(act) {
     handlesOn = !handlesOn;
     applyHandleVisibility();
   } else if (act === 'restart') {
-    trayScreen = 'actions';
-    document.getElementById('new-game-btn').click();
+    sfx.click();
+    startGame();
+    return;
   }
   syncTrayButtons();
   applyPanelStatus();
@@ -1754,10 +1745,12 @@ function needsAI() {
 }
 
 async function afterAction() {
+  const g = game;
   refresh();
   try {
     await pumpAI();
   } finally {
+    if (game !== g) return;
     refresh();
     presentModals();
   }
@@ -1772,20 +1765,22 @@ function flushAIDiscards() {
 }
 
 async function pumpAI() {
-  if (!game) return;
+  const g = game;
+  if (!g) return;
   busy = true;
   try {
     flushAIDiscards();
     let guard = 0;
     let seenRoll = null;
     while (needsAI() && guard++ < 80) {
-      await sleep(game.phase === PHASE.MAIN || game.phase === PHASE.ROLL ? 700 : 220);
-      const ok = takeAITurn(game);
-      const action = game.lastAction;
+      await sleep(g.phase === PHASE.MAIN || g.phase === PHASE.ROLL ? 700 : 220);
+      if (game !== g) return;
+      const ok = takeAITurn(g);
+      const action = g.lastAction;
       if (action?.type === 'roll' && action !== seenRoll) {
         seenRoll = action;
-        dice.placeFor(game.current, game.playerCount);
-        dice.rollTo(game.dice);
+        dice.placeFor(g.current, g.playerCount);
+        dice.rollTo(g.dice);
         sfx.dice();
         if (action.production?.length) playProduction(action.production);
         flushAIDiscards();
@@ -1794,6 +1789,7 @@ async function pumpAI() {
           ? Math.min(4500, Math.max(750, Math.ceil(production.timeLeft() * 1000)))
           : 650;
         await sleep(waitMs);
+        if (game !== g) return;
       } else {
         flushAIDiscards();
         refresh();
@@ -1801,7 +1797,7 @@ async function pumpAI() {
       if (!ok) break;
     }
   } finally {
-    busy = false;
+    if (game === g) busy = false;
   }
 }
 

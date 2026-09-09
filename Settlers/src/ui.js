@@ -358,7 +358,6 @@ export function showWin(game) {
     <p>${game.totalVP(p)} victory points. The island is theirs. In VR, tap New island on the panel.</p>
     <button id="again" class="primary">New island</button>`);
   $('again').onclick = () => {
-    closeModal();
     $('new-game-btn').click();
   };
 }
