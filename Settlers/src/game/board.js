@@ -133,12 +133,13 @@ export function createBoard(seed = Date.now()) {
 
   for (const v of vertices.values()) v.neighbors = [...v.neighbors];
 
-  const coastal = [...edges.values()].filter((e) => {
+  for (const e of edges.values()) {
     const lands = e.hexes.filter((id) => hexes.get(id).isLand).length;
     const seas = e.hexes.filter((id) => !hexes.get(id).isLand).length;
+    e.touchesLand = lands > 0;
     e.coastal = lands > 0 && seas > 0;
-    return e.coastal;
-  });
+  }
+  const coastal = [...edges.values()].filter((e) => e.coastal);
 
   coastal.sort((a, b) => {
     const va = vertices.get(a.a);

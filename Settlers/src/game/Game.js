@@ -156,10 +156,9 @@ export class Game {
     if (!free && !setup && p.roads.length >= PIECE_LIMIT.road) return out;
     for (const e of this.board.edges.values()) {
       if (e.road != null) continue;
+      if (!e.touchesLand) continue;
       const va = this.board.vertices.get(e.a);
       const vb = this.board.vertices.get(e.b);
-      const land = [...va.hexes, ...vb.hexes].some((id) => this.board.hexes.get(id).isLand);
-      if (!land) continue;
       if (setup) {
         const last = p.lastSettlement;
         if (e.a !== last && e.b !== last) continue;
@@ -249,10 +248,9 @@ export class Game {
       }
       return "Can't build here";
     }
+    if (!e.touchesLand) return "Can't build on water";
     const va = this.board.vertices.get(e.a);
     const vb = this.board.vertices.get(e.b);
-    const land = [...va.hexes, ...vb.hexes].some((id) => this.board.hexes.get(id).isLand);
-    if (!land) return "Can't build here";
     if (setup) {
       const last = p.lastSettlement;
       if (e.a !== last && e.b !== last) return 'Must touch your new settlement';

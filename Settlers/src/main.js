@@ -78,6 +78,7 @@ const dice = new DicePair(stage);
 const tray = new Tray(stage);
 const help = new HelpBanner(camera);
 const gazeReticle = createGazeReticle();
+const gazeHitDot = createGazeHitDot();
 const avatars = new PlayerAvatars(stage);
 const production = new ProductionFlights(stage);
 const floatLabels = new FloatLabels(stage);
@@ -94,6 +95,7 @@ const _yAxis = new THREE.Vector3(0, 1, 0);
 const _spotPos = new THREE.Vector3();
 const _rayOrigin = new THREE.Vector3();
 const _rayDir = new THREE.Vector3();
+const _hitN = new THREE.Vector3();
 const grabs = new Map();
 let twoHand = null;
 let sawTransientPointer = false;
@@ -103,6 +105,7 @@ const XR_CONTROLLER_SLOTS = 4;
 const XR_OPTIONAL_FEATURES = ['local-floor', 'bounded-floor', 'hand-tracking', 'transient-pointer', 'unbounded'];
 const LASER_MAX = 4;
 const LASER_EPS = 0.003;
+const GAZE_HIT_LIFT = 0.004;
 
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -998,7 +1001,7 @@ function syncSpotOverlay() {
 function pickables() {
   const list = [...handles.pickables(), ...tray.pickables(), ...avatars.pickables()];
   for (const m of boardView.vertexMarkers.values()) if (m.visible) list.push(m);
-  for (const m of boardView.edgeMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
+  for (const m of boardView.edgeMarkers.values()) if (m.visible) list.push(m);
   for (const m of boardView.hexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
   if (game && currentIntent() === 'robber') {
     for (const m of boardView.hexMeshes.values()) list.push(m);
@@ -1344,8 +1347,9 @@ function ignoreLaserHit(obj) {
     const mats = Array.isArray(mat) ? mat : [mat];
     if (mats.every((m) => m && m.transparent && m.opacity < 0.02)) return true;
   }
+  if (obj.userData?.gazeHitDot) return true;
   for (let p = obj; p; p = p.parent) {
-    if (p === gazeReticle || p === help.mesh || p.userData?.pointerLaser) return true;
+    if (p === gazeReticle || p === gazeHitDot || p === help.mesh || p.userData?.pointerLaser) return true;
   }
   return false;
 }
@@ -1359,20 +1363,25 @@ function setLaserLength(laser, distance) {
   laser.geometry.computeBoundingSphere();
 }
 
-function pointerLaserHitDistance(origin, dir) {
+function firstWorldHit(origin, dir, far = LASER_MAX) {
   const prevNear = raycaster.near;
   const prevFar = raycaster.far;
   raycaster.near = 0;
-  raycaster.far = LASER_MAX;
+  raycaster.far = far;
   raycaster.set(origin, dir);
   const hits = raycaster.intersectObjects(laserBlockers(), true);
   raycaster.near = prevNear;
   raycaster.far = prevFar;
   for (const hit of hits) {
     if (ignoreLaserHit(hit.object)) continue;
-    return Math.max(0.02, hit.distance - LASER_EPS);
+    return hit;
   }
-  return LASER_MAX;
+  return null;
+}
+
+function pointerLaserHitDistance(origin, dir) {
+  const hit = firstWorldHit(origin, dir);
+  return hit ? Math.max(0.02, hit.distance - LASER_EPS) : LASER_MAX;
 }
 
 function updatePointerLasers() {
@@ -1413,6 +1422,7 @@ function hoverPickables() {
     obj = resolvePick(raycaster.intersectObjects(pickables(), true));
     if (hoverSpotId) obj = { userData: { kind: 'vertex', id: hoverSpotId } };
   }
+  updateGazeHitDot();
   tray.setHover(obj);
   handles.setHover(obj);
   avatars.setHover(obj);
@@ -1503,6 +1513,69 @@ function createGazeReticle() {
   return group;
 }
 
+function createGazeHitDot() {
+  const group = new THREE.Group();
+  group.userData.gazeHitDot = true;
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.005, 12, 10),
+    new THREE.MeshBasicMaterial({
+      color: 0xfff8dc,
+      toneMapped: false,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+  );
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.009, 16, 12),
+    new THREE.MeshBasicMaterial({
+      color: 0xffe08a,
+      toneMapped: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.9,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+  );
+  core.renderOrder = 29;
+  shell.renderOrder = 28;
+  core.frustumCulled = false;
+  shell.frustumCulled = false;
+  group.add(shell, core);
+  group.frustumCulled = false;
+  group.visible = false;
+  scene.add(group);
+  return group;
+}
+
+function placeGazeHitDot(hit) {
+  if (!hit) {
+    gazeHitDot.visible = false;
+    return false;
+  }
+  gazeHitDot.position.copy(hit.point);
+  if (hit.normal && hit.normal.lengthSq() > 1e-8) {
+    _hitN.copy(hit.normal).normalize();
+    if (_hitN.dot(_rayDir) > 0) _hitN.negate();
+    gazeHitDot.position.addScaledVector(_hitN, GAZE_HIT_LIFT);
+  } else {
+    gazeHitDot.position.addScaledVector(_rayDir, -GAZE_HIT_LIFT);
+  }
+  gazeHitDot.visible = true;
+  return true;
+}
+
+function updateGazeHitDot() {
+  if (!renderer.xr.isPresenting || !useHeadHover()) {
+    gazeHitDot.visible = false;
+    return;
+  }
+  placeGazeHitDot(firstWorldHit(_rayOrigin, _rayDir));
+}
+
 function attachGazeReticle(parent) {
   if (!parent || gazeReticle.parent === parent) {
     applyPointerVisuals();
@@ -1526,7 +1599,8 @@ function setPointerMode(mode) {
 
 function applyPointerVisuals() {
   const head = useHeadHover();
-  if (gazeReticle) gazeReticle.visible = renderer.xr.isPresenting && (pointerMode === 'gaze' || head);
+  if (gazeReticle) gazeReticle.visible = false;
+  if (!renderer.xr.isPresenting || !head) gazeHitDot.visible = false;
   for (const c of xrControllers) {
     const laser = c.userData.laser;
     if (laser) laser.visible = pointerMode !== 'gaze' && !head && !!c.visible;
@@ -1796,6 +1870,12 @@ window.__catan = {
   get gazeReticle() {
     return gazeReticle;
   },
+  get gazeHitDot() {
+    return gazeHitDot;
+  },
+  fillGazeRay,
+  firstWorldHit,
+  placeGazeHitDot,
   get xrOptionalFeatures() {
     return XR_OPTIONAL_FEATURES;
   },

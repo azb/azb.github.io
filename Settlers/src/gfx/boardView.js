@@ -184,13 +184,15 @@ export class BoardView {
           transparent: true,
           opacity: 0,
           depthTest: false,
+          depthWrite: false,
           toneMapped: false,
         }),
       );
       m.position.set((a.x + b.x) / 2, TILE_HEIGHT + 0.01, (a.z + b.z) / 2);
       m.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
       m.renderOrder = 4;
-      m.userData = { kind: 'edge', id: e.id };
+      m.visible = false;
+      m.userData = { kind: 'edge', id: e.id, waterOnly: !e.touchesLand };
       this.markerLayer.add(m);
       this.edgeMarkers.set(e.id, m);
     }
@@ -408,9 +410,12 @@ export class BoardView {
 
   showEdges(ids) {
     this.restoreHover(this.hoverObj);
+    const set = new Set(ids);
+    const picking = ids.length > 0;
     for (const [id, m] of this.edgeMarkers) {
-      m.material.opacity = ids.includes(id) ? 0.8 : 0;
-      m.visible = ids.includes(id);
+      const on = set.has(id);
+      m.material.opacity = on ? 0.8 : 0;
+      m.visible = on || (picking && m.userData.waterOnly);
     }
     this.repaintHover();
   }
