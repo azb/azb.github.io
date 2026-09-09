@@ -393,3 +393,18 @@ export function showWin(game) {
     $('new-game-btn').click();
   };
 }
+
+export function showRestartConfirm(onDone) {
+  openModal(`<h2>Restart game?</h2>
+    <p>This starts a new island (same player count and mode).</p>
+    <button id="restart-go" class="primary">Restart</button>
+    <button id="restart-back">Back</button>`);
+  $('restart-go').onclick = () => {
+    closeModal();
+    onDone(true);
+  };
+  $('restart-back').onclick = () => {
+    closeModal();
+    onDone(false);
+  };
+}

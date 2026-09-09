@@ -290,7 +290,8 @@ export class Tray {
     const pad = 36;
     const inner = LAYOUT_W - pad * 2;
     const gap = 16;
-    const stack = this.screen === 'settings' || this.screen === 'pointerTilt' || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
+    const stack = this.screen === 'settings' || this.screen === 'pointerTilt' || this.screen === 'restartConfirm'
+      || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
     if (stack) {
       const n = Math.max(defs.length, 1);
       const settings = this.screen === 'settings' || this.screen === 'pointerTilt';
@@ -462,6 +463,7 @@ export class Tray {
     const titles = {
       settings: 'Settings',
       pointerTilt: 'Pointer tilt',
+      restartConfirm: 'Restart game?',
       steal: 'Steal a card',
       trade: 'Bank trade',
       discard: 'Discard',
@@ -473,7 +475,8 @@ export class Tray {
     ctx.fillText(titles[this.screen] || 'Actions', 36, 40);
 
     const hideStatus = this.screen === 'settings' || this.screen === 'pointerTilt';
-    const hideChips = hideStatus || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
+    const hideChips = hideStatus || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards'
+      || this.screen === 'restartConfirm';
     if (!hideStatus) {
       const lines = String(this.status || 'Sit down to begin')
         .split('\n')
@@ -518,8 +521,8 @@ export class Tray {
       const act = String(slot.def.action);
       const end = act === 'end';
       const settings = act === 'settings' || act === 'pointerTilt';
-      const back = act === 'settingsBack' || act === 'pointerTiltBack' || act === 'cardsBack' || act === 'tradeCancel';
-      const restart = act === 'restart';
+      const back = act === 'settingsBack' || act === 'pointerTiltBack' || act === 'restartBack' || act === 'cardsBack' || act === 'tradeCancel';
+      const restart = act === 'restart' || act === 'restartAsk';
       const toggle = act === 'passthrough' || act === 'handles' || act === 'pointer';
       const steal = act.startsWith('steal:');
       const tint = slot.def.color && (steal || /^(give|get|discard|plenty|mono):/.test(act));
@@ -555,7 +558,8 @@ export class Tray {
         ctx.stroke();
       }
       ctx.fillStyle = ink;
-      const big = end || back || restart || toggle || steal || confirm || this.screen === 'cards' || this.screen === 'win' || this.screen === 'pointerTilt';
+      const big = end || back || restart || toggle || steal || confirm || this.screen === 'cards' || this.screen === 'win'
+        || this.screen === 'pointerTilt' || this.screen === 'restartConfirm';
       drawSlotLabel(ctx, slot, big);
     }
 

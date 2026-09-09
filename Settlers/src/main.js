@@ -26,6 +26,7 @@ import {
   showPlenty,
   showMonopoly,
   showWin,
+  showRestartConfirm,
   closeModal,
   viewPlayer,
 } from './ui.js';
@@ -49,12 +50,14 @@ const scene = new THREE.Scene();
 const stage = new THREE.Group();
 stage.name = 'stage';
 const STAGE_FORWARD_Z = -1.32;
-/** Sitting dining-table height when the XR origin is the floor. */
-const SEATED_TABLE_TOP = 0.72;
-/** Table top below the headset when the origin is the head (`local` / no floor). */
-const TABLE_BELOW_EYES = 0.76;
-/** Headset Y that means we almost certainly have a floor-relative space. */
-const FLOOR_HEAD_MIN = 0.85;
+/** Preferred table-top drop below the headset (seated, in front of the player). */
+const TABLE_BELOW_EYES = 0.4;
+/** Hard cap: table top must never sit more than this far below the headset. */
+const TABLE_BELOW_EYES_MAX = 0.5;
+/** Treat near-origin viewer poses as untracked (identity / not ready). */
+const XR_POSE_EPS = 0.05;
+/** Wait up to ~1s (90fps) for a real headset pose before snapping anyway. */
+const XR_SNAP_WAIT_FRAMES = 90;
 stage.position.set(0, 0, STAGE_FORWARD_Z);
 scene.add(stage);
 
@@ -116,6 +119,7 @@ let xrSessionBound = null;
 let xrRefSpaceType = 'local-floor';
 let xrStageSnapPending = false;
 let xrStageSnapTries = 0;
+let xrStageUserMoved = false;
 const xrEventGuard = { select: false, selectstart: false, selectend: false };
 // Spectacles often double-fires one pinch (session select + controller/transient/gaze, or selectstart + select).
 // visionOS may fire only one of those; both session and input-source events must be able to activate.
@@ -167,6 +171,8 @@ const TRAY_SETTINGS = new Set([
   'passthrough',
   'handles',
   'restart',
+  'restartAsk',
+  'restartBack',
   'pointer',
   'pointerTilt',
   'pointerTiltUp',
@@ -232,7 +238,7 @@ document.getElementById('start-btn').addEventListener('click', () => {
 });
 
 document.getElementById('new-game-btn').addEventListener('click', () => {
-  startGame();
+  requestRestart({ fromHud: true });
 });
 
 document.getElementById('vr-btn').addEventListener('click', enterVR);
@@ -336,11 +342,11 @@ renderer.setAnimationLoop(() => {
   boardView.pulseMarkers(clock.elapsedTime);
   avatars.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
   if (renderer.xr.isPresenting) {
-    maybeSnapStageToTable();
     const xrCam = renderer.xr.getCamera?.() || camera;
     help.attach(xrCam);
     attachGazeReticle(xrCam);
     updateGrabs();
+    maybeSnapStageToTable();
     handles.update(dt, xrCam, sourcePos);
   } else {
     help.attach(camera);
@@ -356,6 +362,7 @@ updateVRButton();
 
 function startGame() {
   closeModal();
+  if (renderer.xr.isPresenting) armXrTableSnap();
   game = new Game({ playerCount, solo });
   busy = false;
   intent = null;
@@ -379,6 +386,29 @@ function startGame() {
   document.getElementById('hud').classList.remove('hidden');
   refresh();
   afterAction();
+}
+
+function gameInProgress() {
+  return !!game && game.phase !== PHASE.GAME_OVER;
+}
+
+function requestRestart({ fromHud = false } = {}) {
+  if (fromHud && !gameInProgress()) {
+    startGame();
+    return;
+  }
+  if (preferTrayUi()) {
+    trayScreen = 'restartConfirm';
+    syncTrayButtons();
+    applyPanelStatus();
+    sfx.click();
+    return;
+  }
+  modalOpen = true;
+  showRestartConfirm((ok) => {
+    modalOpen = false;
+    if (ok) startGame();
+  });
 }
 
 function humanCanAct() {
@@ -445,7 +475,7 @@ function settingsButtons() {
     { label: 'Pointer tilt', detail: formatPointerTilt(), action: 'pointerTilt' },
     { label: passthroughOn ? 'Passthrough ON' : 'Passthrough OFF', action: 'passthrough', on: passthroughOn },
     { label: handlesOn ? 'Handles ON' : 'Handles OFF', action: 'handles', on: handlesOn },
-    { label: 'Restart game', action: 'restart' },
+    { label: 'Restart game', action: 'restartAsk' },
     { label: 'Back', action: 'settingsBack' },
   ];
 }
@@ -456,6 +486,13 @@ function pointerTiltButtons() {
     { label: formatPointerTilt(), action: 'pointerTiltValue', disabled: true },
     { label: '▼ Down', action: 'pointerTiltDown' },
     { label: 'Back', action: 'pointerTiltBack' },
+  ];
+}
+
+function restartConfirmButtons() {
+  return [
+    { label: 'Restart', action: 'restart' },
+    { label: 'Back', action: 'restartBack' },
   ];
 }
 
@@ -570,6 +607,9 @@ function ensureDiscardState() {
 }
 
 function panelStatus() {
+  if (trayScreen === 'restartConfirm') {
+    return 'This starts a new island (same player count and mode).';
+  }
   if (trayScreen === 'trade' && game) {
     const p = viewPlayer(game);
     if (!tradeGive) return `${p.name} · Pick a resource to give, then one to get`;
@@ -656,6 +696,10 @@ function syncTrayButtons() {
     tray.setButtons(pointerTiltButtons(), 'pointerTilt');
     return;
   }
+  if (trayScreen === 'restartConfirm') {
+    tray.setButtons(restartConfirmButtons(), 'restartConfirm');
+    return;
+  }
   if (game.phase === PHASE.GAME_OVER) {
     tray.setButtons(winButtons(), 'win');
     return;
@@ -678,6 +722,8 @@ function runTraySettings(act) {
   else if (act === 'pointerTiltBack') trayScreen = 'settings';
   else if (act === 'pointerTiltUp') setPointerTilt(pointerPitchDeg + POINTER_TILT_STEP);
   else if (act === 'pointerTiltDown') setPointerTilt(pointerPitchDeg - POINTER_TILT_STEP);
+  else if (act === 'restartAsk') trayScreen = 'restartConfirm';
+  else if (act === 'restartBack') trayScreen = 'settings';
   else if (act === 'passthrough') setPassthrough(!passthroughOn);
   else if (act === 'pointer') setPointerMode(pointerMode === 'gaze' ? 'controller' : 'gaze');
   else if (act === 'handles') {
@@ -1768,26 +1814,45 @@ function resetStageHome() {
   stage.position.set(0, 0, STAGE_FORWARD_Z);
 }
 
-function seatedTableTopY(headY, floorKnown) {
-  if (floorKnown && headY - SEATED_TABLE_TOP >= 0.4) return SEATED_TABLE_TOP;
-  return headY - TABLE_BELOW_EYES;
+function armXrTableSnap() {
+  xrStageSnapPending = true;
+  xrStageSnapTries = 0;
+  xrStageUserMoved = false;
 }
 
-function applyStageTableSnap(headY, floorKnown) {
-  const top = seatedTableTopY(headY, floorKnown);
+function stageTableTopY() {
+  return stage.position.y + TABLE_HEIGHT * Math.max(1e-4, stage.scale.y);
+}
+
+function desiredTableTopY(headY) {
+  const below = Math.min(TABLE_BELOW_EYES_MAX, Math.max(0.35, TABLE_BELOW_EYES));
+  return Math.max(headY - below, headY - TABLE_BELOW_EYES_MAX);
+}
+
+function applyStageTableSnap(headY) {
   const scaleY = Math.max(1e-4, stage.scale.y);
-  let y = top - TABLE_HEIGHT * scaleY;
-  if (floorKnown) y = Math.max(-0.04, y);
-  stage.position.set(0, y, STAGE_FORWARD_Z);
+  const top = desiredTableTopY(headY);
+  stage.position.set(0, top - TABLE_HEIGHT * scaleY, STAGE_FORWARD_Z);
 }
 
-function viewerHeadY() {
+function raiseStageToHead(headY) {
+  const minTop = headY - TABLE_BELOW_EYES_MAX;
+  const top = stageTableTopY();
+  if (top + 1e-4 >= minTop) return false;
+  stage.position.y += desiredTableTopY(headY) - top;
+  return true;
+}
+
+function readViewerPose() {
   const frame = renderer.xr.getFrame?.();
   const refSpace = renderer.xr.getReferenceSpace?.();
   if (frame && refSpace) {
     try {
       const pose = frame.getViewerPose(refSpace);
-      if (pose) return pose.transform.position.y;
+      if (pose) {
+        const p = pose.transform.position;
+        return { x: p.x, y: p.y, z: p.z };
+      }
     } catch {
       /* pose not ready */
     }
@@ -1795,20 +1860,41 @@ function viewerHeadY() {
   return null;
 }
 
+function poseLooksTracked(pose) {
+  if (!pose || !Number.isFinite(pose.y)) return false;
+  const ax = Math.abs(pose.x);
+  const ay = Math.abs(pose.y);
+  const az = Math.abs(pose.z);
+  if (ax < XR_POSE_EPS && ay < XR_POSE_EPS && az < XR_POSE_EPS) return false;
+  return true;
+}
+
+function headsetY(pose) {
+  if (pose && Number.isFinite(pose.y)) return pose.y;
+  const xrCam = renderer.xr.getCamera?.();
+  if (xrCam?.position && Number.isFinite(xrCam.position.y)) return xrCam.position.y;
+  return 0;
+}
+
 function maybeSnapStageToTable() {
-  if (!xrStageSnapPending || !renderer.xr.isPresenting || grabs.size) return;
-  xrStageSnapTries++;
-  const headY = viewerHeadY();
-  if (headY == null) {
-    if (xrStageSnapTries > 90) xrStageSnapPending = false;
+  if (!renderer.xr.isPresenting || xrStageUserMoved) return;
+  if (grabs.size) {
+    xrStageUserMoved = true;
+    xrStageSnapPending = false;
     return;
   }
-  const expectFloor = xrRefSpaceType === 'local-floor' || xrRefSpaceType === 'bounded-floor';
-  const floorReady = headY >= FLOOR_HEAD_MIN;
-  const wait = expectFloor ? 75 : 8;
-  if (!floorReady && xrStageSnapTries < wait) return;
-  applyStageTableSnap(headY, floorReady);
-  xrStageSnapPending = false;
+  xrStageSnapTries++;
+  const pose = readViewerPose();
+  const tracked = poseLooksTracked(pose);
+  if (!tracked && xrStageSnapTries < XR_SNAP_WAIT_FRAMES) return;
+
+  const headY = headsetY(pose);
+  if (xrStageSnapPending) {
+    applyStageTableSnap(headY);
+    if (tracked || xrStageSnapTries >= XR_SNAP_WAIT_FRAMES) xrStageSnapPending = false;
+  } else {
+    raiseStageToHead(headY);
+  }
 }
 
 async function configureXrReferenceSpace(session) {
@@ -1829,12 +1915,12 @@ async function configureXrReferenceSpace(session) {
 }
 
 renderer.xr.addEventListener('sessionstart', () => {
-  xrStageSnapPending = true;
-  xrStageSnapTries = 0;
+  armXrTableSnap();
 });
 renderer.xr.addEventListener('sessionend', () => {
   xrStageSnapPending = false;
   xrStageSnapTries = 0;
+  xrStageUserMoved = false;
   lastXRHover = null;
   resetStageHome();
 });
@@ -1897,13 +1983,15 @@ async function enterVR() {
       sawTransientPointer = false;
       grabs.clear();
       xrStageSnapPending = false;
+      xrStageSnapTries = 0;
+      xrStageUserMoved = false;
       resetStageHome();
       handles.setVisible(false);
       applyPresentingQuality(false);
       setPassthrough(false);
       document.documentElement.classList.remove('xr-presenting');
       applyPointerVisuals();
-      if (trayScreen === 'settings') syncTrayButtons();
+      if (trayScreen === 'settings' || trayScreen === 'pointerTilt' || trayScreen === 'restartConfirm') syncTrayButtons();
       updateVRButton();
     });
   } catch {
