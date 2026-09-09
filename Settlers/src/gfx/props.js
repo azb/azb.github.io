@@ -530,7 +530,7 @@ export class Tray {
       const settings = act === 'settings' || act === 'pointerTilt';
       const back = act === 'settingsBack' || act === 'pointerTiltBack' || act === 'restartBack' || act === 'cardsBack' || act === 'tradeCancel';
       const restart = act === 'restart' || act === 'restartAsk';
-      const toggle = act === 'passthrough' || act === 'handles' || act === 'pointer';
+      const toggle = act === 'passthrough' || act === 'handles' || act === 'pointer' || act === 'pointerLines';
       const steal = act.startsWith('steal:');
       const tint = slot.def.color && (steal || /^(give|get|discard|plenty|mono):/.test(act));
       const selected = !!slot.def.selected;

@@ -148,6 +148,12 @@ try {
   const storedTilt = localStorage.getItem('catan-pointer-tilt');
   if (storedTilt != null) pointerPitchDeg = clampPointerTilt(storedTilt);
 } catch { /* ignore */ }
+let pointerLinesOn = true;
+try {
+  const storedLines = localStorage.getItem('catan-pointer-lines');
+  if (storedLines === '0') pointerLinesOn = false;
+  else if (storedLines === '1') pointerLinesOn = true;
+} catch { /* ignore */ }
 const xrControllers = setupXR();
 applyPointerVisuals();
 
@@ -174,6 +180,7 @@ const TRAY_SETTINGS = new Set([
   'restartAsk',
   'restartBack',
   'pointer',
+  'pointerLines',
   'pointerTilt',
   'pointerTiltUp',
   'pointerTiltDown',
@@ -474,6 +481,7 @@ function settingsButtons() {
   return [
     { label: pointerMode === 'gaze' ? 'Pointer: Face' : 'Pointer: Hand', action: 'pointer', on: pointerMode === 'gaze' },
     { label: 'Pointer tilt', detail: formatPointerTilt(), action: 'pointerTilt' },
+    { label: pointerLinesOn ? 'Pointer lines ON' : 'Pointer lines OFF', action: 'pointerLines', on: pointerLinesOn },
     { label: passthroughOn ? 'Passthrough ON' : 'Passthrough OFF', action: 'passthrough', on: passthroughOn },
     { label: handlesOn ? 'Handles ON' : 'Handles OFF', action: 'handles', on: handlesOn },
     { label: 'Restart game', action: 'restartAsk' },
@@ -727,6 +735,7 @@ function runTraySettings(act) {
   else if (act === 'restartBack') trayScreen = 'settings';
   else if (act === 'passthrough') setPassthrough(!passthroughOn);
   else if (act === 'pointer') setPointerMode(pointerMode === 'gaze' ? 'controller' : 'gaze');
+  else if (act === 'pointerLines') setPointerLines(!pointerLinesOn);
   else if (act === 'handles') {
     handlesOn = !handlesOn;
     applyHandleVisibility();
@@ -1579,6 +1588,7 @@ function pointerLaserHitDistance(origin, dir) {
 }
 
 function updatePointerLasers() {
+  if (!pointerLinesOn) return;
   for (const c of xrControllers) {
     const laser = c.userData.laser;
     if (!laser) continue;
@@ -1813,8 +1823,18 @@ function applyPointerVisuals() {
   if (!renderer.xr.isPresenting || !head) gazeHitDot.visible = false;
   for (const c of xrControllers) {
     const laser = c.userData.laser;
-    if (laser) laser.visible = pointerMode !== 'gaze' && !head && !!c.visible && handAimFromObject(c);
+    if (laser) {
+      laser.visible = pointerLinesOn && pointerMode !== 'gaze' && !head && !!c.visible && handAimFromObject(c);
+    }
   }
+}
+
+function setPointerLines(on) {
+  pointerLinesOn = !!on;
+  try {
+    localStorage.setItem('catan-pointer-lines', pointerLinesOn ? '1' : '0');
+  } catch { /* ignore */ }
+  applyPointerVisuals();
 }
 
 function setPassthrough(on) {
