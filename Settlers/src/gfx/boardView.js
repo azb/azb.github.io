@@ -75,6 +75,7 @@ export class BoardView {
     this._flashTimer = 0;
     this.felt = feltMap([48, 110, 255]);
     this.wood = woodMap();
+    this.clay = woodMap(512, 512, [176, 158, 132]);
   }
 
   rebuild(board) {
@@ -92,11 +93,11 @@ export class BoardView {
 
     const seaMat = new THREE.MeshStandardMaterial({
       map: this.felt,
-      color: '#c8e8ff',
-      roughness: 0.36,
-      metalness: 0.1,
+      color: '#6aaee6',
+      roughness: 0.96,
+      metalness: 0,
       emissive: '#1568d4',
-      emissiveIntensity: 0.4,
+      emissiveIntensity: 0.06,
     });
     for (const h of board.sea) {
       const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.98, HEX_SIZE * 0.98, 0.02, 6), seaMat);
@@ -109,9 +110,11 @@ export class BoardView {
     for (const h of board.land) {
       const height = TILE_HEIGHT;
       const mat = new THREE.MeshStandardMaterial({
+        map: this.clay,
         color: RESOURCE_COLOR[h.resource],
-        roughness: 0.78,
-        metalness: 0.04,
+        roughness: 1,
+        metalness: 0,
+        envMapIntensity: 0,
       });
       const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.96, HEX_SIZE * 0.96, height, 6), mat);
       mesh.rotation.y = Math.PI / 3;

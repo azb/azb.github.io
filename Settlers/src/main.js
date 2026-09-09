@@ -94,6 +94,11 @@ const _rayOrigin = new THREE.Vector3();
 const _rayDir = new THREE.Vector3();
 const grabs = new Map();
 let twoHand = null;
+let sawTransientPointer = false;
+let xrSessionBound = null;
+const xrEventGuard = { select: false, selectstart: false, selectend: false };
+const XR_CONTROLLER_SLOTS = 4;
+const XR_OPTIONAL_FEATURES = ['local-floor', 'bounded-floor', 'hand-tracking', 'transient-pointer', 'unbounded'];
 
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -523,17 +528,16 @@ function panelStatus() {
 }
 
 function applyPanelStatus() {
+  const headHint = useHeadHover();
   if (!game) {
     tray.setStatus('');
-    if (pointerMode === 'gaze' && renderer.xr.isPresenting) {
-      help.set('Point with your view, pinch to select.');
-    }
+    if (headHint) help.set('Point with your view, pinch to select.');
     return;
   }
   const status = panelStatus();
   const roll = formatRollResult(game);
   tray.setStatus(status);
-  if (pointerMode === 'gaze' && renderer.xr.isPresenting) {
+  if (headHint) {
     help.set(roll ? roll.banner : 'Point with your view, pinch to select.');
   } else {
     help.set(roll ? roll.banner : status);
@@ -1069,45 +1073,211 @@ function hoverFromRay(origin, dir) {
   return resolvePick(raycaster.intersectObjects(pickables(), true));
 }
 
-function isGazePointer() {
-  return pointerMode === 'gaze' && renderer.xr.isPresenting;
+function xrInputSources() {
+  const session = renderer.xr.getSession?.();
+  return session ? [...session.inputSources] : [];
 }
 
-function fillActiveRay(origin, dir, source) {
-  if (isGazePointer()) {
-    const cam = renderer.xr.getCamera?.() || camera;
-    cam.updateMatrixWorld();
-    cam.getWorldPosition(origin);
-    cam.getWorldDirection(dir);
-    return;
-  }
+function isTransientAim(inputSource) {
+  const mode = inputSource?.targetRayMode;
+  return mode === 'transient-pointer' || mode === 'gaze';
+}
+
+function isLikelyVisionOS() {
+  if (sawTransientPointer) return true;
+  const ua = navigator.userAgent || '';
+  const safari = /Safari/.test(ua) && !/Chrome|Chromium|Android|Edg|Firefox|OPR/.test(ua);
+  return !!(navigator.xr && safari && /Macintosh|Apple Vision|iPad|iPhone/.test(ua));
+}
+
+function hasPersistentPointer() {
+  return xrInputSources().some((src) => src.targetRayMode === 'tracked-pointer');
+}
+
+function useHeadHover() {
+  if (!renderer.xr.isPresenting) return false;
+  if (pointerMode === 'gaze') return true;
+  if (hasPersistentPointer()) return false;
+  return true;
+}
+
+function xrEventFrame(event) {
+  return event?.frame || renderer.xr.getFrame?.() || null;
+}
+
+function xrEventInputSource(event) {
+  return event?.inputSource || event?.data || null;
+}
+
+function fillGazeRay(origin, dir) {
+  const cam = renderer.xr.getCamera?.() || camera;
+  cam.updateMatrixWorld();
+  cam.getWorldPosition(origin);
+  cam.getWorldDirection(dir);
+}
+
+function fillControllerRay(origin, dir, source) {
   origin.setFromMatrixPosition(source.matrixWorld);
   const tip = source.joints?.['index-finger-tip'];
   if (tip) tip.getWorldPosition(origin);
   dir.set(0, 0, -1).transformDirection(source.matrixWorld);
 }
 
-function applyActivePick(source) {
-  fillActiveRay(_rayOrigin, _rayDir, source);
-  raycaster.set(_rayOrigin, _rayDir);
-  applyHit(resolvePick(raycaster.intersectObjects(pickables(), true)));
+function fillRayFromTargetRay(origin, dir, inputSource, frame) {
+  const refSpace = renderer.xr.getReferenceSpace?.();
+  if (!frame || !inputSource?.targetRaySpace || !refSpace) return false;
+  let pose = null;
+  try {
+    pose = frame.getPose(inputSource.targetRaySpace, refSpace);
+  } catch {
+    return false;
+  }
+  if (!pose) return false;
+  const { position, orientation } = pose.transform;
+  origin.set(position.x, position.y, position.z);
+  dir.set(0, 0, -1).applyQuaternion(_ctrlQuat.set(orientation.x, orientation.y, orientation.z, orientation.w));
+  dir.normalize();
+  return true;
+}
+
+function fillPickRay(origin, dir, event, fallbackSource) {
+  if (pointerMode === 'gaze') {
+    fillGazeRay(origin, dir);
+    return;
+  }
+  if (fillRayFromTargetRay(origin, dir, xrEventInputSource(event), xrEventFrame(event))) return;
+  if (fallbackSource) {
+    fillControllerRay(origin, dir, fallbackSource);
+    return;
+  }
+  fillGazeRay(origin, dir);
+}
+
+function hitFromXREvent(event, fallbackSource) {
+  fillPickRay(_rayOrigin, _rayDir, event, fallbackSource);
+  return hoverFromRay(_rayOrigin, _rayDir);
+}
+
+function withXREventGuard(type, fn) {
+  if (xrEventGuard[type]) return;
+  xrEventGuard[type] = true;
+  try {
+    fn();
+  } finally {
+    queueMicrotask(() => {
+      xrEventGuard[type] = false;
+    });
+  }
+}
+
+function shouldTryGrab(inputSource, source) {
+  if (!source) return false;
+  if (isTransientAim(inputSource)) return false;
+  if (!hasPersistentPointer() && (sawTransientPointer || isLikelyVisionOS())) return false;
+  return true;
+}
+
+function handleXRSelectStart(event, fallbackSource) {
+  withXREventGuard('selectstart', () => {
+    const inputSource = xrEventInputSource(event);
+    if (shouldTryGrab(inputSource, fallbackSource)) {
+      tryGrab(fallbackSource);
+      if (grabs.has(fallbackSource)) return;
+    }
+    const hit = hitFromXREvent(event, fallbackSource);
+    if (hit?.userData?.kind === 'tray' && !hit.userData.disabled) tray.setPressed(hit.userData.action);
+  });
+}
+
+function handleXRSelect(event, fallbackSource) {
+  withXREventGuard('select', () => {
+    const inputSource = xrEventInputSource(event);
+    if (fallbackSource && grabs.has(fallbackSource) && !isTransientAim(inputSource)) return;
+    applyHit(hitFromXREvent(event, fallbackSource));
+  });
+}
+
+function handleXRSelectEnd(fallbackSource) {
+  withXREventGuard('selectend', () => {
+    if (fallbackSource) releaseGrab(fallbackSource);
+    tray.setPressed(null);
+  });
+}
+
+function sessionOwnsSelect(inputSource) {
+  if (isTransientAim(inputSource)) return true;
+  if (!hasPersistentPointer()) return true;
+  if (sawTransientPointer || isLikelyVisionOS()) return true;
+  return false;
+}
+
+function onXRSessionSelectStart(event) {
+  if (!sessionOwnsSelect(event.inputSource)) return;
+  handleXRSelectStart(event, null);
+}
+
+function onXRSessionSelect(event) {
+  if (!sessionOwnsSelect(event.inputSource)) return;
+  handleXRSelect(event, null);
+}
+
+function onXRSessionSelectEnd(event) {
+  if (event?.inputSource && !sessionOwnsSelect(event.inputSource)) return;
+  handleXRSelectEnd(null);
+}
+
+function onXRInputSourcesChange(event) {
+  const session = event?.target || renderer.xr.getSession?.();
+  if (!session) return;
+  for (const src of session.inputSources) {
+    if (isTransientAim(src)) sawTransientPointer = true;
+  }
+  const n = Math.max(XR_CONTROLLER_SLOTS, session.inputSources.length);
+  for (let i = 0; i < n; i++) renderer.xr.getController(i);
+  applyPointerVisuals();
+}
+
+function bindXRSession(session) {
+  if (!session || xrSessionBound === session) return;
+  unbindXRSession();
+  session.addEventListener('select', onXRSessionSelect);
+  session.addEventListener('selectstart', onXRSessionSelectStart);
+  session.addEventListener('selectend', onXRSessionSelectEnd);
+  session.addEventListener('inputsourceschange', onXRInputSourcesChange);
+  xrSessionBound = session;
+  onXRInputSourcesChange({ target: session });
+}
+
+function unbindXRSession() {
+  const session = xrSessionBound;
+  if (!session) return;
+  session.removeEventListener('select', onXRSessionSelect);
+  session.removeEventListener('selectstart', onXRSessionSelectStart);
+  session.removeEventListener('selectend', onXRSessionSelectEnd);
+  session.removeEventListener('inputsourceschange', onXRInputSourcesChange);
+  xrSessionBound = null;
 }
 
 function hoverPickables() {
   let obj = null;
   if (renderer.xr.isPresenting) {
-    if (isGazePointer()) {
-      fillActiveRay(_rayOrigin, _rayDir);
+    if (useHeadHover()) {
+      fillGazeRay(_rayOrigin, _rayDir);
       obj = hoverFromRay(_rayOrigin, _rayDir);
     } else {
       for (const c of xrControllers) {
-        fillActiveRay(_rayOrigin, _rayDir, c);
+        if (!c.visible) continue;
+        fillControllerRay(_rayOrigin, _rayDir, c);
         const hit = hoverFromRay(_rayOrigin, _rayDir);
         if (hit?.userData?.kind === 'tray' || hit?.userData?.handleRoot) {
           obj = hit;
           break;
         }
         if (hit && !obj) obj = hit;
+      }
+      if (!obj) {
+        fillGazeRay(_rayOrigin, _rayDir);
+        obj = hoverFromRay(_rayOrigin, _rayDir);
       }
     }
   } else {
@@ -1126,25 +1296,21 @@ function setupXR() {
   const handFactory = new XRHandModelFactory();
   handFactory.setPath('https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles');
   const lineMat = new THREE.LineBasicMaterial({ color: 0xffe6b0 });
-  const controllers = [0, 1].map((i) => {
+  const controllers = [];
+  for (let i = 0; i < XR_CONTROLLER_SLOTS; i++) {
     const controller = renderer.xr.getController(i);
     const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -4)]);
     const laser = new THREE.Line(geo, lineMat);
     controller.userData.laser = laser;
     controller.add(laser);
-    controller.addEventListener('selectstart', () => {
-      tryGrab(controller);
-      if (grabs.has(controller)) return;
-      fillActiveRay(_rayOrigin, _rayDir, controller);
-      const hit = hoverFromRay(_rayOrigin, _rayDir);
-      if (hit?.userData?.kind === 'tray' && !hit.userData.disabled) tray.setPressed(hit.userData.action);
+    controller.addEventListener('selectstart', (event) => {
+      handleXRSelectStart(event, controller);
     });
     controller.addEventListener('selectend', () => {
-      releaseGrab(controller);
+      handleXRSelectEnd(controller);
     });
-    controller.addEventListener('select', () => {
-      if (grabs.has(controller)) return;
-      applyActivePick(controller);
+    controller.addEventListener('select', (event) => {
+      handleXRSelect(event, controller);
     });
     controller.addEventListener('squeezestart', () => {
       if (tryGrab(controller)) return;
@@ -1154,19 +1320,22 @@ function setupXR() {
       releaseGrab(controller);
     });
     scene.add(controller);
-    const grip = renderer.xr.getControllerGrip(i);
-    grip.add(factory.createControllerModel(grip));
-    scene.add(grip);
-    const hand = renderer.xr.getHand(i);
-    hand.add(handFactory.createHandModel(hand, 'mesh'));
-    hand.addEventListener('pinchstart', () => {
-      if (tryGrab(hand)) return;
-      applyActivePick(hand);
-    });
-    hand.addEventListener('pinchend', () => releaseGrab(hand));
-    scene.add(hand);
-    return controller;
-  });
+    if (i < 2) {
+      const grip = renderer.xr.getControllerGrip(i);
+      grip.add(factory.createControllerModel(grip));
+      scene.add(grip);
+      const hand = renderer.xr.getHand(i);
+      hand.add(handFactory.createHandModel(hand, 'mesh'));
+      hand.addEventListener('pinchstart', () => {
+        const fake = { inputSource: null, frame: renderer.xr.getFrame?.() };
+        handleXRSelectStart(fake, hand);
+        handleXRSelect(fake, hand);
+      });
+      hand.addEventListener('pinchend', () => handleXRSelectEnd(hand));
+      scene.add(hand);
+    }
+    controllers.push(controller);
+  }
   return controllers;
 }
 
@@ -1217,19 +1386,18 @@ function setPointerMode(mode) {
     localStorage.setItem('catan-pointer-mode', pointerMode);
   } catch { /* ignore */ }
   applyPointerVisuals();
-  if (pointerMode === 'gaze') {
+  if (useHeadHover() || pointerMode === 'gaze') {
     showToast('Point with your view, pinch to select.');
     if (renderer.xr.isPresenting) help.set('Point with your view, pinch to select.');
   }
 }
 
 function applyPointerVisuals() {
-  const gaze = pointerMode === 'gaze';
-  const showReticle = gaze && renderer.xr.isPresenting;
-  if (gazeReticle) gazeReticle.visible = showReticle;
+  const head = useHeadHover();
+  if (gazeReticle) gazeReticle.visible = renderer.xr.isPresenting && (pointerMode === 'gaze' || head);
   for (const c of xrControllers) {
     const laser = c.userData.laser;
-    if (laser) laser.visible = !gaze;
+    if (laser) laser.visible = pointerMode !== 'gaze' && !head && !!c.visible;
   }
 }
 
@@ -1249,11 +1417,11 @@ function applyHandleVisibility() {
 async function requestXRSession(mode, hud) {
   const withOverlay = {
     requiredFeatures: ['local-floor'],
-    optionalFeatures: ['bounded-floor', 'hand-tracking', 'dom-overlay', 'unbounded', 'hit-test', 'plane-detection'],
+    optionalFeatures: [...XR_OPTIONAL_FEATURES, 'dom-overlay', 'hit-test', 'plane-detection'],
     domOverlay: { root: hud },
   };
   const lite = {
-    optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'unbounded'],
+    optionalFeatures: [...XR_OPTIONAL_FEATURES],
   };
   try {
     return await navigator.xr.requestSession(mode, withOverlay);
@@ -1294,10 +1462,13 @@ async function enterVR() {
     closeModal();
     syncTrayButtons();
     applyPanelStatus();
+    bindXRSession(session);
     await renderer.xr.setSession(session);
     applyPointerVisuals();
-    if (pointerMode === 'gaze') showToast('Point with your view, pinch to select.');
+    if (useHeadHover() || pointerMode === 'gaze') showToast('Point with your view, pinch to select.');
     session.addEventListener('end', () => {
+      unbindXRSession();
+      sawTransientPointer = false;
       grabs.clear();
       handles.setVisible(false);
       setPassthrough(false);
@@ -1307,6 +1478,8 @@ async function enterVR() {
       updateVRButton();
     });
   } catch {
+    unbindXRSession();
+    sawTransientPointer = false;
     showToast('Could not start a mixed-reality session.');
     handles.setVisible(false);
     setPassthrough(false);
@@ -1491,6 +1664,15 @@ window.__catan = {
   get gazeReticle() {
     return gazeReticle;
   },
+  get xrOptionalFeatures() {
+    return XR_OPTIONAL_FEATURES;
+  },
+  get xrSessionBound() {
+    return xrSessionBound;
+  },
+  fillPickRay,
+  useHeadHover,
+  hasPersistentPointer,
   afterAction,
   refresh,
   presentModals,
