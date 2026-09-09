@@ -5,7 +5,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { Game } from './game/Game.js';
 import { takeAITurn } from './game/ai.js';
-import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES, BUILD_COST, formatCost } from './game/constants.js';
+import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES, BUILD_COST, formatCost, TABLE_HEIGHT } from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
@@ -47,7 +47,14 @@ renderer.toneMappingExposure = 1.05;
 const scene = new THREE.Scene();
 const stage = new THREE.Group();
 stage.name = 'stage';
-stage.position.set(0, 0, -1.32);
+const STAGE_FORWARD_Z = -1.32;
+/** Sitting dining-table height when the XR origin is the floor. */
+const SEATED_TABLE_TOP = 0.72;
+/** Table top below the headset when the origin is the head (`local` / no floor). */
+const TABLE_BELOW_EYES = 0.76;
+/** Headset Y that means we almost certainly have a floor-relative space. */
+const FLOOR_HEAD_MIN = 0.85;
+stage.position.set(0, 0, STAGE_FORWARD_Z);
 scene.add(stage);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 30);
@@ -55,7 +62,7 @@ camera.position.set(0, 1.17, 0.62);
 scene.add(camera);
 
 const controls = new OrbitControls(camera, canvas);
-controls.target.set(0, 0.57, -1.32);
+controls.target.set(0, 0.57, STAGE_FORWARD_Z);
 controls.enableDamping = true;
 controls.enablePan = true;
 controls.screenSpacePanning = true;
@@ -104,6 +111,9 @@ const grabs = new Map();
 let twoHand = null;
 let sawTransientPointer = false;
 let xrSessionBound = null;
+let xrRefSpaceType = 'local-floor';
+let xrStageSnapPending = false;
+let xrStageSnapTries = 0;
 const xrEventGuard = { select: false, selectstart: false, selectend: false };
 const XR_CONTROLLER_SLOTS = 4;
 const XR_OPTIONAL_FEATURES = ['local-floor', 'bounded-floor', 'hand-tracking', 'transient-pointer', 'unbounded'];
@@ -283,6 +293,7 @@ renderer.setAnimationLoop(() => {
   boardView.pulseMarkers(clock.elapsedTime);
   avatars.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera?.() || camera : camera);
   if (renderer.xr.isPresenting) {
+    maybeSnapStageToTable();
     const xrCam = renderer.xr.getCamera?.() || camera;
     help.attach(xrCam);
     attachGazeReticle(xrCam);
@@ -1660,6 +1671,80 @@ function applyHandleVisibility() {
   handles.setVisible(handlesOn && renderer.xr.isPresenting);
 }
 
+function resetStageHome() {
+  stage.position.set(0, 0, STAGE_FORWARD_Z);
+}
+
+function seatedTableTopY(headY, floorKnown) {
+  if (floorKnown && headY - SEATED_TABLE_TOP >= 0.4) return SEATED_TABLE_TOP;
+  return headY - TABLE_BELOW_EYES;
+}
+
+function applyStageTableSnap(headY, floorKnown) {
+  const top = seatedTableTopY(headY, floorKnown);
+  const scaleY = Math.max(1e-4, stage.scale.y);
+  let y = top - TABLE_HEIGHT * scaleY;
+  if (floorKnown) y = Math.max(-0.04, y);
+  stage.position.set(0, y, STAGE_FORWARD_Z);
+}
+
+function viewerHeadY() {
+  const frame = renderer.xr.getFrame?.();
+  const refSpace = renderer.xr.getReferenceSpace?.();
+  if (frame && refSpace) {
+    try {
+      const pose = frame.getViewerPose(refSpace);
+      if (pose) return pose.transform.position.y;
+    } catch {
+      /* pose not ready */
+    }
+  }
+  return null;
+}
+
+function maybeSnapStageToTable() {
+  if (!xrStageSnapPending || !renderer.xr.isPresenting || grabs.size) return;
+  xrStageSnapTries++;
+  const headY = viewerHeadY();
+  if (headY == null) {
+    if (xrStageSnapTries > 90) xrStageSnapPending = false;
+    return;
+  }
+  const expectFloor = xrRefSpaceType === 'local-floor' || xrRefSpaceType === 'bounded-floor';
+  const floorReady = headY >= FLOOR_HEAD_MIN;
+  const wait = expectFloor ? 75 : 8;
+  if (!floorReady && xrStageSnapTries < wait) return;
+  applyStageTableSnap(headY, floorReady);
+  xrStageSnapPending = false;
+}
+
+async function configureXrReferenceSpace(session) {
+  const types = ['local-floor', 'bounded-floor', 'local'];
+  for (const type of types) {
+    try {
+      await session.requestReferenceSpace(type);
+      xrRefSpaceType = type;
+      renderer.xr.setReferenceSpaceType(type);
+      return type;
+    } catch {
+      /* try next */
+    }
+  }
+  xrRefSpaceType = 'local';
+  renderer.xr.setReferenceSpaceType('local');
+  return 'local';
+}
+
+renderer.xr.addEventListener('sessionstart', () => {
+  xrStageSnapPending = true;
+  xrStageSnapTries = 0;
+});
+renderer.xr.addEventListener('sessionend', () => {
+  xrStageSnapPending = false;
+  xrStageSnapTries = 0;
+  resetStageHome();
+});
+
 async function requestXRSession(mode, hud) {
   const withOverlay = {
     requiredFeatures: ['local-floor'],
@@ -1701,7 +1786,7 @@ async function enterVR() {
       showToast('This browser has no AR or VR session.');
       return;
     }
-    renderer.xr.setReferenceSpaceType('local-floor');
+    await configureXrReferenceSpace(session);
     applyPresentingQuality(true);
     setPassthrough(passthrough);
     handles.setVisible(handlesOn);
@@ -1717,6 +1802,8 @@ async function enterVR() {
       unbindXRSession();
       sawTransientPointer = false;
       grabs.clear();
+      xrStageSnapPending = false;
+      resetStageHome();
       handles.setVisible(false);
       applyPresentingQuality(false);
       setPassthrough(false);
@@ -1939,6 +2026,8 @@ window.__catan = {
     return QUALITY;
   },
   fillPickRay,
+  applyStageTableSnap,
+  maybeSnapStageToTable,
   pointerLaserHitDistance,
   setLaserLength,
   useHeadHover,
