@@ -11,11 +11,12 @@ import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
 import { PlayerAvatars } from './gfx/avatars.js';
 import { ProductionFlights } from './gfx/production.js';
-import { FloatLabels } from './gfx/floatText.js';
+import { FloatLabels, STEAL_FLOAT_LIFE } from './gfx/floatText.js';
 import {
   renderHud,
   bindHud,
   showToast,
+  TOAST_LONG_MS,
   trayStatus,
   formatRollResult,
   formatStealResult,
@@ -1039,8 +1040,8 @@ function stealActionId(action) {
 function announceSteal() {
   const line = formatStealResult(game);
   if (!line) return;
-  showToast(line);
-  floatLabels.spawn(line, tray.group.getWorldPosition(_floatPos));
+  showToast(line, TOAST_LONG_MS);
+  floatLabels.spawn(line, tray.group.getWorldPosition(_floatPos), STEAL_FLOAT_LIFE);
 }
 
 function trySteal(fromId) {
@@ -1114,7 +1115,7 @@ function applyHit(obj) {
     if (!game.moveRobber(data.id)) return;
     boardView.flashPick(obj);
     sfx.place();
-    if (game.phase !== PHASE.STEAL) showToast('No neighbor to steal from.');
+    if (game.phase !== PHASE.STEAL) showToast('No neighbor to steal from.', TOAST_LONG_MS);
     afterAction();
   }
 }
@@ -1897,7 +1898,7 @@ async function pumpAI() {
         refresh();
         if (action?.type === 'steal' && g.lastSteal) {
           announceSteal();
-          await sleep(900);
+          await sleep(1800);
           if (game !== g) return;
         }
       }

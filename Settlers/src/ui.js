@@ -241,12 +241,15 @@ export function bindHud(onAction) {
   });
 }
 
-export function showToast(text) {
+export const TOAST_MS = 2200;
+export const TOAST_LONG_MS = 5200;
+
+export function showToast(text, ms = TOAST_MS) {
   const el = $('toast');
   el.textContent = text;
   el.classList.remove('hidden');
   clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => el.classList.add('hidden'), 2200);
+  showToast._t = setTimeout(() => el.classList.add('hidden'), ms);
 }
 
 export function closeModal() {
