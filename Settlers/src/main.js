@@ -116,6 +116,9 @@ let xrRefSpaceType = 'local-floor';
 let xrStageSnapPending = false;
 let xrStageSnapTries = 0;
 const xrEventGuard = { select: false, selectstart: false, selectend: false };
+// Spectacles often double-fires one pinch (session select + controller/transient/gaze, or selectstart + select).
+const XR_SELECT_DEBOUNCE_MS = 320;
+let lastXRSelectAt = 0;
 const XR_CONTROLLER_SLOTS = 4;
 const XR_OPTIONAL_FEATURES = ['local-floor', 'bounded-floor', 'hand-tracking', 'transient-pointer', 'unbounded'];
 const LASER_MAX = 4;
@@ -1259,7 +1262,8 @@ function fillRayFromTargetRay(origin, dir, inputSource, frame) {
 }
 
 function fillPickRay(origin, dir, event, fallbackSource) {
-  if (pointerMode === 'gaze') {
+  // Face / head hover: always activate the gaze hit sphere, not a second transient ray.
+  if (pointerMode === 'gaze' || useHeadHover()) {
     fillGazeRay(origin, dir);
     return;
   }
@@ -1288,6 +1292,23 @@ function withXREventGuard(type, fn) {
   }
 }
 
+function shouldDebounceXRSelect(inputSource) {
+  if (useHeadHover() || pointerMode === 'gaze') return true;
+  if (isTransientAim(inputSource)) return true;
+  if (!hasPersistentPointer()) return true;
+  return false;
+}
+
+function isDuplicateXRSelect(inputSource) {
+  if (!shouldDebounceXRSelect(inputSource)) return false;
+  return performance.now() - lastXRSelectAt < XR_SELECT_DEBOUNCE_MS;
+}
+
+function markXRSelectHandled(inputSource) {
+  if (!shouldDebounceXRSelect(inputSource)) return;
+  lastXRSelectAt = performance.now();
+}
+
 function shouldTryGrab(inputSource, source) {
   if (!source) return false;
   if (isTransientAim(inputSource)) return false;
@@ -1310,7 +1331,9 @@ function handleXRSelectStart(event, fallbackSource) {
 function handleXRSelect(event, fallbackSource) {
   withXREventGuard('select', () => {
     const inputSource = xrEventInputSource(event);
+    if (isDuplicateXRSelect(inputSource)) return;
     if (fallbackSource && grabs.has(fallbackSource) && !isTransientAim(inputSource)) return;
+    markXRSelectHandled(inputSource);
     applyHit(hitFromXREvent(event, fallbackSource));
   });
 }
@@ -1490,12 +1513,14 @@ function setupXR() {
     controller.userData.laser = laser;
     controller.add(laser);
     controller.addEventListener('selectstart', (event) => {
+      if (sessionOwnsSelect(xrEventInputSource(event))) return;
       handleXRSelectStart(event, controller);
     });
     controller.addEventListener('selectend', () => {
       handleXRSelectEnd(controller);
     });
     controller.addEventListener('select', (event) => {
+      if (sessionOwnsSelect(xrEventInputSource(event))) return;
       handleXRSelect(event, controller);
     });
     controller.addEventListener('squeezestart', () => {
@@ -1513,8 +1538,11 @@ function setupXR() {
       const hand = renderer.xr.getHand(i);
       hand.add(handFactory.createHandModel(hand, 'mesh'));
       hand.addEventListener('pinchstart', () => {
-        const fake = { inputSource: null, frame: renderer.xr.getFrame?.() };
+        const src = hand.userData?.inputSource || null;
+        const fake = { inputSource: src, frame: renderer.xr.getFrame?.() };
         handleXRSelectStart(fake, hand);
+        // Spectacles / AVP already activate via session select; don't also fire on pinchstart.
+        if (sessionOwnsSelect(src)) return;
         handleXRSelect(fake, hand);
       });
       hand.addEventListener('pinchend', () => handleXRSelectEnd(hand));
@@ -2027,6 +2055,8 @@ window.__catan = {
     return QUALITY;
   },
   fillPickRay,
+  isDuplicateXRSelect,
+  markXRSelectHandled,
   applyStageTableSnap,
   maybeSnapStageToTable,
   pointerLaserHitDistance,
