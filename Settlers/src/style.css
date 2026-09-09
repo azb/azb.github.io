@@ -618,6 +618,11 @@ html.xr-presenting .journal {
   white-space: normal;
 }
 
+.toast.toast-low {
+  top: auto;
+  bottom: 10%;
+}
+
 @media (max-width: 820px) {
   .players,
   .journal {

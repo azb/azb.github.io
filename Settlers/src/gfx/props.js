@@ -437,6 +437,13 @@ export class Tray {
     return obj.getWorldPosition(target);
   }
 
+  /** World pos under the action row so steal floats don't cover tray buttons. */
+  stealFloatWorldPos(target) {
+    this.group.updateMatrixWorld(true);
+    target.set(0, -(PANEL_H * 0.5 + 0.22), 0.02);
+    return this.group.localToWorld(target);
+  }
+
   setStatus(text) {
     const line = String(text || '');
     if (line === this.status) return;

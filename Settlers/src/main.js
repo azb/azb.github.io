@@ -1147,8 +1147,8 @@ function stealActionId(action) {
 function announceSteal() {
   const line = formatStealResult(game);
   if (!line) return;
-  showToast(line, TOAST_LONG_MS);
-  floatLabels.spawn(line, tray.group.getWorldPosition(_floatPos), STEAL_FLOAT_LIFE);
+  showToast(line, TOAST_LONG_MS, { low: true });
+  floatLabels.spawn(line, tray.stealFloatWorldPos(_floatPos), STEAL_FLOAT_LIFE);
 }
 
 function trySteal(fromId) {

@@ -244,9 +244,10 @@ export function bindHud(onAction) {
 export const TOAST_MS = 2200;
 export const TOAST_LONG_MS = 5200;
 
-export function showToast(text, ms = TOAST_MS) {
+export function showToast(text, ms = TOAST_MS, opts = null) {
   const el = $('toast');
   el.textContent = text;
+  el.classList.toggle('toast-low', !!opts?.low);
   el.classList.remove('hidden');
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => el.classList.add('hidden'), ms);
