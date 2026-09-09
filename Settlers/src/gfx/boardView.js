@@ -85,6 +85,7 @@ export class BoardView {
     this.harborRingGeo = markShared(new THREE.TorusGeometry(0.024, 0.0036, 6, QUALITY.harborRingSegments));
     this.harborHaloGeo = markShared(new THREE.TorusGeometry(0.03, 0.0022, 6, QUALITY.harborRingSegments));
     this.pinGeo = markShared(new THREE.SphereGeometry(0.018, 8, 6));
+    this.pinPickGeo = markShared(new THREE.SphereGeometry(0.028, 8, 6));
     this.harborTex = new Map();
   }
 
@@ -169,7 +170,19 @@ export class BoardView {
       const g = new THREE.Group();
       const bulb = new THREE.Mesh(this.pinGeo, pinMat.clone());
       bulb.position.y = 0.018;
-      g.add(bulb);
+      const hit = new THREE.Mesh(
+        this.pinPickGeo,
+        new THREE.MeshBasicMaterial({
+          color: 0xffc400,
+          transparent: true,
+          opacity: 0,
+          depthTest: false,
+          depthWrite: false,
+          toneMapped: false,
+        }),
+      );
+      hit.position.y = 0.018;
+      g.add(bulb, hit);
       g.position.set(v.x, TILE_HEIGHT, v.z);
       g.visible = false;
       g.frustumCulled = false;
@@ -179,6 +192,7 @@ export class BoardView {
         o.renderOrder = 30;
         o.userData = g.userData;
       });
+      hit.userData = { ...g.userData, pickOnly: true };
       this.group.add(g);
       this.vertexMarkers.set(v.id, g);
     }
@@ -188,7 +202,7 @@ export class BoardView {
       const b = board.vertices.get(e.b);
       const len = Math.hypot(b.x - a.x, b.z - a.z);
       const m = new THREE.Mesh(
-        new THREE.BoxGeometry(0.028, 0.018, len * 0.82),
+        new THREE.BoxGeometry(0.018, 0.014, Math.max(0.036, len * 0.54)),
         new THREE.MeshBasicMaterial({
           color: '#9ee7ff',
           transparent: true,
@@ -500,6 +514,7 @@ export class BoardView {
   markerMats(obj) {
     const mats = [];
     obj.traverse((o) => {
+      if (o.userData?.pickOnly) return;
       if (o.material && !mats.includes(o.material)) mats.push(o.material);
     });
     return mats;

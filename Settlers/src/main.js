@@ -362,7 +362,8 @@ updateVRButton();
 
 function startGame() {
   closeModal();
-  if (renderer.xr.isPresenting) armXrTableSnap();
+  // Keep the grabbed/snapped stage pose. Table-height snap is only for first XR
+  // session start — restart / new island must not move, rotate, or rescale it.
   game = new Game({ playerCount, solo });
   busy = false;
   intent = null;
@@ -1284,6 +1285,8 @@ function resolvePick(hits) {
   if (avatarHit) return avatarHit.object;
   const handleHit = hits.find((h) => h.object.userData?.handleRoot);
   if (handleHit) return handleHit.object;
+  const vertexHit = hits.find((h) => h.object.userData?.kind === 'vertex');
+  if (vertexHit) return vertexHit.object;
   return hits[0].object;
 }
 
@@ -1307,6 +1310,17 @@ function isTransientAim(inputSource) {
   return mode === 'transient-pointer' || mode === 'gaze';
 }
 
+function isHandAimSource(inputSource) {
+  const mode = inputSource?.targetRayMode;
+  return mode === 'tracked-pointer' || mode === 'transient-pointer';
+}
+
+function handAimFromObject(source) {
+  if (!source) return false;
+  const src = source.userData?.inputSource;
+  return !src || isHandAimSource(src);
+}
+
 function isLikelyVisionOS() {
   if (sawTransientPointer) return true;
   const ua = navigator.userAgent || '';
@@ -1319,10 +1333,7 @@ function hasPersistentPointer() {
 }
 
 function useHeadHover() {
-  if (!renderer.xr.isPresenting) return false;
-  if (pointerMode === 'gaze') return true;
-  if (hasPersistentPointer()) return false;
-  return true;
+  return renderer.xr.isPresenting && pointerMode === 'gaze';
 }
 
 function xrEventFrame(event) {
@@ -1368,25 +1379,29 @@ function fillRayFromTargetRay(origin, dir, inputSource, frame) {
 }
 
 function fillPickRay(origin, dir, event, fallbackSource) {
-  // Face / head hover: always activate the gaze hit sphere, not a second transient ray.
-  // visionOS pinch often arrives on a different input source than gaze (transient-pointer vs gaze).
-  if (pointerMode === 'gaze' || useHeadHover()) {
+  // Face: look+pinch uses the head ray even when pinch arrives on a transient-pointer.
+  if (useHeadHover()) {
     fillGazeRay(origin, dir);
-    return;
+    return true;
   }
-  if (fillRayFromTargetRay(origin, dir, xrEventInputSource(event), xrEventFrame(event))) return;
-  if (fallbackSource) {
+  const inputSource = xrEventInputSource(event);
+  if (isHandAimSource(inputSource) && fillRayFromTargetRay(origin, dir, inputSource, xrEventFrame(event))) {
+    return true;
+  }
+  if (fallbackSource && handAimFromObject(fallbackSource)) {
     fillControllerRay(origin, dir, fallbackSource);
-    return;
+    return true;
   }
-  fillGazeRay(origin, dir);
+  return false;
 }
 
 function hitFromXREvent(event, fallbackSource) {
-  fillPickRay(_rayOrigin, _rayDir, event, fallbackSource);
+  if (!fillPickRay(_rayOrigin, _rayDir, event, fallbackSource)) {
+    return useHeadHover() ? lastXRHover : null;
+  }
   const hit = hoverFromRay(_rayOrigin, _rayDir);
   if (hit) return hit;
-  if (pointerMode === 'gaze' || useHeadHover()) return lastXRHover;
+  if (useHeadHover()) return lastXRHover;
   return null;
 }
 
@@ -1429,6 +1444,7 @@ function shouldTryGrab(inputSource, source) {
 
 function applyXRSelect(event, fallbackSource) {
   const inputSource = xrEventInputSource(event);
+  if (!useHeadHover() && !isHandAimSource(inputSource) && !handAimFromObject(fallbackSource)) return false;
   if (isDuplicateXRSelect(inputSource)) return false;
   if (fallbackSource && grabs.has(fallbackSource) && !isTransientAim(inputSource)) return false;
   markXRSelectHandled();
@@ -1439,6 +1455,7 @@ function applyXRSelect(event, fallbackSource) {
 function handleXRSelectStart(event, fallbackSource) {
   withXREventGuard('selectstart', () => {
     const inputSource = xrEventInputSource(event);
+    if (!useHeadHover() && !isHandAimSource(inputSource) && !handAimFromObject(fallbackSource)) return;
     if (shouldTryGrab(inputSource, fallbackSource)) {
       tryGrab(fallbackSource);
       if (grabs.has(fallbackSource)) return;
@@ -1571,6 +1588,14 @@ function updatePointerLasers() {
   }
 }
 
+function preferHandHover(hit, obj) {
+  if (hit?.userData?.kind === 'tray' || hit?.userData?.kind === 'dice' || hit?.userData?.handleRoot) {
+    return { obj: hit, done: true };
+  }
+  if (hit && !obj) return { obj: hit, done: false };
+  return { obj, done: false };
+}
+
 function hoverPickables() {
   let obj = null;
   if (renderer.xr.isPresenting) {
@@ -1579,19 +1604,22 @@ function hoverPickables() {
       fillGazeRay(_rayOrigin, _rayDir);
       obj = hoverFromRay(_rayOrigin, _rayDir);
     } else {
-      for (const c of xrControllers) {
-        if (!c.visible) continue;
-        fillControllerRay(_rayOrigin, _rayDir, c);
-        const hit = hoverFromRay(_rayOrigin, _rayDir);
-        if (hit?.userData?.kind === 'tray' || hit?.userData?.kind === 'dice' || hit?.userData?.handleRoot) {
-          obj = hit;
-          break;
-        }
-        if (hit && !obj) obj = hit;
+      const frame = renderer.xr.getFrame?.() || null;
+      for (const src of xrInputSources()) {
+        if (!isHandAimSource(src)) continue;
+        if (!fillRayFromTargetRay(_rayOrigin, _rayDir, src, frame)) continue;
+        const next = preferHandHover(hoverFromRay(_rayOrigin, _rayDir), obj);
+        obj = next.obj;
+        if (next.done) break;
       }
       if (!obj) {
-        fillGazeRay(_rayOrigin, _rayDir);
-        obj = hoverFromRay(_rayOrigin, _rayDir);
+        for (const c of xrControllers) {
+          if (!c.visible || !handAimFromObject(c)) continue;
+          fillControllerRay(_rayOrigin, _rayDir, c);
+          const next = preferHandHover(hoverFromRay(_rayOrigin, _rayDir), obj);
+          obj = next.obj;
+          if (next.done) break;
+        }
       }
     }
     lastXRHover = obj;
@@ -1785,7 +1813,7 @@ function applyPointerVisuals() {
   if (!renderer.xr.isPresenting || !head) gazeHitDot.visible = false;
   for (const c of xrControllers) {
     const laser = c.userData.laser;
-    if (laser) laser.visible = pointerMode !== 'gaze' && !head && !!c.visible;
+    if (laser) laser.visible = pointerMode !== 'gaze' && !head && !!c.visible && handAimFromObject(c);
   }
 }
 
