@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TABLE_HEIGHT } from '../game/constants.js';
 import { labelTexture } from './textures.js';
+import { QUALITY, disposeChildren } from './quality.js';
 
 const SEAT_R = 1.22;
 const DICE_R = 0.95;
@@ -22,7 +23,7 @@ export class PlayerAvatars {
   }
 
   rebuild(players) {
-    this.group.clear();
+    disposeChildren(this.group);
     this.figures = [];
     const n = players.length;
     players.forEach((p, i) => {
@@ -107,7 +108,7 @@ function makeSettler(player) {
   hips.position.y = 0.48;
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.26, 0.12), cloth);
   torso.position.set(0, 0.68, -0.01);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.072, 16, 12), skin);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.072, 10, 8), skin);
   head.position.set(0, 0.9, 0);
   const eye = (side) => {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.012, 8, 6), dark);
@@ -115,7 +116,7 @@ function makeSettler(player) {
     return m;
   };
   const hair = new THREE.Mesh(
-    new THREE.SphereGeometry(0.076, 12, 10),
+    new THREE.SphereGeometry(0.076, 8, 6),
     new THREE.MeshStandardMaterial({ color: darken(player.color, 0.45), roughness: 0.9 }),
   );
   hair.scale.set(1, 0.55, 1);
@@ -133,7 +134,7 @@ function makeSettler(player) {
   };
 
   const glow = new THREE.Mesh(
-    new THREE.RingGeometry(0.16, 0.22, 24),
+    new THREE.RingGeometry(0.16, 0.22, 16),
     new THREE.MeshBasicMaterial({ color: player.color, transparent: true, opacity: 0.4, side: THREE.DoubleSide }),
   );
   glow.rotation.x = -Math.PI / 2;
@@ -143,14 +144,14 @@ function makeSettler(player) {
   const tag = new THREE.Mesh(
     new THREE.PlaneGeometry(0.22, 0.06),
     new THREE.MeshBasicMaterial({
-      map: labelTexture(player.name, { width: 512, height: 192, font: 110, fill: '#1a120c', ink: '#f7efe0' }),
+      map: labelTexture(player.name, { width: QUALITY.avatarLabelW, height: QUALITY.avatarLabelH, font: 110, fill: '#1a120c', ink: '#f7efe0' }),
       transparent: true,
     }),
   );
   tag.position.set(0, 1.08, 0);
 
   const hit = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.18, 0.18, 1.12, 12),
+    new THREE.CylinderGeometry(0.18, 0.18, 1.12, 8),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   );
   hit.position.y = 0.56;

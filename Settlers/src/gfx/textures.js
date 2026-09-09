@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { QUALITY, markShared } from './quality.js';
 
 function noise(ctx, w, h, fn) {
   const img = ctx.createImageData(w, h);
@@ -34,28 +35,30 @@ export function woodMap(width = 512, height = 512, tint = [120, 72, 38]) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  tex.anisotropy = QUALITY.anisotropy;
+  return markShared(tex);
 }
 
-export function feltMap(color = [22, 70, 92]) {
+export function feltMap(color = [22, 70, 92], size = QUALITY.feltSize) {
   const c = document.createElement('canvas');
-  c.width = c.height = 256;
+  c.width = c.height = size;
   const ctx = c.getContext('2d');
-  noise(ctx, 256, 256, (x, y) => {
+  noise(ctx, size, size, (x, y) => {
     const n = (hash(x, y) - 0.5) * 18;
     return color.map((v) => Math.max(0, Math.min(255, v + n)));
   });
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  tex.anisotropy = QUALITY.anisotropy;
+  return markShared(tex);
 }
 
 export function sharpenTexture(tex) {
   tex.generateMipmaps = false;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
-  tex.anisotropy = 8;
+  tex.anisotropy = QUALITY.anisotropy;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   return tex;
@@ -84,21 +87,17 @@ function wrapLabelLines(ctx, text, maxW) {
   return lines;
 }
 
-export function labelTexture(text, {
+export function paintLabel(ctx, text, {
   fill = '#f3e2c4',
   ink = '#2a1c12',
-  size,
-  width = 512,
-  height = 256,
+  width,
+  height,
   font = 72,
   pad = 40,
 } = {}) {
-  const w = size || width;
-  const h = size || height;
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d');
+  const w = width || ctx.canvas.width;
+  const h = height || ctx.canvas.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.fillStyle = fill;
@@ -123,38 +122,79 @@ export function labelTexture(text, {
   lines.forEach((line, i) => {
     ctx.fillText(line, w / 2, h / 2 + (i - (lines.length - 1) / 2) * fontSize * 1.12);
   });
+}
+
+export function labelTexture(text, {
+  fill = '#f3e2c4',
+  ink = '#2a1c12',
+  size,
+  width = 512,
+  height = 256,
+  font = 72,
+  pad = 40,
+} = {}) {
+  const w = size || width;
+  const h = size || height;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  paintLabel(c.getContext('2d'), text, { fill, ink, width: w, height: h, font, pad });
   return sharpenTexture(new THREE.CanvasTexture(c));
 }
+
+export function rewriteLabelTexture(tex, text, opts = {}) {
+  const c = tex?.image;
+  if (!c?.getContext) {
+    tex?.dispose?.();
+    return labelTexture(text, opts);
+  }
+  paintLabel(c.getContext('2d'), text, { ...opts, width: c.width, height: c.height });
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const numberCache = new Map();
 
 export function numberTexture(n, pips) {
+  const size = QUALITY.numberSize;
+  const dots = pips || 1;
+  const key = `${n}:${dots}:${size}`;
+  const hit = numberCache.get(key);
+  if (hit) return hit;
   const c = document.createElement('canvas');
-  c.width = c.height = 512;
+  c.width = c.height = size;
   const ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, 512, 512);
+  const s = size / 512;
+  ctx.clearRect(0, 0, size, size);
   ctx.fillStyle = '#f4e6c6';
   ctx.beginPath();
-  ctx.arc(256, 256, 236, 0, Math.PI * 2);
+  ctx.arc(256 * s, 256 * s, 236 * s, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = '#5b3418';
-  ctx.lineWidth = 14;
+  ctx.lineWidth = 14 * s;
   ctx.stroke();
   ctx.fillStyle = n === 6 || n === 8 ? '#b42318' : '#2a1c12';
-  ctx.font = '700 220px Trebuchet MS, Segoe UI, sans-serif';
+  ctx.font = `700 ${Math.round(220 * s)}px Trebuchet MS, Segoe UI, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(n), 256, 236);
-  const dots = pips || 1;
+  ctx.fillText(String(n), 256 * s, 236 * s);
   ctx.fillStyle = n === 6 || n === 8 ? '#b42318' : '#4a3724';
-  const w = (dots - 1) * 28;
+  const w = (dots - 1) * 28 * s;
   for (let i = 0; i < dots; i++) {
     ctx.beginPath();
-    ctx.arc(256 - w / 2 + i * 28, 396, 10, 0, Math.PI * 2);
+    ctx.arc(256 * s - w / 2 + i * 28 * s, 396 * s, 10 * s, 0, Math.PI * 2);
     ctx.fill();
   }
-  return sharpenTexture(new THREE.CanvasTexture(c));
+  const tex = markShared(sharpenTexture(new THREE.CanvasTexture(c)));
+  numberCache.set(key, tex);
+  return tex;
 }
 
+const dieCache = new Map();
+
 export function dieFace(n) {
+  const hit = dieCache.get(n);
+  if (hit) return hit;
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const ctx = c.getContext('2d');
@@ -177,5 +217,7 @@ export function dieFace(n) {
     ctx.arc(x, y, 10, 0, Math.PI * 2);
     ctx.fill();
   }
-  return sharpenTexture(new THREE.CanvasTexture(c));
+  const tex = markShared(sharpenTexture(new THREE.CanvasTexture(c)));
+  dieCache.set(n, tex);
+  return tex;
 }

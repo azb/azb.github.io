@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TABLE_HEIGHT, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR } from '../game/constants.js';
-import { dieFace, labelTexture } from './textures.js';
+import { dieFace, labelTexture, rewriteLabelTexture } from './textures.js';
+import { QUALITY } from './quality.js';
 
 const _handlePos = new THREE.Vector3();
 
@@ -95,23 +96,23 @@ function placeHandle(mesh, rig, x, y, z) {
 function makeOrb(color, label) {
   const g = new THREE.Group();
   const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(0.03, 20, 16),
+    new THREE.SphereGeometry(0.03, 12, 10),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.88 }),
   );
   const halo = new THREE.Mesh(
-    new THREE.SphereGeometry(0.046, 16, 12),
+    new THREE.SphereGeometry(0.046, 10, 8),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false }),
   );
   const tag = new THREE.Mesh(
     new THREE.PlaneGeometry(0.11, 0.04),
     new THREE.MeshBasicMaterial({
-      map: labelTexture(label, { width: 512, height: 256, font: 120, fill: '#1a120c', ink: '#f7efe0' }),
+      map: labelTexture(label, { width: QUALITY.handleLabelW, height: QUALITY.handleLabelH, font: 120, fill: '#1a120c', ink: '#f7efe0' }),
       transparent: true,
     }),
   );
   tag.position.y = 0.058;
   const hit = new THREE.Mesh(
-    new THREE.SphereGeometry(0.09, 12, 10),
+    new THREE.SphereGeometry(0.09, 8, 6),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   );
   g.add(ball, halo, tag, hit);
@@ -137,6 +138,26 @@ export class DicePair {
     this.t = 0;
     this.rolling = false;
     this.target = [1, 1];
+    this.hovered = false;
+  }
+
+  pickables() {
+    return this.dice;
+  }
+
+  setHover(obj) {
+    const hot = obj?.userData?.kind === 'dice';
+    if (hot === this.hovered) return;
+    this.hovered = hot;
+    for (const d of this.dice) {
+      d.scale.setScalar(hot ? 1.18 : 1);
+      const mats = Array.isArray(d.material) ? d.material : [d.material];
+      for (const mat of mats) {
+        if (!mat?.emissive) continue;
+        mat.emissive.set(hot ? '#ffe08a' : '#000000');
+        mat.emissiveIntensity = hot ? 0.45 : 0;
+      }
+    }
   }
 
   placeFor(index, count) {
@@ -179,6 +200,7 @@ function makeDie() {
   );
   const m = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.038, 0.038), mats);
   m.castShadow = true;
+  m.userData = { kind: 'dice', action: 'roll' };
   return m;
 }
 
@@ -203,8 +225,8 @@ function faceRot(n) {
 
 const PANEL_W = 0.82;
 const PANEL_H = 0.5;
-const TEX_W = 1024;
-const TEX_H = 624;
+const LAYOUT_W = 1024;
+const LAYOUT_H = 624;
 
 export class Tray {
   constructor(scene) {
@@ -214,8 +236,9 @@ export class Tray {
     scene.add(this.group);
 
     this.canvas = document.createElement('canvas');
-    this.canvas.width = TEX_W;
-    this.canvas.height = TEX_H;
+    this.texScale = QUALITY.trayScale;
+    this.canvas.width = Math.round(LAYOUT_W * this.texScale);
+    this.canvas.height = Math.round(LAYOUT_H * this.texScale);
     this.ctx = this.canvas.getContext('2d');
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
@@ -253,26 +276,26 @@ export class Tray {
   }
 
   pxToLocal(px, py, pw, ph) {
-    const x = ((px + pw / 2) / TEX_W - 0.5) * PANEL_W;
-    const y = (0.5 - (py + ph / 2) / TEX_H) * PANEL_H;
+    const x = ((px + pw / 2) / LAYOUT_W - 0.5) * PANEL_W;
+    const y = (0.5 - (py + ph / 2) / LAYOUT_H) * PANEL_H;
     return {
       x,
       y,
-      w: (pw / TEX_W) * PANEL_W,
-      h: (ph / TEX_H) * PANEL_H,
+      w: (pw / LAYOUT_W) * PANEL_W,
+      h: (ph / LAYOUT_H) * PANEL_H,
     };
   }
 
   buttonLayout(defs) {
     const pad = 36;
-    const inner = TEX_W - pad * 2;
+    const inner = LAYOUT_W - pad * 2;
     const gap = 16;
     const stack = this.screen === 'settings' || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
     if (stack) {
       const n = Math.max(defs.length, 1);
       const settings = this.screen === 'settings';
       const by0 = settings ? 84 : 160;
-      const bottom = TEX_H - 24;
+      const bottom = LAYOUT_H - 24;
       const stackGap = this.screen === 'steal' || this.screen === 'win' ? 18 : settings ? 10 : 14;
       const cap = this.screen === 'steal' || this.screen === 'win' ? 110 : settings ? 82 : 104;
       const bh = Math.min(cap, Math.max(52, Math.floor((bottom - by0 - (n - 1) * stackGap) / n)));
@@ -347,17 +370,30 @@ export class Tray {
   setButtons(defs, screen = 'actions') {
     this.screen = screen;
     this.buttonDefs = defs;
-    for (const child of [...this.hits.children]) {
+    const layout = this.buttonLayout(defs);
+    while (this.hits.children.length > layout.length) {
+      const child = this.hits.children[this.hits.children.length - 1];
       child.geometry.dispose();
       this.hits.remove(child);
     }
     this.buttons = [];
-    for (const slot of this.buttonLayout(defs)) {
+    for (let i = 0; i < layout.length; i++) {
+      const slot = layout[i];
       const loc = this.pxToLocal(slot.px, slot.py, slot.pw, slot.ph);
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(loc.w, loc.h), this.hitMat);
+      let mesh = this.hits.children[i];
+      if (!mesh) {
+        mesh = new THREE.Mesh(new THREE.PlaneGeometry(loc.w, loc.h), this.hitMat);
+        this.hits.add(mesh);
+      } else {
+        const geo = mesh.geometry;
+        const same = Math.abs(geo.parameters.width - loc.w) < 1e-6 && Math.abs(geo.parameters.height - loc.h) < 1e-6;
+        if (!same) {
+          geo.dispose();
+          mesh.geometry = new THREE.PlaneGeometry(loc.w, loc.h);
+        }
+      }
       mesh.position.set(loc.x, loc.y, 0.004);
       mesh.userData = { kind: 'tray', action: slot.def.action, disabled: !!slot.def.disabled };
-      this.hits.add(mesh);
       this.buttons.push({ mesh, def: slot.def });
     }
     this.draw();
@@ -414,8 +450,9 @@ export class Tray {
 
   draw() {
     const ctx = this.ctx;
-    const w = TEX_W;
-    const h = TEX_H;
+    const w = LAYOUT_W;
+    const h = LAYOUT_H;
+    ctx.setTransform(this.texScale, 0, 0, this.texScale, 0, 0);
     ctx.clearRect(0, 0, w, h);
     roundRect(ctx, 0, 0, w, h, 36, '#1a120c');
     ctx.fillStyle = '#f3e2c4';
@@ -617,8 +654,16 @@ function drawSlotLabel(ctx, slot, big) {
 
 export class HelpBanner {
   constructor(camera) {
-    this.opts = { width: 1024, height: 256, font: 72, pad: 28, fill: '#1a120c', ink: '#ffe08a' };
+    this.opts = {
+      width: QUALITY.helpW,
+      height: QUALITY.helpH,
+      font: QUALITY.headset ? 48 : 72,
+      pad: QUALITY.headset ? 16 : 28,
+      fill: '#1a120c',
+      ink: '#ffe08a',
+    };
     this.tex = labelTexture(' ', this.opts);
+    this._text = '';
     this.mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(0.3, 0.065),
       new THREE.MeshBasicMaterial({
@@ -644,9 +689,9 @@ export class HelpBanner {
   set(text) {
     const line = String(text || '').trim();
     this.mesh.visible = Boolean(line);
-    if (!line) return;
-    this.tex.dispose();
-    this.tex = labelTexture(line, this.opts);
+    if (!line || line === this._text) return;
+    this._text = line;
+    this.tex = rewriteLabelTexture(this.tex, line, this.opts);
     this.mesh.material.map = this.tex;
     this.mesh.material.needsUpdate = true;
   }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { HEX_SIZE, TABLE_HEIGHT, RESOURCE_COLOR, PIPS } from '../game/constants.js';
 import { feltMap, woodMap, numberTexture, labelTexture } from './textures.js';
+import { QUALITY, markShared, disposeChildren } from './quality.js';
 
 const TILE_HEIGHT = 0.036;
 const HARBOR_SIGN = '#efe0bc';
@@ -74,14 +75,23 @@ export class BoardView {
     this.hoverObj = null;
     this._flashTimer = 0;
     this.felt = feltMap([48, 110, 255]);
-    this.wood = woodMap();
-    this.clay = woodMap(512, 512, [176, 158, 132]);
+    this.wood = woodMap(QUALITY.claySize, QUALITY.claySize);
+    this.clay = woodMap(QUALITY.claySize, QUALITY.claySize, [176, 158, 132]);
+    this.seaGeo = markShared(new THREE.CylinderGeometry(HEX_SIZE * 0.98, HEX_SIZE * 0.98, 0.02, 6));
+    this.landGeo = markShared(new THREE.CylinderGeometry(HEX_SIZE * 0.96, HEX_SIZE * 0.96, TILE_HEIGHT, 6));
+    this.tokenGeo = markShared(new THREE.CylinderGeometry(0.038, 0.038, 0.004, QUALITY.tokenSegments));
+    this.hexGlowGeo = markShared(new THREE.CylinderGeometry(HEX_SIZE * 0.9, HEX_SIZE * 0.9, 0.004, 6));
+    this.harborDiscGeo = markShared(new THREE.CylinderGeometry(0.018, 0.018, 0.004, QUALITY.harborDiscSegments));
+    this.harborRingGeo = markShared(new THREE.TorusGeometry(0.024, 0.0036, 6, QUALITY.harborRingSegments));
+    this.harborHaloGeo = markShared(new THREE.TorusGeometry(0.03, 0.0022, 6, QUALITY.harborRingSegments));
+    this.pinGeo = markShared(new THREE.SphereGeometry(0.018, 8, 6));
+    this.harborTex = new Map();
   }
 
   rebuild(board) {
     this.restoreHover(this.hoverObj);
     this.hoverObj = null;
-    this.group.clear();
+    disposeChildren(this.group);
     this.pieceLayer = new THREE.Group();
     this.markerLayer = new THREE.Group();
     this.group.add(this.pieceLayer, this.markerLayer);
@@ -100,7 +110,7 @@ export class BoardView {
       emissiveIntensity: 0.06,
     });
     for (const h of board.sea) {
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.98, HEX_SIZE * 0.98, 0.02, 6), seaMat);
+      const mesh = new THREE.Mesh(this.seaGeo, seaMat);
       mesh.rotation.y = Math.PI / 3;
       mesh.position.set(h.x, 0.01, h.z);
       mesh.receiveShadow = true;
@@ -116,7 +126,7 @@ export class BoardView {
         metalness: 0,
         envMapIntensity: 0,
       });
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HEX_SIZE * 0.96, HEX_SIZE * 0.96, height, 6), mat);
+      const mesh = new THREE.Mesh(this.landGeo, mat);
       mesh.rotation.y = Math.PI / 3;
       mesh.position.set(h.x, height / 2, h.z);
       mesh.castShadow = true;
@@ -127,7 +137,7 @@ export class BoardView {
       this.decorate(h, height);
       if (h.number) {
         const tok = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.038, 0.038, 0.004, 24),
+          this.tokenGeo,
           new THREE.MeshStandardMaterial({ map: numberTexture(h.number, PIPS[h.number]), roughness: 0.45 }),
         );
         tok.position.set(h.x, height + 0.0022, h.z);
@@ -137,7 +147,7 @@ export class BoardView {
         this.tokenMeshes.set(h.id, tok);
       }
       const glow = new THREE.Mesh(
-        new THREE.CylinderGeometry(HEX_SIZE * 0.9, HEX_SIZE * 0.9, 0.004, 6),
+        this.hexGlowGeo,
         new THREE.MeshBasicMaterial({ color: '#ffcc66', transparent: true, opacity: 0.0 }),
       );
       glow.rotation.y = Math.PI / 3;
@@ -157,7 +167,7 @@ export class BoardView {
     });
     for (const v of board.vertices.values()) {
       const g = new THREE.Group();
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 10), pinMat.clone());
+      const bulb = new THREE.Mesh(this.pinGeo, pinMat.clone());
       bulb.position.y = 0.018;
       g.add(bulb);
       g.position.set(v.x, TILE_HEIGHT, v.z);
@@ -248,12 +258,7 @@ export class BoardView {
     const tag = new THREE.Mesh(
       new THREE.PlaneGeometry(0.072, 0.072),
       new THREE.MeshBasicMaterial({
-        map: labelTexture(harbor.type === 'generic' ? '3:1' : `2:1\n${harbor.type}`, {
-          width: 512,
-          height: 512,
-          font: 110,
-          fill: HARBOR_SIGN,
-        }),
+        map: this.harborLabel(harbor),
         depthWrite: false,
         side: THREE.DoubleSide,
       }),
@@ -265,20 +270,34 @@ export class BoardView {
     this.group.add(dock, post, pole, tag);
 
     for (const v of nodes) {
-      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.004, 16), beamMat);
+      const disc = new THREE.Mesh(this.harborDiscGeo, beamMat);
       disc.position.set(v.x, TILE_HEIGHT + 0.003, v.z);
       disc.renderOrder = 7;
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.0036, 8, 20), glowMat);
+      const ring = new THREE.Mesh(this.harborRingGeo, glowMat);
       ring.rotation.x = Math.PI / 2;
       ring.position.set(v.x, TILE_HEIGHT + 0.008, v.z);
       ring.renderOrder = 7;
-      const halo = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.0022, 6, 20), haloMat);
+      const halo = new THREE.Mesh(this.harborHaloGeo, haloMat);
       halo.rotation.x = Math.PI / 2;
       halo.position.set(v.x, TILE_HEIGHT + 0.01, v.z);
       halo.renderOrder = 7;
 
       this.group.add(disc, ring, halo);
     }
+  }
+
+  harborLabel(harbor) {
+    const text = harbor.type === 'generic' ? '3:1' : `2:1\n${harbor.type}`;
+    let tex = this.harborTex.get(text);
+    if (tex) return tex;
+    tex = markShared(labelTexture(text, {
+      width: QUALITY.harborLabel,
+      height: QUALITY.harborLabel,
+      font: 110,
+      fill: HARBOR_SIGN,
+    }));
+    this.harborTex.set(text, tex);
+    return tex;
   }
 
   decorate(h, height) {
@@ -366,7 +385,7 @@ export class BoardView {
   }
 
   syncPieces(game) {
-    this.pieceLayer.clear();
+    disposeChildren(this.pieceLayer);
     for (const e of game.board.edges.values()) {
       if (!e.road && e.road !== 0) continue;
       if (e.road == null) continue;

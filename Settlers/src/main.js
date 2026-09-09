@@ -28,16 +28,17 @@ import {
   viewPlayer,
 } from './ui.js';
 import { sfx } from './audio.js';
+import { QUALITY, applyShadowMap, shadowType } from './gfx/quality.js';
 
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: QUALITY.antialias, alpha: true });
+renderer.setPixelRatio(QUALITY.pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x1b140f, 1);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.enabled = QUALITY.shadows;
+renderer.shadowMap.type = shadowType();
 renderer.xr.enabled = true;
-renderer.xr.setFramebufferScaleFactor(2);
+renderer.xr.setFramebufferScaleFactor(QUALITY.framebufferScale);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -72,6 +73,7 @@ const ROOM_BG = new THREE.Color('#1b140f');
 scene.background = ROOM_BG;
 scene.fog = new THREE.Fog('#1b140f', 6, 12);
 const world = createWorld(stage);
+applyPresentingQuality(false);
 const boardView = new BoardView(stage);
 boardView.rebuild(new Game({ seed: 2026 }).board);
 const dice = new DicePair(stage);
@@ -998,8 +1000,18 @@ function syncSpotOverlay() {
   }
 }
 
+function canRollNow() {
+  return !!(game && !busy && game.isHuman() && game.phase === PHASE.ROLL);
+}
+
+function rollFailReason() {
+  if (!game || busy || !game.isHuman()) return 'Not your roll';
+  if (game.phase === PHASE.SETUP_SETTLEMENT || game.phase === PHASE.SETUP_ROAD) return 'Not your roll';
+  return 'Already rolled';
+}
+
 function pickables() {
-  const list = [...handles.pickables(), ...tray.pickables(), ...avatars.pickables()];
+  const list = [...handles.pickables(), ...tray.pickables(), ...avatars.pickables(), ...dice.pickables()];
   for (const m of boardView.vertexMarkers.values()) if (m.visible) list.push(m);
   for (const m of boardView.edgeMarkers.values()) if (m.visible) list.push(m);
   for (const m of boardView.hexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
@@ -1028,6 +1040,15 @@ function trySteal(fromId) {
 function applyHit(obj) {
   if (!obj) return;
   const data = obj.userData;
+  if (data.kind === 'dice' || (data.kind === 'tray' && data.action === 'roll')) {
+    if (canRollNow()) {
+      if (data.kind === 'tray') tray.flashPress('roll');
+      runHudAction('roll');
+    } else {
+      showBuildFail(rollFailReason(), obj);
+    }
+    return;
+  }
   if (data.kind === 'tray') {
     if (data.disabled && !TRAY_SETTINGS.has(data.action)) {
       if (game && humanCanAct() && BUILD_TRAY.has(data.action)) {
@@ -1113,6 +1134,9 @@ function hitWorldPos(obj, target) {
     const m = boardView.hexMarkers.get(data.id) || boardView.hexMeshes.get(data.id);
     if (m) return m.getWorldPosition(target);
   }
+  if (data.kind === 'dice') {
+    return (obj?.isObject3D ? obj : dice.group).getWorldPosition(target);
+  }
   if (data.kind === 'tray' || data.action) {
     return tray.buttonWorldPos(data.action, target);
   }
@@ -1129,6 +1153,7 @@ function showBuildFail(message, obj) {
 
 function resolvePick(hits) {
   if (!hits.length) return null;
+  if (hits[0].object.userData?.kind === 'dice') return hits[0].object;
   const trayHit = hits.find((h) => h.object.userData?.kind === 'tray');
   if (trayHit) return trayHit.object;
   const avatarHit = hits.find((h) => h.object.userData?.kind === 'avatar');
@@ -1406,7 +1431,7 @@ function hoverPickables() {
         if (!c.visible) continue;
         fillControllerRay(_rayOrigin, _rayDir, c);
         const hit = hoverFromRay(_rayOrigin, _rayDir);
-        if (hit?.userData?.kind === 'tray' || hit?.userData?.handleRoot) {
+        if (hit?.userData?.kind === 'tray' || hit?.userData?.kind === 'dice' || hit?.userData?.handleRoot) {
           obj = hit;
           break;
         }
@@ -1427,6 +1452,7 @@ function hoverPickables() {
   handles.setHover(obj);
   avatars.setHover(obj);
   boardView.setHover(obj);
+  dice.setHover(obj);
 }
 
 function setupXR() {
@@ -1484,7 +1510,7 @@ function setupXR() {
 function createGazeReticle() {
   const group = new THREE.Group();
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.0055, 0.0088, 28),
+    new THREE.RingGeometry(0.0055, 0.0088, 16),
     new THREE.MeshBasicMaterial({
       color: 0xffe08a,
       side: THREE.DoubleSide,
@@ -1494,7 +1520,7 @@ function createGazeReticle() {
     }),
   );
   const dot = new THREE.Mesh(
-    new THREE.CircleGeometry(0.0032, 16),
+    new THREE.CircleGeometry(0.0032, 8),
     new THREE.MeshBasicMaterial({
       color: 0xfff8dc,
       depthTest: false,
@@ -1517,7 +1543,7 @@ function createGazeHitDot() {
   const group = new THREE.Group();
   group.userData.gazeHitDot = true;
   const core = new THREE.Mesh(
-    new THREE.SphereGeometry(0.005, 12, 10),
+    new THREE.SphereGeometry(0.005, 8, 6),
     new THREE.MeshBasicMaterial({
       color: 0xfff8dc,
       toneMapped: false,
@@ -1528,7 +1554,7 @@ function createGazeHitDot() {
     }),
   );
   const shell = new THREE.Mesh(
-    new THREE.SphereGeometry(0.009, 16, 12),
+    new THREE.SphereGeometry(0.009, 8, 6),
     new THREE.MeshBasicMaterial({
       color: 0xffe08a,
       toneMapped: false,
@@ -1616,6 +1642,14 @@ function setPassthrough(on) {
   renderer.setClearAlpha(passthroughOn ? 0 : 1);
 }
 
+function applyPresentingQuality(on) {
+  renderer.xr.setFramebufferScaleFactor(QUALITY.framebufferScale);
+  applyShadowMap(renderer, world.sun, {
+    enabled: on ? QUALITY.xrShadows : QUALITY.shadows,
+    size: on ? QUALITY.xrShadowSize : QUALITY.shadowSize,
+  });
+}
+
 function applyHandleVisibility() {
   handles.setVisible(handlesOn && renderer.xr.isPresenting);
 }
@@ -1662,6 +1696,7 @@ async function enterVR() {
       return;
     }
     renderer.xr.setReferenceSpaceType('local-floor');
+    applyPresentingQuality(true);
     setPassthrough(passthrough);
     handles.setVisible(handlesOn);
     document.documentElement.classList.add('xr-presenting');
@@ -1677,6 +1712,7 @@ async function enterVR() {
       sawTransientPointer = false;
       grabs.clear();
       handles.setVisible(false);
+      applyPresentingQuality(false);
       setPassthrough(false);
       document.documentElement.classList.remove('xr-presenting');
       applyPointerVisuals();
@@ -1688,6 +1724,7 @@ async function enterVR() {
     sawTransientPointer = false;
     showToast('Could not start a mixed-reality session.');
     handles.setVisible(false);
+    applyPresentingQuality(false);
     setPassthrough(false);
     document.documentElement.classList.remove('xr-presenting');
     applyPointerVisuals();
@@ -1881,6 +1918,9 @@ window.__catan = {
   },
   get xrSessionBound() {
     return xrSessionBound;
+  },
+  get quality() {
+    return QUALITY;
   },
   fillPickRay,
   pointerLaserHitDistance,

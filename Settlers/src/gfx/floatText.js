@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { labelTexture } from './textures.js';
+import { QUALITY } from './quality.js';
 
 const LIFE = 1.7;
 const LIFT = 0.055;
 const RISE = 0.07;
 const MAX_ALIVE = 6;
-const TEX_OPTS = { width: 1024, height: 256, font: 92, pad: 36, fill: '#1a120c', ink: '#ffe08a' };
+const TEX_OPTS = { width: QUALITY.floatW, height: QUALITY.floatH, font: QUALITY.headset ? 64 : 92, pad: 24, fill: '#1a120c', ink: '#ffe08a' };
 
 export class FloatLabels {
   constructor(parent) {

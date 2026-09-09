@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { TABLE_HEIGHT } from '../game/constants.js';
 import { woodMap, feltMap } from './textures.js';
+import { QUALITY } from './quality.js';
 
 export function createWorld(scene) {
-  const wood = woodMap(1024, 512, [110, 64, 32]);
+  const wood = woodMap(QUALITY.roomWood, QUALITY.roomWood / 2, [110, 64, 32]);
   wood.repeat.set(2, 2);
-  const floorWood = woodMap(1024, 1024, [78, 48, 28]);
+  const floorWood = woodMap(QUALITY.floorWood, QUALITY.floorWood, [78, 48, 28]);
   floorWood.repeat.set(8, 8);
   const plaster = feltMap([62, 52, 42]);
   const room = new THREE.Group();
@@ -69,7 +70,7 @@ export function createWorld(scene) {
   room.add(sky);
 
   const table = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.95, 0.98, 0.08, 32),
+    new THREE.CylinderGeometry(0.95, 0.98, 0.08, QUALITY.tableSegments),
     new THREE.MeshStandardMaterial({ map: wood, color: '#7a4a28', roughness: 0.65 }),
   );
   table.position.y = TABLE_HEIGHT - 0.04;
@@ -85,7 +86,7 @@ export function createWorld(scene) {
   scene.add(apron);
 
   const rug = new THREE.Mesh(
-    new THREE.CircleGeometry(1.35, 32),
+    new THREE.CircleGeometry(1.35, QUALITY.rugSegments),
     new THREE.MeshStandardMaterial({ color: '#4a1f1a', roughness: 1 }),
   );
   rug.rotation.x = -Math.PI / 2;
@@ -96,8 +97,8 @@ export function createWorld(scene) {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight('#ffe6c0', 1.7);
   sun.position.set(2.4, 4.2, 1.6);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.castShadow = QUALITY.shadows;
+  sun.shadow.mapSize.set(QUALITY.shadowSize, QUALITY.shadowSize);
   sun.shadow.camera.near = 0.5;
   sun.shadow.camera.far = 12;
   sun.shadow.camera.left = sun.shadow.camera.bottom = -3;
@@ -108,12 +109,12 @@ export function createWorld(scene) {
   scene.add(lamp);
 
   const chandelier = new THREE.Mesh(
-    new THREE.TorusGeometry(0.18, 0.015, 8, 18),
+    new THREE.TorusGeometry(0.18, 0.015, 6, 12),
     new THREE.MeshStandardMaterial({ color: '#c9a44a', metalness: 0.7, roughness: 0.3 }),
   );
   chandelier.rotation.x = Math.PI / 2;
   chandelier.position.y = 2.05;
   room.add(chandelier);
 
-  return { table, room };
+  return { table, room, sun };
 }

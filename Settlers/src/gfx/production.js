@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { TABLE_HEIGHT, RESOURCE_COLOR } from '../game/constants.js';
 import { seatPose } from './avatars.js';
+import { QUALITY, markShared } from './quality.js';
 
 const TILE_TOP = 0.048;
 const DICE_WAIT = 0.74;
 const FLIGHT = 0.92;
 const STAGGER = 0.055;
-const CHIP_GEO = new THREE.CircleGeometry(0.026, 24);
-const CHIP_RIM = new THREE.RingGeometry(0.024, 0.031, 24);
+const CHIP_GEO = markShared(new THREE.CircleGeometry(0.026, QUALITY.chipSegments));
+const CHIP_RIM = markShared(new THREE.RingGeometry(0.024, 0.031, QUALITY.chipSegments));
 
 const LETTER = { wood: 'L', brick: 'B', sheep: 'W', wheat: 'G', ore: 'O' };
 const INK = { wood: '#f4efe4', brick: '#f7efe6', sheep: '#243018', wheat: '#3a2a10', ore: '#1c1a18' };
@@ -75,7 +76,7 @@ export class ProductionFlights {
   letterMap(resource) {
     let tex = this.maps.get(resource);
     if (tex) return tex;
-    tex = chipTexture(resource);
+    tex = markShared(chipTexture(resource));
     this.maps.set(resource, tex);
     return tex;
   }
