@@ -110,6 +110,18 @@ export class Game {
     return this.publicVP(p) + this.hiddenVP(p);
   }
 
+  scoreFacts(p) {
+    return {
+      settlements: p.settlements.length,
+      cities: p.cities.length,
+      longestRoad: this.longestRoad.player === p.id,
+      largestArmy: this.largestArmy.player === p.id,
+      hiddenVP: this.hiddenVP(p),
+      publicVP: this.publicVP(p),
+      totalVP: this.totalVP(p),
+    };
+  }
+
   checkWin(id = this.current) {
     const p = this.player(id);
     if (this.totalVP(p) >= VP_TO_WIN) {

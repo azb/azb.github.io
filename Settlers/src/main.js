@@ -26,9 +26,11 @@ import {
   showPlenty,
   showMonopoly,
   showWin,
+  showScores,
   showRestartConfirm,
   closeModal,
   viewPlayer,
+  scoreRows,
 } from './ui.js';
 import { sfx } from './audio.js';
 import { QUALITY, applyShadowMap, shadowType } from './gfx/quality.js';
@@ -291,6 +293,10 @@ canvas.addEventListener('pointerup', (e) => {
 });
 
 function runHudAction(act, extra) {
+  if (act === 'scores') {
+    openScoresUi();
+    return;
+  }
   if (!game || busy) return;
   if (act === 'steal') {
     trySteal(extra);
@@ -395,6 +401,7 @@ function startGame() {
   discardKey = '';
   plentyPicks = [];
   tray.setHeadline('');
+  tray.setScores(scoreRows(game));
   boardView.rebuild(game.board);
   boardView.syncPieces(game);
   avatars.rebuild(game.players);
@@ -425,6 +432,7 @@ function showTitleScreen() {
   production.clear();
   floatLabels.clear();
   tray.setHeadline('');
+  tray.setScores([]);
   tray.setResources(emptyHand());
   const start = document.getElementById('start-screen');
   start.classList.remove('hidden');
@@ -481,7 +489,9 @@ function refresh() {
   updateHighlights();
   const disc = humanDiscardEntry();
   tray.setResources((disc ? game.player(disc.player) : viewPlayer(game)).resources);
+  tray.setScores(scoreRows(game));
   syncTrayButtons();
+  if (trayScreen === 'scores' && modalOpen && !preferTrayUi()) paintScoresModal();
   applyPanelStatus();
   avatars.setCurrent(game.current);
   avatars.setStealTargets(game.phase === PHASE.STEAL && game.isHuman() ? game.stealCandidates : null);
@@ -506,6 +516,7 @@ function trayButtons() {
     { label: 'Dev', detail: formatCost(BUILD_COST.dev), action: 'cards', disabled: !((can && game.phase === PHASE.MAIN) || playable) },
     { label: 'Trade', detail: 'Bank', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'End Turn', action: 'end', disabled: !(can && game.phase === PHASE.MAIN) },
+    { label: 'Scores', action: 'scores' },
     { label: 'Settings', action: 'settings' },
   ];
 }
@@ -633,6 +644,10 @@ function monopolyButtons() {
   }));
 }
 
+function scoreButtons() {
+  return [{ label: 'Back', action: 'scoresBack' }];
+}
+
 function winButtons() {
   return [
     { label: 'Play Again', action: 'restart' },
@@ -676,6 +691,9 @@ function ensureDiscardState() {
 function panelStatus() {
   if (trayScreen === 'restartConfirm') {
     return 'This starts a new island (same player count and mode).';
+  }
+  if (trayScreen === 'scores' && game) {
+    return 'Public VP hides opponents’ victory-point cards.';
   }
   if (trayScreen === 'trade' && game) {
     const p = viewPlayer(game);
@@ -750,6 +768,7 @@ function syncTrayButtons() {
   }
   if (game.phase !== PHASE.MAIN && trayScreen === 'trade') trayScreen = 'actions';
   if (![PHASE.MAIN, PHASE.ROLL].includes(game.phase) && trayScreen === 'cards') trayScreen = 'actions';
+  if (scoresBlocked() && trayScreen === 'scores') trayScreen = 'actions';
 
   if (game.phase === PHASE.STEAL && game.isHuman()) {
     tray.setButtons(stealButtons(), 'steal');
@@ -784,6 +803,10 @@ function syncTrayButtons() {
     tray.setButtons(restartConfirmButtons(), 'restartConfirm');
     return;
   }
+  if (trayScreen === 'scores') {
+    tray.setButtons(scoreButtons(), 'scores');
+    return;
+  }
   if (trayScreen === 'trade') {
     tray.setButtons(tradeButtons(), 'trade');
     return;
@@ -815,6 +838,51 @@ function runTraySettings(act) {
     startGame();
     return;
   }
+  syncTrayButtons();
+  applyPanelStatus();
+  sfx.click();
+}
+
+function scoresBlocked() {
+  if (!game) return true;
+  if (game.phase === PHASE.GAME_OVER) return true;
+  if (!game.isHuman()) return false;
+  return game.phase === PHASE.STEAL
+    || game.phase === PHASE.DISCARD
+    || game.phase === PHASE.PLENTY
+    || game.phase === PHASE.MONOPOLY;
+}
+
+function paintScoresModal() {
+  showScores(game, () => {
+    modalOpen = false;
+    if (trayScreen === 'scores') trayScreen = 'actions';
+    syncTrayButtons();
+    applyPanelStatus();
+  });
+}
+
+function openScoresUi() {
+  if (!game || scoresBlocked()) return;
+  if (preferTrayUi()) {
+    trayScreen = 'scores';
+    modalOpen = false;
+    closeModal();
+    syncTrayButtons();
+    applyPanelStatus();
+    sfx.click();
+    return;
+  }
+  trayScreen = 'scores';
+  modalOpen = true;
+  paintScoresModal();
+  sfx.click();
+}
+
+function closeScoresUi() {
+  if (trayScreen === 'scores') trayScreen = 'actions';
+  modalOpen = false;
+  closeModal();
   syncTrayButtons();
   applyPanelStatus();
   sfx.click();
@@ -949,6 +1017,14 @@ function handleTrayAction(act) {
   }
   if (TRAY_SETTINGS.has(act)) {
     runTraySettings(act);
+    return true;
+  }
+  if (act === 'scores') {
+    openScoresUi();
+    return true;
+  }
+  if (act === 'scoresBack') {
+    closeScoresUi();
     return true;
   }
   if (act === 'cards') {
@@ -2135,7 +2211,7 @@ async function enterVR() {
       setPassthrough(false);
       document.documentElement.classList.remove('xr-presenting');
       applyPointerVisuals();
-      if (trayScreen === 'settings' || trayScreen === 'pointerTilt' || trayScreen === 'restartConfirm') syncTrayButtons();
+      if (trayScreen === 'settings' || trayScreen === 'pointerTilt' || trayScreen === 'restartConfirm' || trayScreen === 'scores') syncTrayButtons();
       if (game?.phase === PHASE.GAME_OVER) {
         modalOpen = true;
         showWin(game, {

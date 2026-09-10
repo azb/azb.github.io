@@ -247,6 +247,79 @@ h1 {
   text-shadow: 0 2px 10px #000;
 }
 
+.score-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  max-width: min(36rem, calc(100vw - 48px));
+}
+
+.score-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  pointer-events: auto;
+  border: 2px solid var(--gold);
+  background: color-mix(in srgb, var(--chip, #2a1c12) 72%, #1a120c);
+  border-radius: 999px;
+  padding: 4px 8px 4px 6px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1.1;
+}
+
+.score-chip.active {
+  box-shadow: 0 0 0 2px #fff3c4;
+}
+
+.score-chip:hover {
+  filter: brightness(1.12);
+  border-color: #ffe08a;
+}
+
+.score-chip .score-vp {
+  font-variant-numeric: tabular-nums;
+}
+
+.award {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1em;
+  height: 1.1em;
+  margin-left: 4px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: #c9a44a;
+  color: #1a120c;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.score-break {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: rgba(42, 28, 18, 0.08);
+  border: 1px solid rgba(91, 52, 24, 0.28);
+  border-radius: 10px;
+}
+
+.score-note {
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0 0 12px;
+}
+
+.player-break {
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.4;
+  color: #ffe08a;
+}
+
 .phase-label {
   font-size: 16px;
   line-height: 1.35;
@@ -357,7 +430,7 @@ html.xr-presenting .spot-layer {
 
 .players {
   position: absolute;
-  top: 88px;
+  top: 132px;
   left: 16px;
   display: flex;
   flex-direction: column;
@@ -677,8 +750,20 @@ html.xr-presenting .player-card {
   padding: 12px 14px;
 }
 
+html.xr-presenting .score-chip {
+  font-size: 20px;
+  padding: 6px 12px 6px 8px;
+}
+
+html.xr-presenting .award {
+  font-size: 13px;
+  min-width: 1.2em;
+  height: 1.2em;
+}
+
 html.xr-presenting .player-meta,
-html.xr-presenting .player-res {
+html.xr-presenting .player-res,
+html.xr-presenting .player-break {
   font-size: 16px;
 }
 

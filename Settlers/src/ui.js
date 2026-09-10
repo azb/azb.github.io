@@ -145,23 +145,35 @@ export function renderHud(game, intent) {
   }
 
   const view = viewPlayer(game);
+  const rows = scoreRows(game);
+  const scoreStrip = $('score-strip');
+  if (scoreStrip) {
+    scoreStrip.innerHTML = rows
+      .map((row) => `<button type="button" class="score-chip ${row.id === game.current ? 'active' : ''}" data-scores="1" style="--chip:${row.color};color:${bannerInk(row.color)}">
+        <i class="swatch" style="background:${row.color}"></i>
+        <span class="score-name">${row.name}</span>
+        <span class="score-vp">${row.publicVP}${row.isYou && row.hiddenVP ? `+${row.hiddenVP}` : ''}</span>
+        ${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}
+        ${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}
+      </button>`)
+      .join('');
+  }
   const stealing = game.phase === PHASE.STEAL && game.isHuman();
   const stealIds = new Set(game.stealCandidates);
-  $('players-panel').innerHTML = game.players
-    .map((pl) => {
+  $('players-panel').innerHTML = rows
+    .map((row) => {
+      const pl = game.player(row.id);
       const cards = RESOURCES.reduce((n, r) => n + pl.resources[r], 0);
       const roads = pl.roads.length;
       const steal = stealing && stealIds.has(pl.id);
       return `<article class="player-card ${pl.id === game.current ? 'active' : ''} ${steal ? 'steal-target' : ''}" ${steal ? `data-steal="${pl.id}"` : ''}>
         <div class="player-head">
-          <span><i class="swatch" style="background:${pl.color}"></i>${pl.name}${pl.isAI ? ' · AI' : ''}${steal ? ' · steal' : ''}</span>
-          <span>${game.publicVP(pl)} VP</span>
+          <span><i class="swatch" style="background:${pl.color}"></i>${pl.name}${pl.isAI ? ' · AI' : ''}${row.isYou ? ' · You' : ''}${steal ? ' · steal' : ''}</span>
+          <span>${row.shownVP} VP${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}</span>
         </div>
-        <div class="player-meta">${cards} cards · ${roads} roads · ${pl.knightsPlayed} knights
-          ${game.longestRoad.player === pl.id ? ' · Road' : ''}
-          ${game.largestArmy.player === pl.id ? ' · Army' : ''}
-        </div>
-        ${pl.id === view.id ? `<div class="player-res">${RESOURCES.map((r) => `${RESOURCE_LABEL[r]} ${pl.resources[r]}`).join(' · ')}</div>` : ''}
+        <div class="player-break">${scoreBreakdownLine(row)}</div>
+        <div class="player-meta">${cards} cards · ${roads} roads · ${pl.knightsPlayed} knights</div>
+        ${row.isYou ? `<div class="player-res">${RESOURCES.map((r) => `${RESOURCE_LABEL[r]} ${pl.resources[r]}`).join(' · ')}</div>` : ''}
       </article>`;
     })
     .join('');
@@ -219,6 +231,43 @@ function discardLine(game) {
   return `${names.join(', ')} must discard half`;
 }
 
+export function scoreRows(game) {
+  if (!game) return [];
+  const view = viewPlayer(game);
+  return game.players.map((pl) => {
+    const facts = game.scoreFacts(pl);
+    const isYou = pl.id === view.id;
+    return {
+      id: pl.id,
+      name: pl.name,
+      color: pl.color,
+      isYou,
+      settlements: facts.settlements,
+      cities: facts.cities,
+      longestRoad: facts.longestRoad,
+      largestArmy: facts.largestArmy,
+      hiddenVP: isYou ? facts.hiddenVP : 0,
+      publicVP: facts.publicVP,
+      shownVP: isYou ? facts.totalVP : facts.publicVP,
+    };
+  });
+}
+
+export function scoreBreakdownLine(row) {
+  const n = row.settlements;
+  const c = row.cities;
+  const parts = [
+    `${n} settlement${n === 1 ? '' : 's'}`,
+    `${c} cit${c === 1 ? 'y' : 'ies'}`,
+  ];
+  if (row.longestRoad) parts.push('Longest Road +2');
+  if (row.largestArmy) parts.push('Largest Army +2');
+  if (row.isYou && row.hiddenVP) {
+    parts.push(`You: ${row.hiddenVP} VP card${row.hiddenVP > 1 ? 's' : ''}`);
+  }
+  return parts.join(' · ');
+}
+
 export function viewPlayer(game) {
   if (game.players.some((p) => !p.isAI) === false) return game.player();
   const humans = game.players.filter((p) => !p.isAI);
@@ -239,6 +288,10 @@ export function bindHud(onAction) {
     const card = e.target.closest('[data-steal]');
     if (card) onAction('steal', Number(card.dataset.steal));
   });
+  $('score-strip')?.addEventListener('click', (e) => {
+    if (e.target.closest('[data-scores]')) onAction('scores');
+  });
+  $('scores-btn')?.addEventListener('click', () => onAction('scores'));
 }
 
 export const TOAST_MS = 2200;
@@ -392,6 +445,28 @@ function bannerInk(hex) {
   const g = parseInt(c.slice(2, 4), 16);
   const b = parseInt(c.slice(4, 6), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 > 160 ? '#1a120c' : '#f7efe0';
+}
+
+export function showScores(game, onClose) {
+  const rows = scoreRows(game);
+  openModal(`<h2>Scores</h2>
+    <p class="score-note">Public totals are settlements, cities, Longest Road, and Largest Army. Victory-point cards stay private except on your row.</p>
+    ${rows
+      .map(
+        (row) => `<article class="score-break">
+        <div class="player-head">
+          <span><i class="swatch" style="background:${row.color}"></i>${row.name}${row.isYou ? ' · You' : ''}</span>
+          <span>${row.shownVP} VP${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}</span>
+        </div>
+        <div class="player-break">${scoreBreakdownLine(row)}</div>
+      </article>`,
+      )
+      .join('')}
+    <button id="scores-back" class="primary" type="button">Back</button>`);
+  $('scores-back').onclick = () => {
+    closeModal();
+    onClose?.();
+  };
 }
 
 export function showWin(game, { onPlayAgain, onMainMenu } = {}) {

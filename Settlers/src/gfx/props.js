@@ -271,6 +271,8 @@ export class Tray {
     this.status = '';
     this.headline = '';
     this.headlineColor = '';
+    this.scoreRows = [];
+    this._scoreKey = '';
     this.hoverAction = null;
     this.pressAction = null;
     this._pressTimer = 0;
@@ -293,23 +295,26 @@ export class Tray {
     const inner = LAYOUT_W - pad * 2;
     const gap = 16;
     const stack = this.screen === 'settings' || this.screen === 'pointerTilt' || this.screen === 'restartConfirm'
-      || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards' || this.screen === 'title';
+      || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards' || this.screen === 'title'
+      || this.screen === 'scores';
     if (stack) {
       const n = Math.max(defs.length, 1);
       const settings = this.screen === 'settings' || this.screen === 'pointerTilt';
       const win = this.screen === 'win';
-      const by0 = settings ? 84 : win ? 268 : 160;
+      const scores = this.screen === 'scores';
+      const by0 = settings ? 84 : win ? 268 : scores ? 488 : 160;
       const bottom = LAYOUT_H - 24;
       const stackGap = this.screen === 'steal' ? 18 : win ? 20 : settings ? 10 : 14;
       const cap = this.screen === 'steal' ? 110 : win ? 124 : settings ? 82 : 104;
       const bh = Math.min(cap, Math.max(52, Math.floor((bottom - by0 - (n - 1) * stackGap) / n)));
-      return defs.map((def, i) => ({
+      const layout = defs.map((def, i) => ({
         def,
         px: pad,
         py: by0 + i * (bh + stackGap),
         pw: inner,
         ph: bh,
       }));
+      return this.withScoreStrip(layout);
     }
     if (this.screen === 'trade' || this.screen === 'discard' || this.screen === 'plenty' || this.screen === 'monopoly') {
       const give = defs.filter((d) => String(d.action).startsWith('give:'));
@@ -337,11 +342,12 @@ export class Tray {
         row(res, 248, bh);
         row(extra, 248 + bh + 20, 88);
       }
-      return layout;
+      return this.withScoreStrip(layout);
     }
-    const regular = defs.filter((d) => d.action !== 'end' && d.action !== 'settings');
+    const regular = defs.filter((d) => d.action !== 'end' && d.action !== 'settings' && d.action !== 'scores');
     const end = defs.find((d) => d.action === 'end');
     const settings = defs.find((d) => d.action === 'settings');
+    const scores = defs.find((d) => d.action === 'scores');
     const cols = 3;
     const bw = (inner - gap * (cols - 1)) / cols;
     const bh = 96;
@@ -359,7 +365,13 @@ export class Tray {
       });
     });
     const rowY = by0 + 2 * (bh + gap) + 8;
-    if (end && settings) {
+    if (end && settings && scores) {
+      const side = 176;
+      const endW = inner - gap * 2 - side * 2;
+      layout.push({ def: end, px: pad, py: rowY, pw: endW, ph: 92 });
+      layout.push({ def: scores, px: pad + endW + gap, py: rowY, pw: side, ph: 92 });
+      layout.push({ def: settings, px: pad + endW + gap + side + gap, py: rowY, pw: side, ph: 92 });
+    } else if (end && settings) {
       const sw = 280;
       layout.push({ def: end, px: pad, py: rowY, pw: inner - gap - sw, ph: 92 });
       layout.push({ def: settings, px: pad + inner - sw, py: rowY, pw: sw, ph: 92 });
@@ -368,6 +380,27 @@ export class Tray {
     } else if (settings) {
       layout.push({ def: settings, px: pad, py: rowY, pw: inner, ph: 92 });
     }
+    return this.withScoreStrip(layout);
+  }
+
+  scoreStripSlot() {
+    if (!this.scoreRows?.length) return null;
+    if (this.screen === 'scores' || this.screen === 'win' || this.screen === 'title'
+      || this.screen === 'settings' || this.screen === 'pointerTilt' || this.screen === 'restartConfirm') {
+      return null;
+    }
+    return {
+      def: { label: 'Scores', action: 'scores', strip: true },
+      px: 300,
+      py: 8,
+      pw: LAYOUT_W - 336,
+      ph: 56,
+    };
+  }
+
+  withScoreStrip(layout) {
+    const strip = this.scoreStripSlot();
+    if (strip) layout.push(strip);
     return layout;
   }
 
@@ -468,6 +501,15 @@ export class Tray {
     this.draw();
   }
 
+  setScores(rows) {
+    const next = Array.isArray(rows) ? rows : [];
+    const key = JSON.stringify(next);
+    if (key === this._scoreKey) return;
+    this._scoreKey = key;
+    this.scoreRows = next;
+    this.draw();
+  }
+
   draw() {
     const ctx = this.ctx;
     const w = LAYOUT_W;
@@ -491,11 +533,12 @@ export class Tray {
       cards: 'Dev cards',
       win: 'Game over',
       title: 'Settlers of Catan',
+      scores: 'Scores',
     };
     ctx.fillText(titles[this.screen] || 'Actions', 36, 40);
 
     const hideStatus = this.screen === 'settings' || this.screen === 'pointerTilt' || this.screen === 'win'
-      || this.screen === 'title';
+      || this.screen === 'title' || this.screen === 'scores';
     const hideChips = hideStatus || this.screen === 'steal' || this.screen === 'cards'
       || this.screen === 'restartConfirm' || this.screen === 'title';
     if (this.screen === 'win') {
@@ -514,6 +557,8 @@ export class Tray {
       ctx.strokeText(title, w / 2, 168);
       ctx.fillText(title, w / 2, 168);
     }
+    if (this.screen === 'scores') this.drawScoreBreakdown(ctx, w);
+    else this.drawScoreStrip(ctx);
     if (!hideStatus) {
       const lines = String(this.status || 'Sit down to begin')
         .split('\n')
@@ -552,13 +597,14 @@ export class Tray {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const slot of this.buttonLayout(this.buttonDefs)) {
+      if (slot.def.strip) continue;
       const hovered = this.hoverAction === slot.def.action;
       const pressed = this.pressAction === slot.def.action && !slot.def.disabled;
       const hot = hovered && !pressed;
       const act = String(slot.def.action);
       const end = act === 'end';
-      const settings = act === 'settings' || act === 'pointerTilt';
-      const back = act === 'settingsBack' || act === 'pointerTiltBack' || act === 'restartBack' || act === 'cardsBack' || act === 'tradeCancel' || act === 'mainMenu';
+      const settings = act === 'settings' || act === 'pointerTilt' || act === 'scores';
+      const back = act === 'settingsBack' || act === 'pointerTiltBack' || act === 'restartBack' || act === 'cardsBack' || act === 'tradeCancel' || act === 'mainMenu' || act === 'scoresBack';
       const restart = act === 'restart' || act === 'restartAsk' || act === 'titleStart';
       const toggle = act === 'passthrough' || act === 'handles' || act === 'pointer' || act === 'pointerLines';
       const steal = act.startsWith('steal:');
@@ -602,6 +648,52 @@ export class Tray {
 
     this.tex.needsUpdate = true;
   }
+
+  drawScoreStrip(ctx) {
+    const slot = this.scoreStripSlot();
+    const rows = this.scoreRows;
+    if (!slot || !rows.length) return;
+    const n = rows.length;
+    const gap = 8;
+    const cw = (slot.pw - gap * (n - 1)) / n;
+    rows.forEach((row, i) => {
+      const x = slot.px + i * (cw + gap);
+      const hot = this.hoverAction === 'scores' && this.pressAction !== 'scores';
+      roundRect(ctx, x, slot.py, cw, slot.ph, 12, row.color);
+      if (hot) {
+        ctx.strokeStyle = '#ffe08a';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
+      ctx.fillStyle = inkFor(row.color);
+      const mark = `${row.longestRoad ? ' R' : ''}${row.largestArmy ? ' A' : ''}`;
+      const extra = row.isYou && row.hiddenVP ? `+${row.hiddenVP}` : '';
+      fitText(ctx, `${row.name} ${row.publicVP}${extra}${mark}`, x + cw / 2, slot.py + slot.ph / 2, cw - 8, 22);
+    });
+  }
+
+  drawScoreBreakdown(ctx, w) {
+    const rows = this.scoreRows;
+    if (!rows.length) return;
+    const top = 72;
+    const bottom = 472;
+    const block = Math.min(98, Math.floor((bottom - top) / rows.length));
+    rows.forEach((row, i) => {
+      const y = top + i * block;
+      const h = block - 8;
+      roundRect(ctx, 36, y, w - 72, h, 14, '#2a1c12');
+      ctx.fillStyle = row.color;
+      roundRect(ctx, 48, y + 12, 18, 18, 6, row.color);
+      ctx.fillStyle = '#f3e2c4';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const mark = `${row.longestRoad ? '  R' : ''}${row.largestArmy ? '  A' : ''}`;
+      ctx.font = '800 26px Trebuchet MS, Segoe UI, sans-serif';
+      ctx.fillText(`${row.name}${row.isYou ? ' · You' : ''}  ${row.shownVP} VP${mark}`, 78, y + 24);
+      ctx.fillStyle = '#ffe08a';
+      fitText(ctx, scoreLine(row), w / 2, y + h * 0.68, w - 120, 22);
+    });
+  }
 }
 
 function roundRect(ctx, x, y, w, h, r, fill) {
@@ -615,6 +707,21 @@ function roundRect(ctx, x, y, w, h, r, fill) {
   ctx.closePath();
   ctx.fillStyle = fill;
   ctx.fill();
+}
+
+function scoreLine(row) {
+  const n = row.settlements;
+  const c = row.cities;
+  const parts = [
+    `${n} settlement${n === 1 ? '' : 's'}`,
+    `${c} cit${c === 1 ? 'y' : 'ies'}`,
+  ];
+  if (row.longestRoad) parts.push('Longest Road +2');
+  if (row.largestArmy) parts.push('Largest Army +2');
+  if (row.isYou && row.hiddenVP) {
+    parts.push(`You: ${row.hiddenVP} VP card${row.hiddenVP > 1 ? 's' : ''}`);
+  }
+  return parts.join(' · ');
 }
 
 function inkFor(hex) {
