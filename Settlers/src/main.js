@@ -434,6 +434,7 @@ function showTitleScreen() {
   floatLabels.clear();
   tray.setHeadline('');
   tray.setScores([]);
+  avatars.setCelebrating(null);
   tray.setResources(emptyHand());
   const start = document.getElementById('start-screen');
   start.classList.remove('hidden');
@@ -496,6 +497,7 @@ function refresh() {
   applyPanelStatus();
   avatars.setCurrent(game.current);
   avatars.setStealTargets(game.phase === PHASE.STEAL && game.isHuman() ? game.stealCandidates : null);
+  avatars.setCelebrating(game.phase === PHASE.GAME_OVER ? game.winner : null);
   dice.placeFor(game.current, game.playerCount);
 }
 

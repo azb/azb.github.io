@@ -11,6 +11,9 @@ export function seatPose(index, count, radius = SEAT_R) {
   return { x: Math.sin(a) * radius, z: Math.cos(a) * radius, yaw: a };
 }
 
+const ARM_UP_X = -2.85; // ~163° — hands clearly overhead
+const DANCE_SPIN = Math.PI * 2 * 0.9; // ~0.9 rev/s
+
 export class PlayerAvatars {
   constructor(scene) {
     this.group = new THREE.Group();
@@ -20,11 +23,13 @@ export class PlayerAvatars {
     this.currentId = null;
     this.stealIds = null;
     this.hoverId = null;
+    this.celebratingId = null;
   }
 
   rebuild(players) {
     disposeChildren(this.group);
     this.figures = [];
+    this.celebratingId = null;
     const n = players.length;
     players.forEach((p, i) => {
       if (!p.isAI) return;
@@ -33,9 +38,31 @@ export class PlayerAvatars {
       fig.position.set(seat.x, 0, seat.z);
       fig.rotation.y = seat.yaw;
       this.group.add(fig);
-      this.figures.push({ id: p.id, group: fig, glow: fig.userData.glow, hit: fig.userData.hit });
+      this.figures.push({
+        id: p.id,
+        group: fig,
+        body: fig.userData.body,
+        leftArm: fig.userData.leftArm,
+        rightArm: fig.userData.rightArm,
+        glow: fig.userData.glow,
+        hit: fig.userData.hit,
+      });
     });
     this.applyHighlights();
+  }
+
+  setCelebrating(id) {
+    if (id === this.celebratingId) return;
+    this.celebratingId = id ?? null;
+    if (this.celebratingId == null) this.resetDancePose();
+  }
+
+  resetDancePose() {
+    for (const f of this.figures) {
+      if (f.body) f.body.rotation.y = 0;
+      restArm(f.leftArm);
+      restArm(f.rightArm);
+    }
   }
 
   setCurrent(id) {
@@ -76,8 +103,16 @@ export class PlayerAvatars {
     this.t += dt;
     const steal = Boolean(this.stealIds);
     for (const f of this.figures) {
-      const bob = Math.sin(this.t * 1.6 + f.id) * 0.008;
-      f.group.position.y = bob;
+      const dancing = this.celebratingId != null && f.id === this.celebratingId;
+      if (dancing) {
+        f.group.position.y = Math.abs(Math.sin(this.t * 7)) * 0.035;
+        if (f.body) f.body.rotation.y += dt * DANCE_SPIN;
+        raiseArm(f.leftArm, this.t, -1);
+        raiseArm(f.rightArm, this.t, 1);
+      } else {
+        const bob = Math.sin(this.t * 1.6 + f.id) * 0.008;
+        f.group.position.y = bob;
+      }
       if (f.group.userData.active) {
         const pulse = steal ? 0.55 + Math.sin(this.t * 5.5) * 0.28 : 0.35 + Math.sin(this.t * 4) * 0.12;
         f.glow.material.opacity = this.hoverId === f.id ? Math.min(1, pulse + 0.25) : pulse;
@@ -85,6 +120,18 @@ export class PlayerAvatars {
       if (camera) f.group.userData.tag.lookAt(camera.position);
     }
   }
+}
+
+function restArm(arm) {
+  if (!arm) return;
+  arm.rotation.x = arm.userData.restX;
+  arm.rotation.z = arm.userData.restZ;
+}
+
+function raiseArm(arm, t, side) {
+  if (!arm) return;
+  arm.rotation.x = ARM_UP_X + Math.sin(t * 9 + side) * 0.12;
+  arm.rotation.z = side * (0.55 + Math.sin(t * 6) * 0.08);
 }
 
 function makeSettler(player) {
@@ -104,6 +151,7 @@ function makeSettler(player) {
     return m;
   };
 
+  const body = new THREE.Group();
   const hips = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.1, 0.16), cloth);
   hips.position.y = 0.48;
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.26, 0.12), cloth);
@@ -124,14 +172,19 @@ function makeSettler(player) {
 
   const arm = (side) => {
     const a = new THREE.Group();
+    a.position.set(side * 0.115, 0.78, -0.01);
     const upper = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.05), cloth);
-    upper.position.set(side * 0.12, 0.7, 0);
-    upper.rotation.z = side * 0.35;
+    upper.position.set(0, -0.08, 0);
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), skin);
-    hand.position.set(side * 0.16, 0.58, -0.08);
+    hand.position.set(0, -0.18, -0.02);
     a.add(upper, hand);
+    a.userData.restX = 0.22;
+    a.userData.restZ = side * 0.35;
+    restArm(a);
     return a;
   };
+  const leftArm = arm(-1);
+  const rightArm = arm(1);
 
   const glow = new THREE.Mesh(
     new THREE.RingGeometry(0.16, 0.22, 16),
@@ -157,8 +210,9 @@ function makeSettler(player) {
   hit.position.y = 0.56;
 
   g.add(chair, back, leg(-0.08, 0.08), leg(0.08, 0.08), leg(-0.08, -0.08), leg(0.08, -0.08));
-  g.add(hips, torso, head, hair, eye(-1), eye(1), arm(-1), arm(1), glow, tag, hit);
-  const data = { glow, tag, hit, active: false, kind: 'avatar', id: player.id };
+  body.add(hips, torso, head, hair, eye(-1), eye(1), leftArm, rightArm);
+  g.add(body, glow, tag, hit);
+  const data = { glow, tag, hit, body, leftArm, rightArm, active: false, kind: 'avatar', id: player.id };
   g.userData = data;
   g.traverse((o) => {
     o.userData = { ...o.userData, kind: 'avatar', id: player.id };
