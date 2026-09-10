@@ -13,6 +13,25 @@ export const RESOURCE = {
 
 export const RESOURCES = ['wood', 'brick', 'sheep', 'wheat', 'ore'];
 
+const RESOURCE_ALIAS = {
+  wood: 'wood',
+  lumber: 'wood',
+  brick: 'brick',
+  clay: 'brick',
+  sheep: 'sheep',
+  wool: 'sheep',
+  wheat: 'wheat',
+  grain: 'wheat',
+  ore: 'ore',
+};
+
+export function normalizeResource(id) {
+  if (id == null) return null;
+  const key = String(id).trim().toLowerCase();
+  if (RESOURCE_ALIAS[key]) return RESOURCE_ALIAS[key];
+  return RESOURCES.includes(key) ? key : null;
+}
+
 export const RESOURCE_LABEL = {
   wood: 'Lumber',
   brick: 'Brick',

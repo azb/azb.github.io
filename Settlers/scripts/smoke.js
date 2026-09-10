@@ -1,7 +1,7 @@
 import { Game } from '../src/game/Game.js';
 import { takeAITurn } from '../src/game/ai.js';
 import { PHASE } from '../src/game/constants.js';
-import { formatRollResult, formatStealResult, trayStatus } from '../src/ui.js';
+import { formatRollResult, formatStealResult, formatTradeResult, trayStatus } from '../src/ui.js';
 
 function play(seed) {
   const g = new Game({ playerCount: 4, solo: true, seed });
@@ -159,6 +159,33 @@ function stealResultCheck() {
   return { stuck: false, steal: true };
 }
 
+function bankTradeCheck() {
+  const empty = { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 };
+  const g = new Game({ playerCount: 3, solo: true, seed: 1 });
+  g.phase = PHASE.MAIN;
+  g.current = 0;
+  g.players[0].resources = { ...empty, brick: 4 };
+  g.bank.wheat = 19;
+  if (!g.bankTrade(0, 'brick', 'grain')) return { stuck: true, why: 'alias' };
+  if (g.players[0].resources.brick !== 0 || g.players[0].resources.wheat !== 1) {
+    return { stuck: true, why: 'counts', hand: g.players[0].resources };
+  }
+  if (g.lastTrade?.give !== 'brick' || g.lastTrade?.get !== 'wheat' || g.lastTrade?.rate !== 4) {
+    return { stuck: true, why: 'last', last: g.lastTrade };
+  }
+  const line = formatTradeResult(g);
+  if (line !== 'Traded 4 Brick for 1 Grain') return { stuck: true, why: 'line', got: line };
+  if (!g.log.at(-1)?.includes('Traded 4 Brick for 1 Grain')) {
+    return { stuck: true, why: 'log', log: g.log.at(-1) };
+  }
+  const tray = trayStatus(g);
+  if (!tray.includes('Traded 4 Brick for 1 Grain')) return { stuck: true, why: 'tray', tray };
+
+  g.players[0].resources = { ...empty, brick: 3 };
+  if (g.bankTrade(0, 'brick', 'wheat')) return { stuck: true, why: 'poor' };
+  return { stuck: false, bankTrade: true };
+}
+
 const rollUi = rollResultCheck();
 console.log(JSON.stringify(rollUi));
 if (rollUi.stuck) process.exitCode = 1;
@@ -166,6 +193,10 @@ if (rollUi.stuck) process.exitCode = 1;
 const stealUi = stealResultCheck();
 console.log(JSON.stringify(stealUi));
 if (stealUi.stuck) process.exitCode = 1;
+
+const bankUi = bankTradeCheck();
+console.log(JSON.stringify(bankUi));
+if (bankUi.stuck) process.exitCode = 1;
 
 const seven = sevenDiscard();
 console.log(JSON.stringify(seven));

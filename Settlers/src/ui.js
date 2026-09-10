@@ -6,6 +6,7 @@ import {
   BUILD_COST,
   DEV_TYPES,
   formatCost,
+  normalizeResource,
 } from './game/constants.js';
 
 const $ = (id) => document.getElementById(id);
@@ -37,6 +38,14 @@ export function phaseText(game) {
     default:
       return '';
   }
+}
+
+export function formatTradeResult(game) {
+  const t = game.lastTrade;
+  if (!t) return null;
+  const give = RESOURCE_LABEL[t.give] || t.give;
+  const get = RESOURCE_LABEL[t.get] || t.get;
+  return `Traded ${t.rate} ${give} for 1 ${get}`;
 }
 
 export function formatStealResult(game) {
@@ -79,6 +88,7 @@ export function formatRollResult(game) {
 export function trayStatus(game) {
   const roll = formatRollResult(game);
   const stealLine = formatStealResult(game);
+  const tradeLine = formatTradeResult(game);
   if (game.phase === PHASE.DISCARD) {
     const line = discardLine(game);
     const hint = `${line}\nTap resources on the panel`;
@@ -106,6 +116,10 @@ export function trayStatus(game) {
         ? '\nPlay Again or Main Menu'
         : '';
   const phaseStatus = `${name} · ${line}${extra}`;
+  if (tradeLine && game.phase === PHASE.MAIN) {
+    if (roll && !roll.seven) return `${roll.banner}\n${tradeLine}`;
+    return `${tradeLine}\n${phaseStatus}`;
+  }
   const showSteal =
     stealLine && game.phase !== PHASE.STEAL && game.phase !== PHASE.ROBBER;
   if (showSteal) {
@@ -218,7 +232,7 @@ export function renderHud(game, intent) {
     btn('settlement', 'Settlement', main && game.canAfford(human.id, 'settlement'), formatCost(BUILD_COST.settlement)),
     btn('city', 'City', main && game.canAfford(human.id, 'city'), formatCost(BUILD_COST.city)),
     btn('dev', 'Dev', main && game.canAfford(human.id, 'dev') && game.devDeck.length, formatCost(BUILD_COST.dev)),
-    btn('trade', 'Trade', main, 'Bank'),
+    btn('trade', 'Bank', main, '4:1'),
     btn('end', 'End turn', main),
   ].join('');
 
@@ -376,30 +390,46 @@ export function showTrade(game, onDone) {
   const p = viewPlayer(game);
   const paint = () => {
     const rate = give ? game.tradeRate(p, give) : 4;
+    const can = give && get && game.canBankTrade(p.id, give, get);
+    const why = give && get ? game.whyNotBankTrade(p.id, give, get) : null;
+    const summary = give
+      ? `Bank ${rate}:1 — give ${rate} ${RESOURCE_LABEL[give]} for 1 of another.`
+      : 'Bank 4:1 (3:1 or 2:1 with a matching port). Give extras, take one.';
     openModal(`<h2>Bank trade</h2>
-      <p>Give ${give ? `${rate} ${RESOURCE_LABEL[give]}` : 'a resource'} for one of another. In VR, use the panel buttons.</p>
-      <p>Give</p>
-      <div class="picker" id="give-p">${RESOURCES.map(
-        (r) => `<button type="button" data-res="${r}" style="border-color:${RESOURCE_COLOR[r]}">${RESOURCE_LABEL[r]} ${game.tradeRate(p, r)}:1</button>`,
-      ).join('')}</div>
-      <p>Get</p>${resourcePicker('get-p')}
-      <button id="trade-go" class="primary">Trade</button>
+      <p>${summary} In VR, use the panel buttons.</p>
+      <p>Give to the bank</p>
+      <div class="picker" id="give-p">${RESOURCES.map((r) => {
+        const rRate = game.tradeRate(p, r);
+        const poor = (p.resources[r] || 0) < rRate;
+        return `<button type="button" data-res="${r}" ${poor ? 'disabled' : ''} style="border-color:${RESOURCE_COLOR[r]}">${RESOURCE_LABEL[r]} ${rRate}:1</button>`;
+      }).join('')}</div>
+      <p>Get from the bank</p>
+      <div class="picker" id="get-p">${RESOURCES.map((r) => {
+        const blocked = r === give || (game.bank[r] || 0) < 1;
+        return `<button type="button" data-res="${r}" ${blocked ? 'disabled' : ''} style="border-color:${RESOURCE_COLOR[r]}">${RESOURCE_LABEL[r]}</button>`;
+      }).join('')}</div>
+      ${why ? `<p class="trade-why">${why}</p>` : ''}
+      <button id="trade-go" class="primary" ${can ? '' : 'disabled'}>${give ? `Bank ${rate}:1` : 'Bank 4:1'}</button>
       <button id="trade-cancel">Cancel</button>`);
     if (give) $('give-p').querySelector(`[data-res="${give}"]`)?.classList.add('selected');
     if (get) $('get-p').querySelector(`[data-res="${get}"]`)?.classList.add('selected');
     $('give-p').onclick = (e) => {
-      give = e.target.dataset.res || give;
+      const r = normalizeResource(e.target.closest('[data-res]')?.dataset.res);
+      if (!r || (p.resources[r] || 0) < game.tradeRate(p, r)) return;
+      give = r;
+      if (get === give) get = null;
       paint();
     };
     $('get-p').onclick = (e) => {
-      get = e.target.dataset.res || get;
+      const r = normalizeResource(e.target.closest('[data-res]')?.dataset.res);
+      if (!r || r === give || (game.bank[r] || 0) < 1) return;
+      get = r;
       paint();
     };
     $('trade-go').onclick = () => {
-      if (give && get) {
-        closeModal();
-        onDone(give, get);
-      }
+      if (!can) return;
+      closeModal();
+      onDone(give, get);
     };
     $('trade-cancel').onclick = () => {
       closeModal();

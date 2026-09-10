@@ -662,6 +662,11 @@ html.xr-presenting .journal {
   outline: 3px solid #2f6b3a;
 }
 
+.trade-why {
+  color: #ffe08a;
+  margin: 0 0 10px;
+}
+
 .steal-picker {
   display: flex;
   flex-direction: column;

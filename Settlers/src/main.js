@@ -5,7 +5,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { Game } from './game/Game.js';
 import { takeAITurn } from './game/ai.js';
-import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES, BUILD_COST, formatCost, TABLE_HEIGHT } from './game/constants.js';
+import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES, BUILD_COST, formatCost, TABLE_HEIGHT, normalizeResource } from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
@@ -20,6 +20,7 @@ import {
   trayStatus,
   formatRollResult,
   formatStealResult,
+  formatTradeResult,
   showDiscard,
   showSteal,
   showTrade,
@@ -514,7 +515,7 @@ function trayButtons() {
     { label: 'Settle', detail: formatCost(BUILD_COST.settlement), action: 'settlement', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'City', detail: formatCost(BUILD_COST.city), action: 'city', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Dev', detail: formatCost(BUILD_COST.dev), action: 'cards', disabled: !((can && game.phase === PHASE.MAIN) || playable) },
-    { label: 'Trade', detail: 'Bank', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
+    { label: 'Bank', detail: '4:1', action: 'trade', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'End Turn', action: 'end', disabled: !(can && game.phase === PHASE.MAIN) },
     { label: 'Scores', action: 'scores' },
     { label: 'Settings', action: 'settings' },
@@ -581,30 +582,25 @@ function tradeButtons() {
       const rate = game.tradeRate(p, r);
       return {
         label: RESOURCE_LABEL[r],
-        detail: `${rate}:1`,
+        detail: `Give ${rate}:1`,
         action: `give:${r}`,
         color: RESOURCE_COLOR[r],
         selected: tradeGive === r,
-        disabled: p.resources[r] < rate,
+        disabled: (p.resources[r] || 0) < rate,
       };
     }),
     ...RESOURCES.map((r) => ({
       label: RESOURCE_LABEL[r],
+      detail: 'Get',
       action: `get:${r}`,
       color: RESOURCE_COLOR[r],
       selected: tradeGet === r,
-      disabled: r === tradeGive || game.bank[r] < 1,
+      disabled: r === tradeGive || (game.bank[r] || 0) < 1,
     })),
     {
-      label: tradeGive ? `Trade ${game.tradeRate(p, tradeGive)}:1` : 'Trade',
+      label: tradeGive ? `Bank ${game.tradeRate(p, tradeGive)}:1` : 'Bank 4:1',
       action: 'tradeGo',
-      disabled: !(
-        tradeGive
-        && tradeGet
-        && tradeGive !== tradeGet
-        && p.resources[tradeGive] >= game.tradeRate(p, tradeGive)
-        && game.bank[tradeGet] >= 1
-      ),
+      disabled: !game.canBankTrade(p.id, tradeGive, tradeGet),
     },
     { label: 'Cancel', action: 'tradeCancel' },
   ];
@@ -697,11 +693,11 @@ function panelStatus() {
   }
   if (trayScreen === 'trade' && game) {
     const p = viewPlayer(game);
-    if (!tradeGive) return `${p.name} · Pick a resource to give, then one to get`;
+    if (!tradeGive) return `${p.name} · Bank 4:1 — pick what to give, then Grain or another to get`;
     const rate = game.tradeRate(p, tradeGive);
     const giveLabel = `${rate} ${RESOURCE_LABEL[tradeGive]}`;
-    if (!tradeGet) return `${p.name} · Give ${giveLabel} — pick what to get`;
-    return `${p.name} · Give ${giveLabel} for ${RESOURCE_LABEL[tradeGet]}`;
+    if (!tradeGet) return `${p.name} · Give ${giveLabel} to the bank — pick what to get`;
+    return `${p.name} · Bank ${rate}:1 · ${giveLabel} → 1 ${RESOURCE_LABEL[tradeGet]}`;
   }
   if (trayScreen === 'cards' && game) {
     return `${game.player().name} · Play a card or buy one`;
@@ -736,11 +732,16 @@ function applyPanelStatus() {
   const status = panelStatus();
   const roll = formatRollResult(game);
   const stealLine = formatStealResult(game);
+  const tradeLine = formatTradeResult(game);
   const eventBanner = stealLine
     ? roll
       ? `${roll.diceLine} · ${stealLine}`
       : stealLine
-    : roll?.banner;
+    : tradeLine
+      ? roll
+        ? `${roll.banner} · ${tradeLine}`
+        : tradeLine
+      : roll?.banner;
   tray.setStatus(status);
   if (headHint) {
     help.set(eventBanner || 'Point with your view, pinch to select.');
@@ -904,7 +905,11 @@ function openTradeUi() {
       refresh();
       return;
     }
-    game.bankTrade(viewPlayer(game).id, give, get);
+    if (!game.bankTrade(viewPlayer(game).id, give, get)) {
+      showToast(game.whyNotBankTrade(viewPlayer(game).id, give, get) || 'Cannot make that trade.');
+      refresh();
+      return;
+    }
     afterAction();
   });
 }
@@ -922,7 +927,7 @@ function closeTradeUi() {
 function confirmTrade() {
   if (busy || !tradeGive || !tradeGet) return;
   if (!game.bankTrade(viewPlayer(game).id, tradeGive, tradeGet)) {
-    showToast('Cannot make that trade.');
+    showToast(game.whyNotBankTrade(viewPlayer(game).id, tradeGive, tradeGet) || 'Cannot make that trade.');
     return;
   }
   tradeGive = tradeGet = null;
@@ -1049,7 +1054,7 @@ function handleTrayAction(act) {
     confirmTrade();
     return true;
   }
-  const giveRes = actionArg(act, 'give:');
+  const giveRes = normalizeResource(actionArg(act, 'give:'));
   if (giveRes) {
     if (!busy) {
       tradeGive = giveRes;
@@ -1060,7 +1065,7 @@ function handleTrayAction(act) {
     }
     return true;
   }
-  const getRes = actionArg(act, 'get:');
+  const getRes = normalizeResource(actionArg(act, 'get:'));
   if (getRes) {
     if (!busy) {
       tradeGet = getRes;

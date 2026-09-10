@@ -334,9 +334,9 @@ export class Tray {
         });
       };
       if (this.screen === 'trade') {
-        row(give, 250, 76);
-        row(get, 348, 76);
-        row(extra, 446, 88);
+        row(give, 262, 68);
+        row(get, 360, 68);
+        row(extra, 450, 84);
       } else {
         const bh = this.screen === 'discard' ? 90 : 110;
         row(res, 248, bh);
@@ -592,6 +592,15 @@ export class Tray {
           ctx.fillText(RESOURCE_LABEL[r], x + cw / 2, 210);
         });
       }
+    }
+
+    if (this.screen === 'trade') {
+      ctx.fillStyle = '#ffe08a';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 18px Trebuchet MS, Segoe UI, sans-serif';
+      ctx.fillText('Give to bank', 36, 250);
+      ctx.fillText('Get from bank', 36, 348);
     }
 
     ctx.textAlign = 'center';

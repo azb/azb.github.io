@@ -1,6 +1,7 @@
 import {
   RESOURCES,
   RESOURCE_LABEL,
+  normalizeResource,
   BUILD_COST,
   PIECE_LIMIT,
   BANK_START,
@@ -57,6 +58,7 @@ export class Game {
     this.lastAction = null;
     this.lastRoll = null;
     this.lastSteal = null;
+    this.lastTrade = null;
     this.afterRobber = PHASE.MAIN;
     this.note(`Island seed ${this.seed}. ${playerCount} captains set sail.`);
   }
@@ -134,15 +136,40 @@ export class Game {
   }
 
   tradeRate(player, resource) {
+    const res = normalizeResource(resource);
     let rate = 4;
+    if (!player || !res) return rate;
     const spots = [...player.settlements, ...player.cities];
     for (const vid of spots) {
-      const h = this.board.vertices.get(vid).harbor;
+      const h = this.board.vertices.get(vid)?.harbor;
       if (!h) continue;
       if (h === 'generic') rate = Math.min(rate, 3);
-      if (h === resource) rate = Math.min(rate, 2);
+      if (h === res) rate = Math.min(rate, 2);
     }
     return rate;
+  }
+
+  whyNotBankTrade(playerId, giveType, getType) {
+    if (this.phase !== PHASE.MAIN) return 'Trade after you roll.';
+    if (playerId !== this.current) return 'Wait for your turn.';
+    const give = normalizeResource(giveType);
+    const get = normalizeResource(getType);
+    if (!give) return 'Pick a resource to give the bank.';
+    if (!get) return 'Pick a resource to take from the bank.';
+    if (give === get) return 'Give and get must be different.';
+    const p = this.player(playerId);
+    const rate = this.tradeRate(p, give);
+    if ((p.resources[give] || 0) < rate) {
+      return `Need ${rate} ${RESOURCE_LABEL[give] || give} for a ${rate}:1 bank trade.`;
+    }
+    if ((this.bank[get] || 0) < 1) {
+      return `The bank is out of ${RESOURCE_LABEL[get] || get}.`;
+    }
+    return null;
+  }
+
+  canBankTrade(playerId, giveType, getType) {
+    return !this.whyNotBankTrade(playerId, giveType, getType);
   }
 
   validSettlements(playerId, { setup = false } = {}) {
@@ -404,6 +431,7 @@ export class Game {
   roll() {
     if (this.phase !== PHASE.ROLL) return null;
     this.lastSteal = null;
+    this.lastTrade = null;
     const a = 1 + Math.floor(this.rand() * 6);
     const b = 1 + Math.floor(this.rand() * 6);
     this.dice = [a, b];
@@ -545,15 +573,16 @@ export class Game {
   }
 
   bankTrade(playerId, giveType, getType) {
-    if (this.phase !== PHASE.MAIN) return false;
-    if (giveType === getType) return false;
+    const give = normalizeResource(giveType);
+    const get = normalizeResource(getType);
+    if (this.whyNotBankTrade(playerId, give, get)) return false;
     const p = this.player(playerId);
-    const rate = this.tradeRate(p, giveType);
-    if (p.resources[giveType] < rate || this.bank[getType] < 1) return false;
-    this.returnToBank(p, giveType, rate);
-    this.takeFromBank(getType, 1, p);
-    this.note(`${p.name} trades ${rate} ${RESOURCE_LABEL[giveType] || giveType} to the bank for ${RESOURCE_LABEL[getType] || getType}.`);
-    this.emit({ type: 'trade' });
+    const rate = this.tradeRate(p, give);
+    this.returnToBank(p, give, rate);
+    this.takeFromBank(get, 1, p);
+    this.lastTrade = { playerId, give, get, rate };
+    this.note(`Traded ${rate} ${RESOURCE_LABEL[give] || give} for 1 ${RESOURCE_LABEL[get] || get}`);
+    this.emit({ type: 'trade', give, get, rate, playerId });
     return true;
   }
 
@@ -643,6 +672,7 @@ export class Game {
     const p = this.player();
     for (const c of p.devCards) c.playable = true;
     this.playedDevThisTurn = false;
+    this.lastTrade = null;
     this.current = (this.current + 1) % this.playerCount;
     this.phase = PHASE.ROLL;
     this.note(`${this.player().name}'s turn.`);
