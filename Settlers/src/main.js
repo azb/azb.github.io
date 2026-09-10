@@ -97,7 +97,6 @@ boardView.rebuild(new Game({ seed: 2026 }).board);
 const dice = new DicePair(stage);
 const tray = new Tray(stage);
 const help = new HelpBanner(camera);
-applyWorldUiVisibility();
 const gazeReticle = createGazeReticle();
 const gazeHitDot = createGazeHitDot();
 const avatars = new PlayerAvatars(stage);
@@ -164,6 +163,7 @@ const xrControllers = setupXR();
 applyPointerVisuals();
 
 let game = null;
+applyWorldUiVisibility();
 let intent = null;
 let busy = false;
 let modalOpen = false;
@@ -230,6 +230,25 @@ function applyWorldUiVisibility() {
   const xr = preferTrayUi();
   tray.setVisible(xr);
   if (!xr) help.mesh.visible = false;
+  document.documentElement.classList.toggle('xr-presenting', xr);
+  syncDesktopHud();
+}
+
+function syncDesktopHud() {
+  const hud = document.getElementById('hud');
+  const start = document.getElementById('start-screen');
+  if (!hud || !start) return;
+  if (game) {
+    hud.classList.remove('hidden');
+    start.classList.add('hidden');
+    start.hidden = true;
+    start.setAttribute('inert', '');
+  } else {
+    hud.classList.add('hidden');
+    start.classList.remove('hidden');
+    start.hidden = false;
+    start.removeAttribute('inert');
+  }
 }
 
 function actionArg(action, prefix) {
@@ -435,11 +454,7 @@ function startGame() {
   production.clear();
   floatLabels.clear();
   dice.placeFor(game.current, game.playerCount);
-  const start = document.getElementById('start-screen');
-  start.classList.add('hidden');
-  start.hidden = true;
-  start.setAttribute('inert', '');
-  document.getElementById('hud').classList.remove('hidden');
+  applyWorldUiVisibility();
   refresh();
   afterAction();
 }
@@ -462,11 +477,7 @@ function showTitleScreen() {
   tray.setScores([]);
   avatars.setCelebrating(null);
   tray.setResources(emptyHand());
-  const start = document.getElementById('start-screen');
-  start.classList.remove('hidden');
-  start.hidden = false;
-  start.removeAttribute('inert');
-  document.getElementById('hud').classList.add('hidden');
+  applyWorldUiVisibility();
   syncStartControls();
   syncTrayButtons();
   applyPanelStatus();
