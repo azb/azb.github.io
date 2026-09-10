@@ -33,7 +33,7 @@ export function phaseText(game) {
     case PHASE.MONOPOLY:
       return 'Name a resource on the panel. Everyone else must give you theirs.';
     case PHASE.GAME_OVER:
-      return `${game.player(game.winner).name} wins the island! Tap New island on the panel.`;
+      return `${game.player(game.winner).name} Wins!`;
     default:
       return '';
   }
@@ -103,7 +103,7 @@ export function trayStatus(game) {
     : game.phase === PHASE.STEAL && game.isHuman()
       ? '\nClick a neighbor or tray button'
       : game.phase === PHASE.GAME_OVER
-        ? '\nTap New island on the panel'
+        ? '\nPlay Again or Main Menu'
         : '';
   const phaseStatus = `${name} · ${line}${extra}`;
   const showSteal =
@@ -385,13 +385,31 @@ export function showMonopoly(onDone) {
   };
 }
 
-export function showWin(game) {
+function bannerInk(hex) {
+  const c = String(hex || '').replace('#', '');
+  if (c.length < 6) return '#f7efe0';
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 160 ? '#1a120c' : '#f7efe0';
+}
+
+export function showWin(game, { onPlayAgain, onMainMenu } = {}) {
   const p = game.player(game.winner);
-  openModal(`<h2>${p.name} wins!</h2>
-    <p>${game.totalVP(p)} victory points. The island is theirs. In VR, tap New island on the panel.</p>
-    <button id="again" class="primary">New island</button>`);
+  const ink = bannerInk(p.color);
+  openModal(`<h2 class="win-title" style="background:${p.color};color:${ink}">${p.name} Wins!</h2>
+    <p>${game.totalVP(p)} victory points. The island is theirs.</p>
+    <div class="win-actions">
+      <button id="again" class="primary">Play Again</button>
+      <button id="win-menu" type="button">Main Menu</button>
+    </div>`);
   $('again').onclick = () => {
-    $('new-game-btn').click();
+    closeModal();
+    onPlayAgain?.();
+  };
+  $('win-menu').onclick = () => {
+    closeModal();
+    onMainMenu?.();
   };
 }
 

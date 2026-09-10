@@ -561,6 +561,23 @@ html.xr-presenting .journal {
   font-family: Georgia, serif;
 }
 
+.win-title {
+  margin: -4px -4px 16px;
+  padding: 18px 14px;
+  border-radius: 12px;
+  font-size: clamp(32px, 7vw, 48px);
+  line-height: 1.05;
+  text-align: center;
+  border: 3px solid var(--wood-dark);
+}
+
+.win-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
 .picker {
   display: flex;
   flex-wrap: wrap;

@@ -269,6 +269,8 @@ export class Tray {
     this.screen = 'actions';
     this.hand = Object.fromEntries(RESOURCES.map((r) => [r, 0]));
     this.status = '';
+    this.headline = '';
+    this.headlineColor = '';
     this.hoverAction = null;
     this.pressAction = null;
     this._pressTimer = 0;
@@ -291,14 +293,15 @@ export class Tray {
     const inner = LAYOUT_W - pad * 2;
     const gap = 16;
     const stack = this.screen === 'settings' || this.screen === 'pointerTilt' || this.screen === 'restartConfirm'
-      || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards';
+      || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards' || this.screen === 'title';
     if (stack) {
       const n = Math.max(defs.length, 1);
       const settings = this.screen === 'settings' || this.screen === 'pointerTilt';
-      const by0 = settings ? 84 : 160;
+      const win = this.screen === 'win';
+      const by0 = settings ? 84 : win ? 268 : 160;
       const bottom = LAYOUT_H - 24;
-      const stackGap = this.screen === 'steal' || this.screen === 'win' ? 18 : settings ? 10 : 14;
-      const cap = this.screen === 'steal' || this.screen === 'win' ? 110 : settings ? 82 : 104;
+      const stackGap = this.screen === 'steal' ? 18 : win ? 20 : settings ? 10 : 14;
+      const cap = this.screen === 'steal' ? 110 : win ? 124 : settings ? 82 : 104;
       const bh = Math.min(cap, Math.max(52, Math.floor((bottom - by0 - (n - 1) * stackGap) / n)));
       return defs.map((def, i) => ({
         def,
@@ -451,6 +454,15 @@ export class Tray {
     this.draw();
   }
 
+  setHeadline(text, color) {
+    const line = String(text || '');
+    const tint = String(color || '');
+    if (line === this.headline && tint === this.headlineColor) return;
+    this.headline = line;
+    this.headlineColor = tint;
+    this.draw();
+  }
+
   setResources(hand) {
     this.hand = { ...hand };
     this.draw();
@@ -477,13 +489,31 @@ export class Tray {
       plenty: 'Year of Plenty',
       monopoly: 'Monopoly',
       cards: 'Dev cards',
-      win: 'Victory',
+      win: 'Game over',
+      title: 'Settlers of Catan',
     };
     ctx.fillText(titles[this.screen] || 'Actions', 36, 40);
 
-    const hideStatus = this.screen === 'settings' || this.screen === 'pointerTilt';
-    const hideChips = hideStatus || this.screen === 'steal' || this.screen === 'win' || this.screen === 'cards'
-      || this.screen === 'restartConfirm';
+    const hideStatus = this.screen === 'settings' || this.screen === 'pointerTilt' || this.screen === 'win'
+      || this.screen === 'title';
+    const hideChips = hideStatus || this.screen === 'steal' || this.screen === 'cards'
+      || this.screen === 'restartConfirm' || this.screen === 'title';
+    if (this.screen === 'win') {
+      const title = this.headline || 'Wins!';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = this.headlineColor || '#f3e2c4';
+      let size = 78;
+      while (size > 28) {
+        ctx.font = `800 ${size}px Trebuchet MS, Segoe UI, sans-serif`;
+        if (ctx.measureText(title).width <= w - 72) break;
+        size -= 2;
+      }
+      ctx.strokeStyle = '#0c0806';
+      ctx.lineWidth = Math.max(8, Math.round(size * 0.12));
+      ctx.strokeText(title, w / 2, 168);
+      ctx.fillText(title, w / 2, 168);
+    }
     if (!hideStatus) {
       const lines = String(this.status || 'Sit down to begin')
         .split('\n')
@@ -528,8 +558,8 @@ export class Tray {
       const act = String(slot.def.action);
       const end = act === 'end';
       const settings = act === 'settings' || act === 'pointerTilt';
-      const back = act === 'settingsBack' || act === 'pointerTiltBack' || act === 'restartBack' || act === 'cardsBack' || act === 'tradeCancel';
-      const restart = act === 'restart' || act === 'restartAsk';
+      const back = act === 'settingsBack' || act === 'pointerTiltBack' || act === 'restartBack' || act === 'cardsBack' || act === 'tradeCancel' || act === 'mainMenu';
+      const restart = act === 'restart' || act === 'restartAsk' || act === 'titleStart';
       const toggle = act === 'passthrough' || act === 'handles' || act === 'pointer' || act === 'pointerLines';
       const steal = act.startsWith('steal:');
       const tint = slot.def.color && (steal || /^(give|get|discard|plenty|mono):/.test(act));
@@ -566,7 +596,7 @@ export class Tray {
       }
       ctx.fillStyle = ink;
       const big = end || back || restart || toggle || steal || confirm || this.screen === 'cards' || this.screen === 'win'
-        || this.screen === 'pointerTilt' || this.screen === 'restartConfirm';
+        || this.screen === 'pointerTilt' || this.screen === 'restartConfirm' || this.screen === 'title';
       drawSlotLabel(ctx, slot, big);
     }
 

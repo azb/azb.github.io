@@ -225,18 +225,31 @@ function actionArg(action, prefix) {
   return action.slice(prefix.length);
 }
 
+function syncStartControls() {
+  const counts = document.getElementById('player-count');
+  if (counts) {
+    for (const x of counts.children) x.classList.toggle('active', Number(x.dataset.count) === playerCount);
+  }
+  const modes = document.getElementById('play-mode');
+  if (modes) {
+    for (const x of modes.children) x.classList.toggle('active', (x.dataset.mode === 'solo') === solo);
+  }
+}
+
 document.getElementById('player-count').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-count]');
   if (!b) return;
   playerCount = Number(b.dataset.count);
-  for (const x of document.getElementById('player-count').children) x.classList.toggle('active', x === b);
+  syncStartControls();
+  if (!game) syncTrayButtons();
 });
 
 document.getElementById('play-mode').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-mode]');
   if (!b) return;
   solo = b.dataset.mode === 'solo';
-  for (const x of document.getElementById('play-mode').children) x.classList.toggle('active', x === b);
+  syncStartControls();
+  if (!game) syncTrayButtons();
 });
 
 document.getElementById('start-btn').addEventListener('click', () => {
@@ -381,6 +394,7 @@ function startGame() {
   discardGive = emptyHand();
   discardKey = '';
   plentyPicks = [];
+  tray.setHeadline('');
   boardView.rebuild(game.board);
   boardView.syncPieces(game);
   avatars.rebuild(game.players);
@@ -394,6 +408,32 @@ function startGame() {
   document.getElementById('hud').classList.remove('hidden');
   refresh();
   afterAction();
+}
+
+function showTitleScreen() {
+  closeModal();
+  game = null;
+  busy = false;
+  intent = null;
+  modalOpen = false;
+  trayScreen = 'actions';
+  tradeGive = null;
+  tradeGet = null;
+  discardGive = emptyHand();
+  discardKey = '';
+  plentyPicks = [];
+  production.clear();
+  floatLabels.clear();
+  tray.setHeadline('');
+  tray.setResources(emptyHand());
+  const start = document.getElementById('start-screen');
+  start.classList.remove('hidden');
+  start.hidden = false;
+  start.removeAttribute('inert');
+  document.getElementById('hud').classList.add('hidden');
+  syncStartControls();
+  syncTrayButtons();
+  applyPanelStatus();
 }
 
 function gameInProgress() {
@@ -484,7 +524,7 @@ function settingsButtons() {
     { label: pointerLinesOn ? 'Pointer lines ON' : 'Pointer lines OFF', action: 'pointerLines', on: pointerLinesOn },
     { label: passthroughOn ? 'Passthrough ON' : 'Passthrough OFF', action: 'passthrough', on: passthroughOn },
     { label: handlesOn ? 'Handles ON' : 'Handles OFF', action: 'handles', on: handlesOn },
-    { label: 'Restart game', action: 'restartAsk' },
+    ...(game ? [{ label: 'Restart game', action: 'restartAsk' }] : []),
     { label: 'Back', action: 'settingsBack' },
   ];
 }
@@ -595,9 +635,27 @@ function monopolyButtons() {
 
 function winButtons() {
   return [
-    { label: 'New island', action: 'restart' },
+    { label: 'Play Again', action: 'restart' },
+    { label: 'Main Menu', action: 'mainMenu' },
+  ];
+}
+
+function titleButtons() {
+  return [
+    { label: `Players: ${playerCount}`, action: 'titlePlayers' },
+    { label: solo ? 'You vs AI' : 'Hotseat', action: 'titleMode' },
+    { label: 'Begin the voyage', action: 'titleStart' },
     { label: 'Settings', action: 'settings' },
   ];
+}
+
+function applyWinHeadline() {
+  if (game?.phase !== PHASE.GAME_OVER || game.winner == null) {
+    tray.setHeadline('');
+    return;
+  }
+  const p = game.player(game.winner);
+  tray.setHeadline(`${p.name} Wins!`, p.color);
 }
 
 function humanDiscardEntry() {
@@ -675,6 +733,18 @@ function applyPanelStatus() {
 
 function syncTrayButtons() {
   if (!game) {
+    if (trayScreen === 'settings') {
+      tray.setButtons(settingsButtons(), 'settings');
+      return;
+    }
+    if (trayScreen === 'pointerTilt') {
+      tray.setButtons(pointerTiltButtons(), 'pointerTilt');
+      return;
+    }
+    if (preferTrayUi()) {
+      tray.setButtons(titleButtons(), 'title');
+      return;
+    }
     tray.setButtons(trayButtons(), 'actions');
     return;
   }
@@ -697,6 +767,11 @@ function syncTrayButtons() {
     tray.setButtons(monopolyButtons(), 'monopoly');
     return;
   }
+  if (game.phase === PHASE.GAME_OVER) {
+    applyWinHeadline();
+    tray.setButtons(winButtons(), 'win');
+    return;
+  }
   if (trayScreen === 'settings') {
     tray.setButtons(settingsButtons(), 'settings');
     return;
@@ -707,10 +782,6 @@ function syncTrayButtons() {
   }
   if (trayScreen === 'restartConfirm') {
     tray.setButtons(restartConfirmButtons(), 'restartConfirm');
-    return;
-  }
-  if (game.phase === PHASE.GAME_OVER) {
-    tray.setButtons(winButtons(), 'win');
     return;
   }
   if (trayScreen === 'trade') {
@@ -851,6 +922,31 @@ function confirmMonopoly(r) {
 }
 
 function handleTrayAction(act) {
+  if (act === 'mainMenu') {
+    sfx.click();
+    showTitleScreen();
+    return true;
+  }
+  if (act === 'titleStart') {
+    sfx.unlock();
+    sfx.click();
+    startGame();
+    return true;
+  }
+  if (act === 'titlePlayers') {
+    playerCount = playerCount >= 4 ? 2 : playerCount + 1;
+    syncStartControls();
+    syncTrayButtons();
+    sfx.click();
+    return true;
+  }
+  if (act === 'titleMode') {
+    solo = !solo;
+    syncStartControls();
+    syncTrayButtons();
+    sfx.click();
+    return true;
+  }
   if (TRAY_SETTINGS.has(act)) {
     runTraySettings(act);
     return true;
@@ -2040,6 +2136,13 @@ async function enterVR() {
       document.documentElement.classList.remove('xr-presenting');
       applyPointerVisuals();
       if (trayScreen === 'settings' || trayScreen === 'pointerTilt' || trayScreen === 'restartConfirm') syncTrayButtons();
+      if (game?.phase === PHASE.GAME_OVER) {
+        modalOpen = true;
+        showWin(game, {
+          onPlayAgain: () => startGame(),
+          onMainMenu: () => showTitleScreen(),
+        });
+      }
       updateVRButton();
     });
   } catch {
@@ -2144,7 +2247,13 @@ function presentModals() {
   if (game.phase === PHASE.GAME_OVER) {
     sfx.win();
     modalOpen = true;
-    if (!trayOnly) showWin(game);
+    applyWinHeadline();
+    if (!trayOnly) {
+      showWin(game, {
+        onPlayAgain: () => startGame(),
+        onMainMenu: () => showTitleScreen(),
+      });
+    }
     syncTrayButtons();
     applyPanelStatus();
     return;
