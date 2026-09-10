@@ -270,8 +270,13 @@ h1 {
   right: 16px;
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   align-items: flex-start;
+}
+
+.top-status {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .turn-banner {
@@ -285,7 +290,7 @@ h1 {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
-  max-width: min(36rem, calc(100vw - 48px));
+  max-width: min(36rem, 100%);
 }
 
 .score-chip {
@@ -356,7 +361,7 @@ h1 {
 .phase-label {
   font-size: 16px;
   line-height: 1.35;
-  max-width: min(36rem, calc(100vw - 48px));
+  max-width: min(36rem, 100%);
   margin-top: 6px;
   padding: 8px 12px;
   background: rgba(20, 12, 8, 0.88);
@@ -370,7 +375,7 @@ h1 {
   padding: 8px 12px;
   font-size: 16px;
   line-height: 1.35;
-  max-width: min(36rem, calc(100vw - 48px));
+  max-width: min(36rem, 100%);
   background: rgba(20, 12, 8, 0.92);
   border: 2px solid var(--gold);
   border-radius: 12px;
@@ -453,7 +458,11 @@ html.xr-presenting .spot-layer {
 
 .top-actions {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+  z-index: 2;
 }
 
 .ghost {
