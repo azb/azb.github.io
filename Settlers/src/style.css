@@ -670,9 +670,24 @@ html.xr-presenting .journal {
   background: rgba(8, 5, 3, 0.55);
 }
 
+.modal.scores-modal {
+  display: block;
+  background: transparent;
+}
+
 .modal-panel {
   width: min(460px, calc(100vw - 32px));
   padding: 20px;
+}
+
+.modal.scores-modal .modal-panel {
+  position: absolute;
+  left: 50%;
+  top: 7.5rem;
+  transform: translateX(-50%);
+  width: min(400px, calc(100vw - 32px));
+  max-height: calc(100vh - 9rem);
+  overflow: auto;
 }
 
 .modal-panel h2 {

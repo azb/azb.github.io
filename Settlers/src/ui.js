@@ -326,13 +326,75 @@ export function showToast(text, ms = TOAST_MS, opts = null) {
   showToast._t = setTimeout(() => el.classList.add('hidden'), ms);
 }
 
-export function closeModal() {
-  $('modal').classList.add('hidden');
+const SCORES_HUD_GAP = 12;
+
+function hudBox(el) {
+  if (!el || el.classList.contains('hidden')) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return null;
+  return r;
 }
 
-export function openModal(html) {
-  $('modal-body').innerHTML = html;
-  $('modal').classList.remove('hidden');
+function boxesOverlap(a, b, gap = SCORES_HUD_GAP) {
+  return a.left < b.right + gap && a.right + gap > b.left && a.top < b.bottom + gap && a.bottom + gap > b.top;
+}
+
+function layoutScoresPanel() {
+  const modal = $('modal');
+  const panel = $('modal-body');
+  if (!modal || !panel || modal.classList.contains('hidden') || !modal.classList.contains('scores-modal')) return;
+  panel.style.top = '';
+  panel.style.maxHeight = '';
+  const blockers = [
+    document.querySelector('.top-actions'),
+    $('score-strip'),
+    $('turn-banner'),
+    $('table-help'),
+    $('phase-label'),
+    $('roll-result'),
+  ]
+    .map(hudBox)
+    .filter(Boolean);
+  let top = Math.max(72, ...blockers.map((r) => r.bottom + SCORES_HUD_GAP));
+  panel.style.top = `${Math.round(top)}px`;
+  panel.style.maxHeight = `${Math.max(160, Math.round(window.innerHeight - top - 16))}px`;
+  const panelBox = panel.getBoundingClientRect();
+  for (const b of blockers) {
+    if (boxesOverlap(panelBox, b)) top = Math.max(top, b.bottom + SCORES_HUD_GAP);
+  }
+  panel.style.top = `${Math.round(top)}px`;
+  panel.style.maxHeight = `${Math.max(160, Math.round(window.innerHeight - top - 16))}px`;
+}
+
+function ensureScoresLayout() {
+  if (ensureScoresLayout._bound) return;
+  ensureScoresLayout._bound = true;
+  window.addEventListener('resize', layoutScoresPanel);
+}
+
+export function closeModal() {
+  const modal = $('modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('scores-modal');
+  const body = $('modal-body');
+  if (body) {
+    body.style.top = '';
+    body.style.maxHeight = '';
+  }
+}
+
+export function openModal(html, opts = {}) {
+  const modal = $('modal');
+  const body = $('modal-body');
+  body.innerHTML = html;
+  body.style.top = '';
+  body.style.maxHeight = '';
+  modal.classList.toggle('scores-modal', opts.variant === 'scores');
+  modal.classList.remove('hidden');
+  if (opts.variant === 'scores') {
+    ensureScoresLayout();
+    requestAnimationFrame(layoutScoresPanel);
+  }
 }
 
 export function resourcePicker(ids, extra = '') {
@@ -498,7 +560,9 @@ export function showScores(game, onClose) {
       </article>`,
       )
       .join('')}
-    <button id="scores-back" class="primary" type="button">Back</button>`);
+    <button id="scores-back" class="primary" type="button">Back</button>`,
+    { variant: 'scores' },
+  );
   $('scores-back').onclick = () => {
     closeModal();
     onClose?.();
