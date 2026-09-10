@@ -26,7 +26,7 @@ export function phaseText(game) {
     case PHASE.ROBBER:
       return 'Move the robber onto a land hex.';
     case PHASE.STEAL:
-      return 'Choose a player to steal from — click their name, figure, or a tray button.';
+      return 'Choose a player to steal from — click their name or figure.';
     case PHASE.FREE_ROADS:
       return `Place ${game.freeRoads} free road${game.freeRoads > 1 ? 's' : ''}.`;
     case PHASE.PLENTY:
@@ -111,7 +111,7 @@ export function trayStatus(game) {
   const extra = game.phase === PHASE.MAIN && game.isHuman()
     ? '\nPoint at END TURN or squeeze grip'
     : game.phase === PHASE.STEAL && game.isHuman()
-      ? '\nClick a neighbor or tray button'
+      ? '\nClick a neighbor'
       : game.phase === PHASE.GAME_OVER
         ? '\nPlay Again or Main Menu'
         : '';
@@ -218,7 +218,9 @@ export function renderHud(game, intent) {
   $('dev-bar').innerHTML = cards.join('') || '<button disabled>No development cards</button>';
 
   const btn = (id, title, on, detail) =>
-    `<button data-act="${id}" class="${intent === id ? 'primary' : ''}" ${on ? '' : 'disabled'}>${
+    `<button type="button" data-act="${id}" class="${intent === id ? 'primary' : ''} ${on ? '' : 'is-disabled'}" ${
+      on ? '' : 'aria-disabled="true"'
+    }>${
       detail
         ? `<span class="act-name">${title}</span><span class="act-cost">${detail}</span>`
         : title
@@ -292,7 +294,9 @@ export function viewPlayer(game) {
 export function bindHud(onAction) {
   $('action-bar').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-act]');
-    if (b) onAction(b.dataset.act);
+    if (!b) return;
+    if (b.getAttribute('aria-disabled') === 'true') onAction('failBuild', b.dataset.act);
+    else onAction(b.dataset.act);
   });
   $('dev-bar').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-dev]');
@@ -306,6 +310,8 @@ export function bindHud(onAction) {
     if (e.target.closest('[data-scores]')) onAction('scores');
   });
   $('scores-btn')?.addEventListener('click', () => onAction('scores'));
+  $('settings-btn')?.addEventListener('click', () => onAction('settings'));
+  $('title-settings-btn')?.addEventListener('click', () => onAction('settings'));
 }
 
 export const TOAST_MS = 2200;
@@ -373,7 +379,7 @@ export function showSteal(game, onDone) {
     })
     .join('');
   openModal(`<h2>Steal a card</h2>
-    <p>Choose a neighbor. You can also click their figure at the table or a tray button.</p>
+    <p>Choose a neighbor. You can also click their figure at the table.</p>
     <div class="picker steal-picker">${picks}</div>`);
   $('modal-body').onclick = (e) => {
     const id = e.target.closest('button[data-steal]')?.dataset.steal;
@@ -515,6 +521,39 @@ export function showWin(game, { onPlayAgain, onMainMenu } = {}) {
   $('win-menu').onclick = () => {
     closeModal();
     onMainMenu?.();
+  };
+}
+
+export function showSettings(opts, onAction) {
+  const on = (v) => (v ? 'primary' : '');
+  openModal(`<h2>Settings</h2>
+    <div class="settings-stack">
+      <button type="button" class="${on(opts.gaze)}" data-act="pointer">${opts.gaze ? 'Pointer: Face' : 'Pointer: Hand'}</button>
+      <button type="button" data-act="pointerTilt">Pointer tilt · ${opts.tiltLabel}</button>
+      <button type="button" class="${on(opts.lines)}" data-act="pointerLines">${opts.lines ? 'Pointer lines ON' : 'Pointer lines OFF'}</button>
+      <button type="button" class="${on(opts.passthrough)}" data-act="passthrough">${opts.passthrough ? 'Passthrough ON' : 'Passthrough OFF'}</button>
+      <button type="button" class="${on(opts.handles)}" data-act="handles">${opts.handles ? 'Handles ON' : 'Handles OFF'}</button>
+      ${opts.canRestart ? '<button type="button" data-act="restartAsk">Restart game</button>' : ''}
+      <button type="button" id="settings-back" class="primary" data-act="settingsBack">Back</button>
+    </div>`);
+  $('modal-body').onclick = (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act) onAction(act);
+  };
+}
+
+export function showPointerTilt(opts, onAction) {
+  openModal(`<h2>Pointer tilt</h2>
+    <p>Nudge the XR aim ray up or down.</p>
+    <div class="settings-stack">
+      <button type="button" data-act="pointerTiltUp">▲ Up</button>
+      <button type="button" disabled>${opts.tiltLabel}</button>
+      <button type="button" data-act="pointerTiltDown">▼ Down</button>
+      <button type="button" id="tilt-back" class="primary" data-act="pointerTiltBack">Back</button>
+    </div>`);
+  $('modal-body').onclick = (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act) onAction(act);
   };
 }
 

@@ -463,7 +463,16 @@ export class Tray {
     }, 140);
   }
 
+  setVisible(on) {
+    this.group.visible = !!on;
+    if (!on) {
+      this.hoverAction = null;
+      this.pressAction = null;
+    }
+  }
+
   pickables() {
+    if (!this.group.visible) return [];
     return this.buttons.map((b) => b.mesh);
   }
 

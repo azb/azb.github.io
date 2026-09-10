@@ -29,6 +29,8 @@ import {
   showWin,
   showScores,
   showRestartConfirm,
+  showSettings,
+  showPointerTilt,
   closeModal,
   viewPlayer,
   scoreRows,
@@ -95,6 +97,7 @@ boardView.rebuild(new Game({ seed: 2026 }).board);
 const dice = new DicePair(stage);
 const tray = new Tray(stage);
 const help = new HelpBanner(camera);
+applyWorldUiVisibility();
 const gazeReticle = createGazeReticle();
 const gazeHitDot = createGazeHitDot();
 const avatars = new PlayerAvatars(stage);
@@ -223,6 +226,12 @@ function preferTrayUi() {
   return renderer.xr.isPresenting;
 }
 
+function applyWorldUiVisibility() {
+  const xr = preferTrayUi();
+  tray.setVisible(xr);
+  if (!xr) help.mesh.visible = false;
+}
+
 function actionArg(action, prefix) {
   if (typeof action !== 'string' || !action.startsWith(prefix)) return null;
   return action.slice(prefix.length);
@@ -296,6 +305,22 @@ canvas.addEventListener('pointerup', (e) => {
 function runHudAction(act, extra) {
   if (act === 'scores') {
     openScoresUi();
+    return;
+  }
+  if (act === 'settings') {
+    openSettingsUi();
+    return;
+  }
+  if (act === 'failBuild') {
+    if (!game) return;
+    const why = extra === 'roll'
+      ? rollFailReason()
+      : extra === 'end'
+        ? 'Finish your turn from the panel when it is Main.'
+        : extra === 'trade'
+          ? 'Bank trades are on your turn after rolling.'
+          : trayBuildFail(extra);
+    showBuildFail(why, { userData: { kind: 'tray', action: extra } });
     return;
   }
   if (!game || busy) return;
@@ -376,7 +401,7 @@ renderer.setAnimationLoop(() => {
     maybeSnapStageToTable();
     handles.update(dt, xrCam, sourcePos);
   } else {
-    help.attach(camera);
+    help.mesh.visible = false;
     attachGazeReticle(camera);
   }
   hoverPickables();
@@ -385,6 +410,7 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 });
 
+applyWorldUiVisibility();
 updateVRButton();
 
 function startGame() {
@@ -462,10 +488,21 @@ function requestRestart({ fromHud = false } = {}) {
     sfx.click();
     return;
   }
+  const returnToSettings = trayScreen === 'settings' || trayScreen === 'pointerTilt' || trayScreen === 'restartConfirm';
+  trayScreen = 'restartConfirm';
   modalOpen = true;
   showRestartConfirm((ok) => {
     modalOpen = false;
-    if (ok) startGame();
+    if (ok) {
+      startGame();
+      return;
+    }
+    if (returnToSettings) {
+      trayScreen = 'settings';
+      paintDesktopTrayScreen();
+      return;
+    }
+    trayScreen = 'actions';
   });
 }
 
@@ -728,7 +765,8 @@ function applyPanelStatus() {
   const headHint = useHeadHover();
   if (!game) {
     tray.setStatus('');
-    if (headHint) help.set('Point with your view, pinch to select.');
+    if (preferTrayUi() && headHint) help.set('Point with your view, pinch to select.');
+    else if (!preferTrayUi()) help.mesh.visible = false;
     return;
   }
   const status = panelStatus();
@@ -745,6 +783,10 @@ function applyPanelStatus() {
         : tradeLine
       : roll?.banner;
   tray.setStatus(status);
+  if (!preferTrayUi()) {
+    help.mesh.visible = false;
+    return;
+  }
   if (headHint) {
     help.set(eventBanner || 'Point with your view, pinch to select.');
   } else {
@@ -828,7 +870,13 @@ function runTraySettings(act) {
   else if (act === 'pointerTiltBack') trayScreen = 'settings';
   else if (act === 'pointerTiltUp') setPointerTilt(pointerPitchDeg + POINTER_TILT_STEP);
   else if (act === 'pointerTiltDown') setPointerTilt(pointerPitchDeg - POINTER_TILT_STEP);
-  else if (act === 'restartAsk') trayScreen = 'restartConfirm';
+  else if (act === 'restartAsk') {
+    if (preferTrayUi()) trayScreen = 'restartConfirm';
+    else {
+      requestRestart();
+      return;
+    }
+  }
   else if (act === 'restartBack') trayScreen = 'settings';
   else if (act === 'passthrough') setPassthrough(!passthroughOn);
   else if (act === 'pointer') setPointerMode(pointerMode === 'gaze' ? 'controller' : 'gaze');
@@ -841,9 +889,18 @@ function runTraySettings(act) {
     startGame();
     return;
   }
+  if (act === 'settingsBack' && !preferTrayUi()) {
+    modalOpen = false;
+    closeModal();
+    syncTrayButtons();
+    applyPanelStatus();
+    sfx.click();
+    return;
+  }
   syncTrayButtons();
   applyPanelStatus();
   sfx.click();
+  paintDesktopTrayScreen();
 }
 
 function scoresBlocked() {
@@ -854,6 +911,51 @@ function scoresBlocked() {
     || game.phase === PHASE.DISCARD
     || game.phase === PHASE.PLENTY
     || game.phase === PHASE.MONOPOLY;
+}
+
+function settingsBlocked() {
+  if (!game) return false;
+  return scoresBlocked();
+}
+
+function settingsModalOpts() {
+  return {
+    gaze: pointerMode === 'gaze',
+    tiltLabel: formatPointerTilt(),
+    lines: pointerLinesOn,
+    passthrough: passthroughOn,
+    handles: handlesOn,
+    canRestart: !!game,
+  };
+}
+
+function paintDesktopTrayScreen() {
+  if (preferTrayUi()) return;
+  if (trayScreen === 'settings') {
+    modalOpen = true;
+    showSettings(settingsModalOpts(), (act) => runTraySettings(act));
+    return;
+  }
+  if (trayScreen === 'pointerTilt') {
+    modalOpen = true;
+    showPointerTilt({ tiltLabel: formatPointerTilt() }, (act) => runTraySettings(act));
+  }
+}
+
+function openSettingsUi() {
+  if (settingsBlocked()) return;
+  if (preferTrayUi()) {
+    trayScreen = 'settings';
+    modalOpen = false;
+    closeModal();
+    syncTrayButtons();
+    applyPanelStatus();
+    sfx.click();
+    return;
+  }
+  trayScreen = 'settings';
+  paintDesktopTrayScreen();
+  sfx.click();
 }
 
 function paintScoresModal() {
@@ -1316,7 +1418,8 @@ function rollFailReason() {
 }
 
 function pickables() {
-  const list = [...handles.pickables(), ...tray.pickables(), ...avatars.pickables(), ...dice.pickables()];
+  const list = [...handles.pickables(), ...avatars.pickables(), ...dice.pickables()];
+  if (preferTrayUi()) list.push(...tray.pickables());
   for (const m of boardView.vertexMarkers.values()) if (m.visible) list.push(m);
   for (const m of boardView.edgeMarkers.values()) if (m.visible) list.push(m);
   for (const m of boardView.hexMarkers.values()) if (m.visible && m.material.opacity > 0) list.push(m);
@@ -1336,7 +1439,7 @@ function announceSteal() {
   const line = formatStealResult(game);
   if (!line) return;
   showToast(line, TOAST_LONG_MS, { low: true });
-  floatLabels.spawn(line, tray.stealFloatWorldPos(_floatPos), STEAL_FLOAT_LIFE);
+  if (preferTrayUi()) floatLabels.spawn(line, tray.stealFloatWorldPos(_floatPos), STEAL_FLOAT_LIFE);
 }
 
 function trySteal(fromId) {
@@ -1461,7 +1564,8 @@ function showBuildFail(message, obj) {
   const line = String(message || '').trim();
   if (!line) return;
   sfx.bad();
-  floatLabels.spawn(line, hitWorldPos(obj, _floatPos));
+  if (preferTrayUi()) floatLabels.spawn(line, hitWorldPos(obj, _floatPos));
+  else showToast(line);
 }
 
 function resolvePick(hits) {
@@ -2143,6 +2247,9 @@ async function configureXrReferenceSpace(session) {
 
 renderer.xr.addEventListener('sessionstart', () => {
   armXrTableSnap();
+  applyWorldUiVisibility();
+  syncTrayButtons();
+  applyPanelStatus();
 });
 renderer.xr.addEventListener('sessionend', () => {
   xrStageSnapPending = false;
@@ -2150,7 +2257,85 @@ renderer.xr.addEventListener('sessionend', () => {
   xrStageUserMoved = false;
   lastXRHover = null;
   resetStageHome();
+  applyWorldUiVisibility();
 });
+
+function resumeDesktopUi() {
+  applyWorldUiVisibility();
+  if (preferTrayUi()) return;
+  if (trayScreen === 'settings' || trayScreen === 'pointerTilt') {
+    paintDesktopTrayScreen();
+    return;
+  }
+  if (trayScreen === 'restartConfirm') {
+    modalOpen = true;
+    showRestartConfirm((ok) => {
+      modalOpen = false;
+      if (ok) {
+        startGame();
+        return;
+      }
+      trayScreen = 'settings';
+      paintDesktopTrayScreen();
+    });
+    return;
+  }
+  if (trayScreen === 'scores' && game && !scoresBlocked()) {
+    modalOpen = true;
+    paintScoresModal();
+    return;
+  }
+  if (game?.phase === PHASE.GAME_OVER) {
+    modalOpen = true;
+    showWin(game, {
+      onPlayAgain: () => startGame(),
+      onMainMenu: () => showTitleScreen(),
+    });
+    return;
+  }
+  reopenDesktopModals();
+}
+
+function reopenDesktopModals() {
+  if (!game || preferTrayUi()) return;
+  if (game.phase === PHASE.DISCARD && humanDiscardEntry()) {
+    modalOpen = true;
+    const opened = showDiscard(game, (id, give) => {
+      modalOpen = false;
+      discardGive = emptyHand();
+      discardKey = '';
+      game.discard(id, give);
+      afterAction();
+    });
+    if (!opened) modalOpen = false;
+    return;
+  }
+  if (game.phase === PHASE.STEAL && game.isHuman()) {
+    modalOpen = true;
+    showSteal(game, (id) => {
+      trySteal(id);
+    });
+    return;
+  }
+  if (game.phase === PHASE.PLENTY && game.isHuman()) {
+    modalOpen = true;
+    showPlenty((a, b) => {
+      modalOpen = false;
+      plentyPicks = [];
+      game.yearOfPlenty(a, b);
+      afterAction();
+    });
+    return;
+  }
+  if (game.phase === PHASE.MONOPOLY && game.isHuman()) {
+    modalOpen = true;
+    showMonopoly((r) => {
+      modalOpen = false;
+      game.monopoly(r);
+      afterAction();
+    });
+  }
+}
 
 async function requestXRSession(mode, hud) {
   const withOverlay = {
@@ -2174,7 +2359,7 @@ async function enterVR() {
     showToast('WebXR is not available in this browser.');
     return;
   }
-  const hud = document.getElementById('hud');
+  const overlay = document.getElementById('overlay-root') || document.getElementById('hud');
   const arOk = await navigator.xr.isSessionSupported?.('immersive-ar');
   const vrOk = await navigator.xr.isSessionSupported?.('immersive-vr');
   try {
@@ -2182,13 +2367,13 @@ async function enterVR() {
     let passthrough = false;
     if (arOk) {
       try {
-        session = await requestXRSession('immersive-ar', hud);
+        session = await requestXRSession('immersive-ar', overlay);
         passthrough = true;
       } catch {
         session = null;
       }
     }
-    if (!session && vrOk) session = await requestXRSession('immersive-vr', hud);
+    if (!session && vrOk) session = await requestXRSession('immersive-vr', overlay);
     if (!session) {
       showToast('This browser has no AR or VR session.');
       return;
@@ -2199,10 +2384,11 @@ async function enterVR() {
     handles.setVisible(handlesOn);
     document.documentElement.classList.add('xr-presenting');
     closeModal();
-    syncTrayButtons();
-    applyPanelStatus();
     bindXRSession(session);
     await renderer.xr.setSession(session);
+    applyWorldUiVisibility();
+    syncTrayButtons();
+    applyPanelStatus();
     applyPointerVisuals();
     if (useHeadHover() || pointerMode === 'gaze') showToast('Point with your view, pinch to select.');
     session.addEventListener('end', () => {
@@ -2218,14 +2404,7 @@ async function enterVR() {
       setPassthrough(false);
       document.documentElement.classList.remove('xr-presenting');
       applyPointerVisuals();
-      if (trayScreen === 'settings' || trayScreen === 'pointerTilt' || trayScreen === 'restartConfirm' || trayScreen === 'scores') syncTrayButtons();
-      if (game?.phase === PHASE.GAME_OVER) {
-        modalOpen = true;
-        showWin(game, {
-          onPlayAgain: () => startGame(),
-          onMainMenu: () => showTitleScreen(),
-        });
-      }
+      resumeDesktopUi();
       updateVRButton();
     });
   } catch {
@@ -2237,6 +2416,7 @@ async function enterVR() {
     setPassthrough(false);
     document.documentElement.classList.remove('xr-presenting');
     applyPointerVisuals();
+    applyWorldUiVisibility();
   }
 }
 

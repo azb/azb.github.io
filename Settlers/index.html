@@ -5,13 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Settlers of Catan — WebXR</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏝️</text></svg>" />
-    <script type="module" crossorigin src="./assets/index-4YBtsBYG.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-D3u2QhXK.css">
+    <script type="module" crossorigin src="./assets/index-CPj_DSiZ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B1WfiGmy.css">
   </head>
   <body>
     <div id="app">
       <canvas id="scene"></canvas>
 
+      <div id="overlay-root">
       <div id="start-screen">
         <div class="panel start-panel">
           <p class="eyebrow">Unofficial WebXR tabletop</p>
@@ -39,6 +40,7 @@
           </label>
 
           <button id="start-btn" type="button" class="primary">Begin the voyage</button>
+          <button id="title-settings-btn" type="button" class="ghost">Settings</button>
           <p class="disclaimer">
             Fan recreation of the classic island-settling rules. Catan is a trademark of Catan GmbH.
           </p>
@@ -55,6 +57,7 @@
           </div>
           <div class="top-actions">
             <button id="scores-btn" type="button" class="ghost">Scores</button>
+            <button id="settings-btn" type="button" class="ghost">Settings</button>
             <button id="vr-btn" type="button" class="ghost">Enter MR</button>
             <button id="new-game-btn" type="button" class="ghost">New island</button>
           </div>
@@ -75,12 +78,13 @@
 
         <div id="table-help" class="table-help"></div>
         <div id="spot-layer" class="spot-layer"></div>
+      </div>
 
-        <div id="modal" class="modal hidden">
-          <div class="panel modal-panel" id="modal-body"></div>
-        </div>
+      <div id="modal" class="modal hidden">
+        <div class="panel modal-panel" id="modal-body"></div>
+      </div>
 
-        <div id="toast" class="toast hidden"></div>
+      <div id="toast" class="toast hidden"></div>
       </div>
     </div>
   </body>
