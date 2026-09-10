@@ -381,7 +381,8 @@ h1 {
 .table-help {
   position: absolute;
   left: 50%;
-  bottom: 18px;
+  top: 12px;
+  bottom: auto;
   transform: translateX(-50%);
   z-index: 8;
   padding: 12px 20px;
@@ -782,6 +783,7 @@ html.xr-presenting .roll-result {
 
 html.xr-presenting .table-help {
   font-size: 28px;
+  top: auto;
   bottom: 72px;
   padding: 14px 22px;
 }
