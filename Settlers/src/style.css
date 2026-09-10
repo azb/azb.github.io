@@ -549,8 +549,12 @@ html.xr-presenting .spot-layer {
   width: min(640px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   z-index: 4;
+  padding: 10px 12px 12px;
+  background: rgba(12, 8, 5, 0.86);
+  border: 2px solid var(--gold);
+  border-radius: 16px;
 }
 
 .resource-bar,
@@ -563,10 +567,7 @@ html.xr-presenting .spot-layer {
 }
 
 .resource-bar {
-  padding: 4px 6px;
-  background: rgba(12, 8, 5, 0.82);
-  border: 2px solid var(--gold);
-  border-radius: 14px;
+  padding: 0;
 }
 
 .resource-chip {
