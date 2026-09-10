@@ -254,9 +254,9 @@ export class BoardView {
     const pz = mz + nz * 0.1;
     const signY = 0.078;
     const woodMat = new THREE.MeshStandardMaterial({ map: this.wood, color: '#8a5a32' });
-    const beamMat = unlitMat(HARBOR_BEAM, 0.98);
-    const glowMat = unlitMat(HARBOR_GLOW, 0.9);
-    const haloMat = unlitMat(HARBOR_SIGN, 0.7);
+    const beamMat = unlitMat(HARBOR_BEAM, 0.98, true);
+    const glowMat = unlitMat(HARBOR_GLOW, 0.9, true);
+    const haloMat = unlitMat(HARBOR_SIGN, 0.7, true);
 
     const dock = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.008, 0.11), woodMat);
     dock.position.set((px + mx) * 0.5, 0.021, (pz + mz) * 0.5);
@@ -284,17 +284,20 @@ export class BoardView {
     this.group.add(dock, post, pole, tag);
 
     for (const v of nodes) {
+      const ox = nx * 0.012;
+      const oz = nz * 0.012;
+      const y = TILE_HEIGHT + 0.0016;
       const disc = new THREE.Mesh(this.harborDiscGeo, beamMat);
-      disc.position.set(v.x, TILE_HEIGHT + 0.003, v.z);
-      disc.renderOrder = 7;
+      disc.position.set(v.x + ox, y, v.z + oz);
+      disc.renderOrder = 1;
       const ring = new THREE.Mesh(this.harborRingGeo, glowMat);
       ring.rotation.x = Math.PI / 2;
-      ring.position.set(v.x, TILE_HEIGHT + 0.008, v.z);
-      ring.renderOrder = 7;
+      ring.position.set(v.x + ox, y + 0.0006, v.z + oz);
+      ring.renderOrder = 1;
       const halo = new THREE.Mesh(this.harborHaloGeo, haloMat);
       halo.rotation.x = Math.PI / 2;
-      halo.position.set(v.x, TILE_HEIGHT + 0.01, v.z);
-      halo.renderOrder = 7;
+      halo.position.set(v.x + ox, y + 0.001, v.z + oz);
+      halo.renderOrder = 1;
 
       this.group.add(disc, ring, halo);
     }
@@ -570,12 +573,12 @@ export class BoardView {
   }
 }
 
-function unlitMat(color, opacity = 1) {
+function unlitMat(color, opacity = 1, depthTest = false) {
   return new THREE.MeshBasicMaterial({
     color,
     transparent: opacity < 1,
     opacity,
-    depthTest: false,
+    depthTest,
     depthWrite: false,
     toneMapped: false,
   });
@@ -606,7 +609,10 @@ function houseMesh(v, color) {
   g.add(base, roof);
   g.position.set(v.x, 0, v.z);
   g.traverse((o) => {
-    if (o.isMesh) o.castShadow = true;
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.renderOrder = 3;
+    }
   });
   return g;
 }
@@ -626,7 +632,10 @@ function cityMesh(v, color) {
   g.add(keep, tower, roof);
   g.position.set(v.x, 0, v.z);
   g.traverse((o) => {
-    if (o.isMesh) o.castShadow = true;
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.renderOrder = 3;
+    }
   });
   return g;
 }
