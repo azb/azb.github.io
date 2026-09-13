@@ -1657,6 +1657,7 @@ function handAimFromObject(source) {
 function isLikelyVisionOS() {
   if (sawTransientPointer) return true;
   const ua = navigator.userAgent || '';
+  if (/visionOS|Apple Vision/i.test(ua)) return true;
   const safari = /Safari/.test(ua) && !/Chrome|Chromium|Android|Edg|Firefox|OPR/.test(ua);
   return !!(navigator.xr && safari && /Macintosh|Apple Vision|iPad|iPhone/.test(ua));
 }
@@ -1665,8 +1666,27 @@ function hasPersistentPointer() {
   return xrInputSources().some((src) => src.targetRayMode === 'tracked-pointer');
 }
 
+function isTrackedController(src) {
+  if (!src || src.targetRayMode !== 'tracked-pointer') return false;
+  const profiles = src.profiles || [];
+  if (profiles.some((p) => /oculus|meta|quest/i.test(p))) return true;
+  const pad = src.gamepad;
+  if (pad && (pad.mapping === 'xr-standard' || pad.axes?.length || pad.buttons?.length)) return true;
+  return false;
+}
+
+function hasTrackedController() {
+  return xrInputSources().some(isTrackedController);
+}
+
+// Face mode always looks. Look+pinch (Vision Pro / no laser) also hovers from the head ray.
+// Quest Hand with a tracked Meta/Oculus controller stays laser-only.
 function useHeadHover() {
-  return renderer.xr.isPresenting && pointerMode === 'gaze';
+  if (!renderer.xr.isPresenting) return false;
+  if (pointerMode === 'gaze') return true;
+  if (hasTrackedController()) return false;
+  if (hasPersistentPointer() && !isLikelyVisionOS()) return false;
+  return true;
 }
 
 function xrEventFrame(event) {
@@ -2700,6 +2720,7 @@ window.__catan = {
   setLaserLength,
   useHeadHover,
   hasPersistentPointer,
+  hasTrackedController,
   afterAction,
   refresh,
   presentModals,
