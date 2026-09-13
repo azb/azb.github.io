@@ -37,6 +37,7 @@ import {
 } from './ui.js';
 import { sfx } from './audio.js';
 import { QUALITY, applyShadowMap, shadowType } from './gfx/quality.js';
+import { MultiplayerSession, firebaseErrorMessage } from './net/session.js';
 
 let antialiasOn = QUALITY.antialias;
 try {
@@ -194,7 +195,38 @@ let intent = null;
 let busy = false;
 let modalOpen = false;
 let playerCount = 3;
+let playMode = 'solo';
 let solo = true;
+const net = new MultiplayerSession();
+net.on({
+  playerName: () => {
+    const colors = ['Red', 'Blue', 'Orange', 'White'];
+    const i = net.roster.findIndex((p) => p.uid === net.uid);
+    if (i >= 0) return colors[i];
+    return net.isHost ? 'Red' : 'Player';
+  },
+  presenting: () => renderer.xr.isPresenting,
+  getGame: () => game,
+  onRoster: () => paintMpLobby(),
+  onRoom: (room) => {
+    if (room?.seats && room.seats[net.uid] != null) {
+      net.seat = room.seats[net.uid];
+      if (game) game.viewSeat = net.seat;
+    }
+    paintMpLobby();
+  },
+  onState: (snap) => applyRemoteSnap(snap),
+  onHostApplied: () => {
+    if (game && net.isHost) {
+      net.broadcastState(game);
+      afterAction();
+    }
+  },
+  onLink: () => {
+    if (net.isHost && game) net.broadcastState(game);
+  },
+  onNeedLink: () => showToast('Still linking to the host…'),
+});
 let passthroughOn = false;
 let handlesOn = true;
 let trayScreen = 'actions';
@@ -290,8 +322,16 @@ function syncStartControls() {
   }
   const modes = document.getElementById('play-mode');
   if (modes) {
-    for (const x of modes.children) x.classList.toggle('active', (x.dataset.mode === 'solo') === solo);
+    for (const x of modes.children) x.classList.toggle('active', x.dataset.mode === playMode);
   }
+  const mp = document.getElementById('mp-panel');
+  const start = document.getElementById('start-btn');
+  mp?.classList.toggle('hidden', playMode !== 'mp');
+  if (start) {
+    start.classList.toggle('hidden', playMode === 'mp');
+    start.textContent = 'Begin the voyage';
+  }
+  paintMpLobby();
 }
 
 document.getElementById('player-count').addEventListener('click', (e) => {
@@ -305,14 +345,26 @@ document.getElementById('player-count').addEventListener('click', (e) => {
 document.getElementById('play-mode').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-mode]');
   if (!b) return;
-  solo = b.dataset.mode === 'solo';
+  playMode = b.dataset.mode;
+  solo = playMode === 'solo';
   syncStartControls();
   if (!game) syncTrayButtons();
+});
+
+document.getElementById('mp-create')?.addEventListener('click', () => hostMpRoom());
+document.getElementById('mp-join')?.addEventListener('click', () => joinMpRoom());
+document.getElementById('mp-begin')?.addEventListener('click', () => beginMpTable());
+document.getElementById('mp-leave')?.addEventListener('click', () => leaveMpRoom());
+document.getElementById('mp-join-code')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') joinMpRoom();
 });
 
 document.getElementById('start-btn').addEventListener('click', () => {
   sfx.unlock();
   startGame();
+});
+window.addEventListener('beforeunload', () => {
+  if (net.active) net.leave();
 });
 
 document.getElementById('new-game-btn').addEventListener('click', () => {
@@ -376,29 +428,33 @@ function runHudAction(act, extra) {
   }
   if (act === 'dev') {
     const pid = viewPlayer(game).id;
-    if (!game.buyDev(pid)) {
+    const result = submitNetAction({ k: 'dev' }, () => game.buyDev(pid));
+    if (result === false) {
       showBuildFail(game.whyNotDev(pid), { userData: { kind: 'tray', action: 'dev' } });
       return;
     }
     sfx.click();
-    afterAction();
+    if (result !== 'sent') afterAction();
     return;
   }
   sfx.click();
   if (act === 'roll') {
-    const d = game.roll();
-    if (d) {
-      dice.placeFor(game.current, game.playerCount);
-      dice.rollTo(d);
-      sfx.dice();
-      playProduction();
-    }
-    afterAction();
+    const result = submitNetAction({ k: 'roll' }, () => {
+      const d = game.roll();
+      if (d) {
+        dice.placeFor(game.current, game.playerCount);
+        dice.rollTo(d);
+        sfx.dice();
+        playProduction();
+      }
+      return !!d;
+    });
+    if (result !== 'sent') afterAction();
     return;
   }
   if (act === 'end') {
-    game.endTurn();
-    afterAction();
+    const result = submitNetAction({ k: 'end' }, () => game.endTurn());
+    if (result !== 'sent') afterAction();
     return;
   }
   if (act === 'trade') {
@@ -406,8 +462,8 @@ function runHudAction(act, extra) {
     return;
   }
   if (act === 'playDev') {
-    game.playDev(extra);
-    afterAction();
+    const result = submitNetAction({ k: 'playDev', id: extra }, () => game.playDev(extra));
+    if (result !== 'sent') afterAction();
     return;
   }
   intent = act;
@@ -453,17 +509,140 @@ renderer.setAnimationLoop(() => {
   hoverPickables();
   syncSpotOverlay();
   world.syncBoardLight(stage.scale.x);
+  if (net.active) net.publishPresence();
   renderer.render(scene, camera);
 });
 
 applyWorldUiVisibility();
+syncStartControls();
 updateVRButton();
+
+function paintMpLobby() {
+  const lobby = document.getElementById('mp-lobby');
+  const status = document.getElementById('mp-status');
+  const codeEl = document.getElementById('mp-code');
+  const rosterEl = document.getElementById('mp-roster');
+  const begin = document.getElementById('mp-begin');
+  if (!lobby) return;
+  const inRoom = net.active && playMode === 'mp';
+  lobby.classList.toggle('hidden', !inRoom);
+  if (codeEl) codeEl.textContent = net.roomId || '————';
+  if (rosterEl) {
+    const colors = ['Red', 'Blue', 'Orange', 'White'];
+    rosterEl.innerHTML = net.roster.map((p, i) => {
+      const color = colors[i] || `Seat ${i + 1}`;
+      return `<li>${color}${p.host ? ' · host' : ''}${p.uid === net.uid ? ' · you' : ''}</li>`;
+    }).join('');
+  }
+  if (status) {
+    if (!net.active) status.textContent = 'Host a table or join with a code. Firebase only joins; the game syncs over WebRTC.';
+    else if (net.room?.status === 'playing') status.textContent = net.isHost ? 'Table started. Waiting for peers…' : 'Joined. Waiting for the host to sync the island…';
+    else status.textContent = net.isHost
+      ? `Share code ${net.roomId}. Start when 2–4 people are here.`
+      : `In ${net.roomId}. Waiting for the host to start.`;
+  }
+  if (begin) {
+    begin.disabled = !net.isHost || net.roster.length < 2 || net.room?.status === 'playing';
+    begin.textContent = net.isHost ? 'Start table' : 'Waiting for host';
+  }
+  if (!game) syncTrayButtons();
+}
+
+async function hostMpRoom() {
+  const status = document.getElementById('mp-status');
+  try {
+    if (status) status.textContent = 'Creating room…';
+    await net.createRoom();
+    paintMpLobby();
+  } catch (e) {
+    if (status) status.textContent = firebaseErrorMessage(e);
+  }
+}
+
+async function joinMpRoom() {
+  const status = document.getElementById('mp-status');
+  const input = document.getElementById('mp-join-code');
+  try {
+    if (status) status.textContent = 'Joining…';
+    await net.joinRoom(input?.value);
+    paintMpLobby();
+  } catch (e) {
+    if (status) status.textContent = firebaseErrorMessage(e);
+  }
+}
+
+async function beginMpTable() {
+  const status = document.getElementById('mp-status');
+  try {
+    await net.startTable(Math.max(2, Math.min(4, net.roster.length)));
+    startGame();
+  } catch (e) {
+    if (status) status.textContent = firebaseErrorMessage(e);
+  }
+}
+
+async function leaveMpRoom() {
+  await net.leave();
+  paintMpLobby();
+}
+
+function applyRemoteSnap(snap) {
+  const prevRollKey = game?.lastRoll ? `${game.lastRoll.playerId}:${game.lastRoll.dice?.join(',')}` : '';
+  const prevSteal = game?.lastSteal;
+  if (!game || game.seed !== snap.seed || game.playerCount !== snap.playerCount) {
+    game = Game.fromSnapshot(snap);
+    boardView.rebuild(game.board);
+    avatars.rebuild(game.players);
+    applyWorldUiVisibility();
+  } else {
+    game.applySnapshot(snap);
+  }
+  game.viewSeat = net.seat;
+  playerCount = game.playerCount;
+  solo = false;
+  const rollKey = game.lastRoll ? `${game.lastRoll.playerId}:${game.lastRoll.dice?.join(',')}` : '';
+  refresh();
+  if (game.lastAction?.type === 'roll' && rollKey && rollKey !== prevRollKey) {
+    dice.placeFor(game.current, game.playerCount);
+    dice.rollTo(game.dice);
+    sfx.dice();
+    playProduction();
+  }
+  if (game.lastSteal && game.lastSteal !== prevSteal) announceSteal();
+  presentModals();
+}
+
+function hostBroadcast() {
+  if (net.active && net.isHost && game) net.broadcastState(game);
+}
+
+function submitNetAction(action, run) {
+  if (net.active && !net.isHost) {
+    net.sendAction(action);
+    return 'sent';
+  }
+  const ok = run();
+  if (ok) hostBroadcast();
+  return ok;
+}
 
 function startGame() {
   closeModal();
   // Keep the grabbed/snapped stage pose. Table-height snap is only for first XR
   // session start — restart / new island must not move, rotate, or rescale it.
-  game = new Game({ playerCount, solo });
+  if (net.active && !net.isHost) {
+    showToast('Only the host can start a new island.');
+    return;
+  }
+  const n = net.active ? Math.max(2, Math.min(4, net.roster.length || playerCount)) : playerCount;
+  game = new Game({ playerCount: n, solo: net.active ? false : solo });
+  if (net.active) {
+    for (const p of game.players) p.isAI = false;
+    game.viewSeat = net.seat ?? 0;
+    net.setPlayingSeed(game.seed);
+  } else {
+    game.viewSeat = null;
+  }
   busy = false;
   intent = null;
   modalOpen = false;
@@ -483,11 +662,13 @@ function startGame() {
   dice.placeFor(game.current, game.playerCount);
   applyWorldUiVisibility();
   refresh();
+  hostBroadcast();
   afterAction();
 }
 
 function showTitleScreen() {
   closeModal();
+  if (net.active) leaveMpRoom();
   game = null;
   busy = false;
   intent = null;
@@ -515,6 +696,10 @@ function gameInProgress() {
 }
 
 function requestRestart({ fromHud = false } = {}) {
+  if (net.active && !net.isHost) {
+    showToast('Only the host can start a new island.');
+    return;
+  }
   if (fromHud && !gameInProgress()) {
     startGame();
     return;
@@ -544,11 +729,27 @@ function requestRestart({ fromHud = false } = {}) {
   });
 }
 
+function localSeatId() {
+  if (game?.viewSeat != null) return game.viewSeat;
+  if (net.active && net.seat != null) return net.seat;
+  return null;
+}
+
+function localIsActor() {
+  if (!game) return false;
+  const seat = localSeatId();
+  if (net.active && seat != null) {
+    if (game.phase === PHASE.DISCARD) return game.discardQueue.some((d) => d.player === seat);
+    return game.current === seat;
+  }
+  if (game.phase === PHASE.DISCARD) return game.discardQueue.some((d) => !game.player(d.player).isAI);
+  return localIsActor();
+}
+
 function humanCanAct() {
   if (!game || busy) return false;
-  if (modalOpen && game.phase !== PHASE.STEAL) return false;
-  if (game.phase === PHASE.DISCARD) return game.discardQueue.some((d) => !game.player(d.player).isAI);
-  return game.isHuman();
+  if (modalOpen && game.phase !== PHASE.STEAL && game.phase !== PHASE.DISCARD) return false;
+  return localIsActor();
 }
 
 function currentIntent() {
@@ -571,14 +772,14 @@ function refresh() {
   if (trayScreen === 'scores' && modalOpen && !preferTrayUi()) paintScoresModal();
   applyPanelStatus();
   avatars.setCurrent(game.current);
-  avatars.setStealTargets(game.phase === PHASE.STEAL && game.isHuman() ? game.stealCandidates : null);
+  avatars.setStealTargets(game.phase === PHASE.STEAL && localIsActor() ? game.stealCandidates : null);
   avatars.setCelebrating(game.phase === PHASE.GAME_OVER ? game.winner : null);
   dice.placeFor(game.current, game.playerCount);
 }
 
 function trayButtons() {
   if (!game) return [{ label: 'Settings', action: 'settings' }];
-  const can = game.isHuman() && !busy;
+  const can = localIsActor() && !busy;
   const playable = can && game.playableCards(game.current).length > 0;
   const freeRoad = game.phase === PHASE.FREE_ROADS;
   return [
@@ -636,7 +837,7 @@ function restartConfirmButtons() {
 }
 
 function cardButtons() {
-  const can = game.isHuman() && !busy;
+  const can = localIsActor() && !busy;
   const playable = game.playableCards(game.current);
   return [
     {
@@ -730,12 +931,25 @@ function winButtons() {
 }
 
 function titleButtons() {
-  return [
-    { label: `Players: ${playerCount}`, action: 'titlePlayers' },
-    { label: solo ? 'You vs AI' : 'Hotseat', action: 'titleMode' },
-    { label: 'Begin the voyage', action: 'titleStart' },
-    { label: 'Settings', action: 'settings' },
+  const modeLabel = playMode === 'mp' ? 'Multiplayer' : playMode === 'hotseat' ? 'Hotseat' : 'You vs AI';
+  const buttons = [
+    { label: `Players: ${playerCount}`, action: 'titlePlayers', disabled: playMode === 'mp' },
+    { label: modeLabel, action: 'titleMode' },
   ];
+  if (playMode === 'mp') {
+    if (!net.active) {
+      buttons.push({ label: 'Host table', action: 'titleHost' });
+    } else {
+      buttons.push({ label: `Code ${net.roomId || '----'}`, action: 'titleCode', disabled: true });
+      if (net.isHost) buttons.push({ label: net.roster.length < 2 ? 'Need 2 players' : 'Start table', action: 'titleBegin', disabled: net.roster.length < 2 });
+      else buttons.push({ label: 'Waiting for host', action: 'titleBegin', disabled: true });
+      buttons.push({ label: 'Leave room', action: 'titleLeave' });
+    }
+  } else {
+    buttons.push({ label: 'Begin the voyage', action: 'titleStart' });
+  }
+  buttons.push({ label: 'Settings', action: 'settings' });
+  return buttons;
 }
 
 function applyWinHeadline() {
@@ -749,6 +963,8 @@ function applyWinHeadline() {
 
 function humanDiscardEntry() {
   if (!game) return null;
+  const seat = localSeatId();
+  if (seat != null && net.active) return game.discardQueue.find((d) => d.player === seat) || null;
   return game.discardQueue.find((d) => !game.player(d.player).isAI) || null;
 }
 
@@ -788,13 +1004,13 @@ function panelStatus() {
     const line = `${p.name} · discard ${n} / ${entry.must} on the panel`;
     return roll ? `${roll.diceLine}\n${line}` : line;
   }
-  if (game?.phase === PHASE.PLENTY && game.isHuman()) {
+  if (game?.phase === PHASE.PLENTY && localIsActor()) {
     const names = plentyPicks.map((r) => RESOURCE_LABEL[r]).join(', ');
     return names
       ? `${game.player().name} · Picked ${names} (${plentyPicks.length}/2)`
       : `${game.player().name} · Pick two resources on the panel`;
   }
-  if (game?.phase === PHASE.MONOPOLY && game.isHuman()) {
+  if (game?.phase === PHASE.MONOPOLY && localIsActor()) {
     return `${game.player().name} · Name a resource on the panel`;
   }
   return game ? trayStatus(game) : '';
@@ -854,7 +1070,7 @@ function syncTrayButtons() {
   if (![PHASE.MAIN, PHASE.ROLL].includes(game.phase) && trayScreen === 'cards') trayScreen = 'actions';
   if (scoresBlocked() && trayScreen === 'scores') trayScreen = 'actions';
 
-  if (game.phase === PHASE.STEAL && game.isHuman()) {
+  if (game.phase === PHASE.STEAL && localIsActor()) {
     tray.setButtons(stealButtons(), 'steal');
     return;
   }
@@ -862,11 +1078,11 @@ function syncTrayButtons() {
     tray.setButtons(discardButtons(), 'discard');
     return;
   }
-  if (game.phase === PHASE.PLENTY && game.isHuman()) {
+  if (game.phase === PHASE.PLENTY && localIsActor()) {
     tray.setButtons(plentyButtons(), 'plenty');
     return;
   }
-  if (game.phase === PHASE.MONOPOLY && game.isHuman()) {
+  if (game.phase === PHASE.MONOPOLY && localIsActor()) {
     tray.setButtons(monopolyButtons(), 'monopoly');
     return;
   }
@@ -946,7 +1162,7 @@ function runTraySettings(act) {
 function scoresBlocked() {
   if (!game) return true;
   if (game.phase === PHASE.GAME_OVER) return true;
-  if (!game.isHuman()) return false;
+  if (!localIsActor()) return false;
   return game.phase === PHASE.STEAL
     || game.phase === PHASE.DISCARD
     || game.phase === PHASE.PLENTY
@@ -1050,12 +1266,13 @@ function openTradeUi() {
       refresh();
       return;
     }
-    if (!game.bankTrade(viewPlayer(game).id, give, get)) {
+    const result = submitNetAction({ k: 'trade', give, get }, () => game.bankTrade(viewPlayer(game).id, give, get));
+    if (result === false) {
       showToast(game.whyNotBankTrade(viewPlayer(game).id, give, get) || 'Cannot make that trade.');
       refresh();
       return;
     }
-    afterAction();
+    if (result !== 'sent') afterAction();
   });
 }
 
@@ -1071,7 +1288,11 @@ function closeTradeUi() {
 
 function confirmTrade() {
   if (busy || !tradeGive || !tradeGet) return;
-  if (!game.bankTrade(viewPlayer(game).id, tradeGive, tradeGet)) {
+  const result = submitNetAction(
+    { k: 'trade', give: tradeGive, get: tradeGet },
+    () => game.bankTrade(viewPlayer(game).id, tradeGive, tradeGet),
+  );
+  if (result === false) {
     showToast(game.whyNotBankTrade(viewPlayer(game).id, tradeGive, tradeGet) || 'Cannot make that trade.');
     return;
   }
@@ -1080,7 +1301,7 @@ function confirmTrade() {
   modalOpen = false;
   closeModal();
   sfx.click();
-  afterAction();
+  if (result !== 'sent') afterAction();
 }
 
 function tapDiscard(r) {
@@ -1103,26 +1324,29 @@ function confirmDiscard() {
   if (!entry) return;
   const n = RESOURCES.reduce((s, r) => s + (discardGive[r] || 0), 0);
   if (n !== entry.must) return;
-  if (!game.discard(entry.player, { ...discardGive })) return;
+  const give = { ...discardGive };
+  const result = submitNetAction({ k: 'discard', give }, () => game.discard(entry.player, give));
+  if (!result) return;
   discardGive = emptyHand();
   discardKey = '';
   modalOpen = false;
   closeModal();
   sfx.click();
-  afterAction();
+  if (result !== 'sent') afterAction();
 }
 
 function tapPlenty(r) {
-  if (busy || !game || game.phase !== PHASE.PLENTY || !game.isHuman()) return;
+  if (busy || !game || game.phase !== PHASE.PLENTY || !localIsActor()) return;
   plentyPicks.push(r);
   if (plentyPicks.length >= 2) {
     const [a, b] = plentyPicks;
     plentyPicks = [];
-    if (!game.yearOfPlenty(a, b)) return;
+    const result = submitNetAction({ k: 'plenty', a, b }, () => game.yearOfPlenty(a, b));
+    if (!result) return;
     modalOpen = false;
     closeModal();
     sfx.click();
-    afterAction();
+    if (result !== 'sent') afterAction();
     return;
   }
   syncTrayButtons();
@@ -1131,12 +1355,13 @@ function tapPlenty(r) {
 }
 
 function confirmMonopoly(r) {
-  if (busy || !game || game.phase !== PHASE.MONOPOLY || !game.isHuman()) return;
-  if (!game.monopoly(r)) return;
+  if (busy || !game || game.phase !== PHASE.MONOPOLY || !localIsActor()) return;
+  const result = submitNetAction({ k: 'mono', r }, () => game.monopoly(r));
+  if (!result) return;
   modalOpen = false;
   closeModal();
   sfx.click();
-  afterAction();
+  if (result !== 'sent') afterAction();
 }
 
 function handleTrayAction(act) {
@@ -1151,6 +1376,20 @@ function handleTrayAction(act) {
     startGame();
     return true;
   }
+  if (act === 'titleHost') {
+    sfx.unlock();
+    hostMpRoom();
+    return true;
+  }
+  if (act === 'titleBegin') {
+    sfx.unlock();
+    beginMpTable();
+    return true;
+  }
+  if (act === 'titleLeave') {
+    leaveMpRoom();
+    return true;
+  }
   if (act === 'titlePlayers') {
     playerCount = playerCount >= 4 ? 2 : playerCount + 1;
     syncStartControls();
@@ -1159,7 +1398,8 @@ function handleTrayAction(act) {
     return true;
   }
   if (act === 'titleMode') {
-    solo = !solo;
+    playMode = playMode === 'solo' ? 'hotseat' : playMode === 'hotseat' ? 'mp' : 'solo';
+    solo = playMode === 'solo';
     syncStartControls();
     syncTrayButtons();
     sfx.click();
@@ -1263,7 +1503,7 @@ function handleTrayAction(act) {
 }
 
 function updateHighlights() {
-  if (!game || !game.isHuman()) {
+  if (!game || !localIsActor()) {
     boardView.clearHighlights();
     return;
   }
@@ -1449,11 +1689,11 @@ function syncSpotOverlay() {
 }
 
 function canRollNow() {
-  return !!(game && !busy && game.isHuman() && game.phase === PHASE.ROLL);
+  return !!(game && !busy && localIsActor() && game.phase === PHASE.ROLL);
 }
 
 function rollFailReason() {
-  if (!game || busy || !game.isHuman()) return 'Not your roll';
+  if (!game || busy || !localIsActor()) return 'Not your roll';
   if (game.phase === PHASE.SETUP_SETTLEMENT || game.phase === PHASE.SETUP_ROAD) return 'Not your roll';
   return 'Already rolled';
 }
@@ -1484,13 +1724,16 @@ function announceSteal() {
 }
 
 function trySteal(fromId) {
-  if (!game || busy || game.phase !== PHASE.STEAL || !game.isHuman()) return false;
-  if (!game.steal(Number(fromId))) return false;
+  if (!game || busy || game.phase !== PHASE.STEAL || !localIsActor()) return false;
+  const result = submitNetAction({ k: 'steal', from: Number(fromId) }, () => game.steal(Number(fromId)));
+  if (!result) return false;
   closeModal();
   modalOpen = false;
   sfx.click();
-  announceSteal();
-  afterAction();
+  if (result !== 'sent') {
+    announceSteal();
+    afterAction();
+  }
   return true;
 }
 
@@ -1528,34 +1771,37 @@ function applyHit(obj) {
   if (!humanCanAct()) return;
   if (data.kind === 'vertex') {
     const mode = currentIntent();
-    const ok = mode === 'city'
-      ? game.placeCity(data.id)
-      : mode === 'settlement'
-        ? game.placeSettlement(data.id)
-        : game.placeCity(data.id) || game.placeSettlement(data.id);
-    if (!ok) {
+    const k = mode === 'city' ? 'city' : 'settlement';
+    const result = submitNetAction({ k, id: data.id }, () => {
+      if (mode === 'city') return game.placeCity(data.id);
+      if (mode === 'settlement') return game.placeSettlement(data.id);
+      return game.placeCity(data.id) || game.placeSettlement(data.id);
+    });
+    if (!result) {
       showBuildFail(vertexBuildFail(data.id, mode), obj);
       return;
     }
     boardView.flashPick(obj);
     sfx.place();
     intent = null;
-    afterAction();
+    if (result !== 'sent') afterAction();
   } else if (data.kind === 'edge') {
-    if (!game.placeRoad(data.id)) {
+    const result = submitNetAction({ k: 'road', id: data.id }, () => game.placeRoad(data.id));
+    if (!result) {
       showBuildFail(game.whyNotRoad(data.id), obj);
       return;
     }
     boardView.flashPick(obj);
     sfx.place();
     intent = null;
-    afterAction();
+    if (result !== 'sent') afterAction();
   } else if (data.kind === 'hex') {
-    if (!game.moveRobber(data.id)) return;
+    const result = submitNetAction({ k: 'robber', id: data.id }, () => game.moveRobber(data.id));
+    if (!result) return;
     boardView.flashPick(obj);
     sfx.place();
-    if (game.phase !== PHASE.STEAL) showToast('No neighbor to steal from.', TOAST_LONG_MS);
-    afterAction();
+    if (result !== 'sent' && game.phase !== PHASE.STEAL) showToast('No neighbor to steal from.', TOAST_LONG_MS);
+    if (result !== 'sent') afterAction();
   }
 }
 
@@ -2018,7 +2264,7 @@ function setupXR() {
     });
     controller.addEventListener('squeezestart', () => {
       if (tryGrab(controller)) return;
-      if (game?.phase === PHASE.MAIN && game.isHuman() && !busy) runHudAction('end');
+      if (game?.phase === PHASE.MAIN && localIsActor() && !busy) runHudAction('end');
     });
     controller.addEventListener('squeezeend', () => {
       releaseGrab(controller);
@@ -2385,35 +2631,35 @@ function reopenDesktopModals() {
       modalOpen = false;
       discardGive = emptyHand();
       discardKey = '';
-      game.discard(id, give);
-      afterAction();
+      const result = submitNetAction({ k: 'discard', give }, () => game.discard(id, give));
+      if (result && result !== 'sent') afterAction();
     });
     if (!opened) modalOpen = false;
     return;
   }
-  if (game.phase === PHASE.STEAL && game.isHuman()) {
+  if (game.phase === PHASE.STEAL && localIsActor()) {
     modalOpen = true;
     showSteal(game, (id) => {
       trySteal(id);
     });
     return;
   }
-  if (game.phase === PHASE.PLENTY && game.isHuman()) {
+  if (game.phase === PHASE.PLENTY && localIsActor()) {
     modalOpen = true;
     showPlenty((a, b) => {
       modalOpen = false;
       plentyPicks = [];
-      game.yearOfPlenty(a, b);
-      afterAction();
+      const result = submitNetAction({ k: 'plenty', a, b }, () => game.yearOfPlenty(a, b));
+      if (result && result !== 'sent') afterAction();
     });
     return;
   }
-  if (game.phase === PHASE.MONOPOLY && game.isHuman()) {
+  if (game.phase === PHASE.MONOPOLY && localIsActor()) {
     modalOpen = true;
     showMonopoly((r) => {
       modalOpen = false;
-      game.monopoly(r);
-      afterAction();
+      const result = submitNetAction({ k: 'mono', r }, () => game.monopoly(r));
+      if (result && result !== 'sent') afterAction();
     });
   }
 }
@@ -2518,6 +2764,7 @@ async function updateVRButton() {
 }
 
 function needsAI() {
+  if (net.active) return false;
   if (!game || game.phase === PHASE.GAME_OVER) return false;
   if (game.phase === PHASE.DISCARD) return game.discardQueue.some((d) => game.player(d.player).isAI);
   return game.player().isAI;
@@ -2610,8 +2857,8 @@ function presentModals() {
         modalOpen = false;
         discardGive = emptyHand();
         discardKey = '';
-        game.discard(id, give);
-        afterAction();
+        const result = submitNetAction({ k: 'discard', give }, () => game.discard(id, give));
+        if (result && result !== 'sent') afterAction();
       });
       if (!opened) modalOpen = false;
     }
@@ -2619,7 +2866,7 @@ function presentModals() {
     applyPanelStatus();
     return;
   }
-  if (game.phase === PHASE.STEAL && game.isHuman()) {
+  if (game.phase === PHASE.STEAL && localIsActor()) {
     modalOpen = true;
     if (!trayOnly) {
       showSteal(game, (id) => {
@@ -2628,28 +2875,28 @@ function presentModals() {
     }
     return;
   }
-  if (game.phase === PHASE.PLENTY && game.isHuman()) {
+  if (game.phase === PHASE.PLENTY && localIsActor()) {
     modalOpen = true;
     plentyPicks = [];
     if (!trayOnly) {
       showPlenty((a, b) => {
         modalOpen = false;
         plentyPicks = [];
-        game.yearOfPlenty(a, b);
-        afterAction();
+        const result = submitNetAction({ k: 'plenty', a, b }, () => game.yearOfPlenty(a, b));
+        if (result && result !== 'sent') afterAction();
       });
     }
     syncTrayButtons();
     applyPanelStatus();
     return;
   }
-  if (game.phase === PHASE.MONOPOLY && game.isHuman()) {
+  if (game.phase === PHASE.MONOPOLY && localIsActor()) {
     modalOpen = true;
     if (!trayOnly) {
       showMonopoly((r) => {
         modalOpen = false;
-        game.monopoly(r);
-        afterAction();
+        const result = submitNetAction({ k: 'mono', r }, () => game.monopoly(r));
+        if (result && result !== 'sent') afterAction();
       });
     }
     syncTrayButtons();

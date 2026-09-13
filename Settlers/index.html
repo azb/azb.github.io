@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Settlers of Catan — WebXR</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏝️</text></svg>" />
-    <script type="module" crossorigin src="./assets/index-BYerZ9DW.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BIK_XJzT.css">
+    <script type="module" crossorigin src="./assets/index-pujJw48o.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CU824hBP.css">
   </head>
   <body>
     <div id="app">
@@ -36,8 +36,24 @@
             <div class="segmented" id="play-mode">
               <button type="button" data-mode="solo" class="active">You vs AI</button>
               <button type="button" data-mode="hotseat">Hotseat</button>
+              <button type="button" data-mode="mp">Multiplayer</button>
             </div>
           </label>
+
+          <div id="mp-panel" class="mp-panel hidden">
+            <p id="mp-status" class="mp-status">Host a table or join with a code. Firebase joins the room; the game syncs peer-to-peer.</p>
+            <div class="mp-row">
+              <button id="mp-create" type="button">Host table</button>
+              <input id="mp-join-code" type="text" maxlength="6" placeholder="Code" autocomplete="off" spellcheck="false" />
+              <button id="mp-join" type="button">Join</button>
+            </div>
+            <div id="mp-lobby" class="mp-lobby hidden">
+              <p class="mp-code-line">Room <strong id="mp-code"></strong></p>
+              <ul id="mp-roster" class="mp-roster"></ul>
+              <button id="mp-begin" type="button" class="primary" disabled>Start table</button>
+              <button id="mp-leave" type="button" class="ghost">Leave room</button>
+            </div>
+          </div>
 
           <button id="start-btn" type="button" class="primary">Begin the voyage</button>
           <button id="title-settings-btn" type="button" class="ghost">Settings</button>

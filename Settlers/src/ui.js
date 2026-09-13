@@ -285,6 +285,7 @@ export function scoreBreakdownLine(row) {
 }
 
 export function viewPlayer(game) {
+  if (game.viewSeat != null && game.players[game.viewSeat]) return game.player(game.viewSeat);
   if (game.players.some((p) => !p.isAI) === false) return game.player();
   const humans = game.players.filter((p) => !p.isAI);
   if (humans.length === 1) return humans[0];
@@ -404,7 +405,10 @@ export function resourcePicker(ids, extra = '') {
 }
 
 export function showDiscard(game, onDone) {
-  const humans = game.discardQueue.filter((d) => !game.player(d.player).isAI);
+  const humans = game.discardQueue.filter((d) => {
+    if (game.viewSeat != null) return d.player === game.viewSeat;
+    return !game.player(d.player).isAI;
+  });
   if (!humans.length) return false;
   const entry = humans[0];
   const p = game.player(entry.player);

@@ -92,6 +92,64 @@ body,
   width: 100%;
 }
 
+.mp-panel {
+  text-align: left;
+  margin: 0 0 14px;
+}
+
+.mp-status {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mp-row {
+  display: grid;
+  grid-template-columns: 1fr 90px 72px;
+  gap: 6px;
+}
+
+.mp-row input {
+  border: 2px solid var(--wood-dark);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.mp-lobby {
+  margin-top: 12px;
+}
+
+.mp-code-line {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.mp-code-line strong {
+  letter-spacing: 0.16em;
+  font-size: 22px;
+}
+
+.mp-roster {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mp-roster li {
+  padding: 4px 0;
+}
+
+.mp-panel .primary,
+.mp-panel .ghost {
+  width: 100%;
+}
+
 .settings-stack {
   display: flex;
   flex-direction: column;

@@ -763,4 +763,118 @@ export class Game {
     opts.sort((a, b) => vertexScore(this.board, b) - vertexScore(this.board, a));
     return opts[0];
   }
+
+  toSnapshot() {
+    const buildings = [];
+    for (const v of this.board.vertices.values()) {
+      if (v.building) buildings.push({ id: v.id, ...v.building });
+    }
+    const roads = [];
+    for (const e of this.board.edges.values()) {
+      if (e.road != null) roads.push({ id: e.id, player: e.road });
+    }
+    return {
+      seed: this.seed,
+      playerCount: this.playerCount,
+      players: this.players.map((p) => ({
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        isAI: !!p.isAI,
+        resources: { ...p.resources },
+        roads: [...p.roads],
+        settlements: [...p.settlements],
+        cities: [...p.cities],
+        devCards: p.devCards.map((c) => ({ ...c })),
+        knightsPlayed: p.knightsPlayed,
+        lastSettlement: p.lastSettlement,
+      })),
+      bank: { ...this.bank },
+      devDeck: [...this.devDeck],
+      current: this.current,
+      setupIndex: this.setupIndex,
+      phase: this.phase,
+      dice: [...this.dice],
+      log: [...this.log],
+      playedDevThisTurn: this.playedDevThisTurn,
+      freeRoads: this.freeRoads,
+      discardQueue: this.discardQueue.map((d) => ({ ...d })),
+      stealCandidates: [...this.stealCandidates],
+      longestRoad: { ...this.longestRoad },
+      largestArmy: { ...this.largestArmy },
+      winner: this.winner,
+      lastAction: this.lastAction,
+      lastRoll: this.lastRoll,
+      lastSteal: this.lastSteal,
+      lastTrade: this.lastTrade,
+      afterRobber: this.afterRobber,
+      robberHex: this.board.robberHex,
+      buildings,
+      roads,
+    };
+  }
+
+  applySnapshot(snap) {
+    if (!snap) return this;
+    if (this.seed !== snap.seed || this.playerCount !== snap.playerCount) {
+      const next = Game.fromSnapshot(snap);
+      this.seed = next.seed;
+      this.rand = next.rand;
+      this.board = next.board;
+      this.playerCount = next.playerCount;
+    }
+    hydrateGame(this, snap);
+    return this;
+  }
+
+  static fromSnapshot(snap) {
+    const g = new Game({
+      playerCount: snap.playerCount,
+      solo: false,
+      seed: snap.seed,
+    });
+    hydrateGame(g, snap);
+    return g;
+  }
+}
+
+function hydrateGame(g, snap) {
+  g.players = snap.players.map((p) => ({
+    ...p,
+    resources: { ...p.resources },
+    roads: [...p.roads],
+    settlements: [...p.settlements],
+    cities: [...p.cities],
+    devCards: (p.devCards || []).map((c) => ({ ...c })),
+  }));
+  g.bank = { ...snap.bank };
+  g.devDeck = [...(snap.devDeck || [])];
+  g.current = snap.current;
+  g.setupIndex = snap.setupIndex;
+  g.phase = snap.phase;
+  g.dice = [...(snap.dice || [0, 0])];
+  g.log = [...(snap.log || [])];
+  g.playedDevThisTurn = !!snap.playedDevThisTurn;
+  g.freeRoads = snap.freeRoads || 0;
+  g.discardQueue = (snap.discardQueue || []).map((d) => ({ ...d }));
+  g.stealCandidates = [...(snap.stealCandidates || [])];
+  g.longestRoad = { ...snap.longestRoad };
+  g.largestArmy = { ...snap.largestArmy };
+  g.winner = snap.winner ?? null;
+  g.lastAction = snap.lastAction ?? null;
+  g.lastRoll = snap.lastRoll ?? null;
+  g.lastSteal = snap.lastSteal ?? null;
+  g.lastTrade = snap.lastTrade ?? null;
+  g.afterRobber = snap.afterRobber || PHASE.MAIN;
+  for (const v of g.board.vertices.values()) v.building = null;
+  for (const e of g.board.edges.values()) e.road = null;
+  for (const b of snap.buildings || []) {
+    const v = g.board.vertices.get(b.id);
+    if (v) v.building = { player: b.player, type: b.type };
+  }
+  for (const r of snap.roads || []) {
+    const e = g.board.edges.get(r.id);
+    if (e) e.road = r.player;
+  }
+  if (snap.robberHex) g.board.robberHex = snap.robberHex;
 }
