@@ -38,8 +38,34 @@ import {
 import { sfx } from './audio.js';
 import { QUALITY, applyShadowMap, shadowType } from './gfx/quality.js';
 
+let antialiasOn = QUALITY.antialias;
+try {
+  const storedAa = localStorage.getItem('catan-antialias');
+  if (storedAa === '1') antialiasOn = true;
+  else if (storedAa === '0') antialiasOn = false;
+} catch { /* ignore */ }
+QUALITY.antialias = antialiasOn;
+
+const xrGlAttrs = { antialias: antialiasOn };
+function patchGlAntialiasAttr() {
+  const wrap = (proto) => {
+    if (!proto?.getContextAttributes || proto.getContextAttributes.__catanAa) return;
+    const orig = proto.getContextAttributes;
+    proto.getContextAttributes = function getContextAttributesAa() {
+      const attrs = orig.call(this);
+      if (!attrs) return attrs;
+      Object.assign(xrGlAttrs, attrs, { antialias: antialiasOn });
+      return xrGlAttrs;
+    };
+    proto.getContextAttributes.__catanAa = true;
+  };
+  wrap(WebGLRenderingContext.prototype);
+  if (typeof WebGL2RenderingContext !== 'undefined') wrap(WebGL2RenderingContext.prototype);
+}
+patchGlAntialiasAttr();
+
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: QUALITY.antialias, alpha: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: antialiasOn, alpha: true });
 renderer.setPixelRatio(QUALITY.pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x1b140f, 1);
@@ -187,6 +213,7 @@ const TRAY_SETTINGS = new Set([
   'restartBack',
   'pointer',
   'pointerLines',
+  'antialias',
   'pointerTilt',
   'pointerTiltUp',
   'pointerTiltDown',
@@ -584,6 +611,7 @@ function settingsButtons() {
     { label: pointerMode === 'gaze' ? 'Pointer: Face' : 'Pointer: Hand', action: 'pointer', on: pointerMode === 'gaze' },
     { label: 'Pointer tilt', detail: formatPointerTilt(), action: 'pointerTilt' },
     { label: pointerLinesOn ? 'Pointer lines ON' : 'Pointer lines OFF', action: 'pointerLines', on: pointerLinesOn },
+    { label: antialiasOn ? 'Antialias ON' : 'Antialias OFF', action: 'antialias', on: antialiasOn },
     { label: passthroughOn ? 'Passthrough ON' : 'Passthrough OFF', action: 'passthrough', on: passthroughOn },
     { label: handlesOn ? 'Handles ON' : 'Handles OFF', action: 'handles', on: handlesOn },
     ...(game ? [{ label: 'Restart game', action: 'restartAsk' }] : []),
@@ -892,6 +920,7 @@ function runTraySettings(act) {
   else if (act === 'passthrough') setPassthrough(!passthroughOn);
   else if (act === 'pointer') setPointerMode(pointerMode === 'gaze' ? 'controller' : 'gaze');
   else if (act === 'pointerLines') setPointerLines(!pointerLinesOn);
+  else if (act === 'antialias') setAntialias(!antialiasOn);
   else if (act === 'handles') {
     handlesOn = !handlesOn;
     applyHandleVisibility();
@@ -934,6 +963,7 @@ function settingsModalOpts() {
     gaze: pointerMode === 'gaze',
     tiltLabel: formatPointerTilt(),
     lines: pointerLinesOn,
+    antialias: antialiasOn,
     passthrough: passthroughOn,
     handles: handlesOn,
     canRestart: !!game,
@@ -2131,6 +2161,25 @@ function setPointerLines(on) {
   applyPointerVisuals();
 }
 
+function setAntialias(on) {
+  antialiasOn = !!on;
+  QUALITY.antialias = antialiasOn;
+  xrGlAttrs.antialias = antialiasOn;
+  try {
+    localStorage.setItem('catan-antialias', antialiasOn ? '1' : '0');
+  } catch { /* ignore */ }
+  applyXrAntialias();
+}
+
+function applyXrAntialias() {
+  try {
+    const current = renderer.getRenderTarget();
+    if (current && 'samples' in current) current.samples = antialiasOn ? 4 : 0;
+  } catch {
+    /* Next XR session start reads patched context attributes. */
+  }
+}
+
 function setPassthrough(on) {
   passthroughOn = !!on;
   world.room.visible = !passthroughOn;
@@ -2142,6 +2191,7 @@ function setPassthrough(on) {
 
 function applyPresentingQuality(on) {
   renderer.xr.setFramebufferScaleFactor(QUALITY.framebufferScale);
+  xrGlAttrs.antialias = antialiasOn;
   applyShadowMap(renderer, world.sun, {
     enabled: on ? QUALITY.xrShadows : QUALITY.shadows,
     size: on ? QUALITY.xrShadowSize : QUALITY.shadowSize,

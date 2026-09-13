@@ -595,6 +595,7 @@ export function showSettings(opts, onAction) {
       <button type="button" class="${on(opts.gaze)}" data-act="pointer">${opts.gaze ? 'Pointer: Face' : 'Pointer: Hand'}</button>
       <button type="button" data-act="pointerTilt">Pointer tilt · ${opts.tiltLabel}</button>
       <button type="button" class="${on(opts.lines)}" data-act="pointerLines">${opts.lines ? 'Pointer lines ON' : 'Pointer lines OFF'}</button>
+      <button type="button" class="${on(opts.antialias)}" data-act="antialias">${opts.antialias ? 'Antialias ON' : 'Antialias OFF'}</button>
       <button type="button" class="${on(opts.passthrough)}" data-act="passthrough">${opts.passthrough ? 'Passthrough ON' : 'Passthrough OFF'}</button>
       <button type="button" class="${on(opts.handles)}" data-act="handles">${opts.handles ? 'Handles ON' : 'Handles OFF'}</button>
       ${opts.canRestart ? '<button type="button" data-act="restartAsk">Restart game</button>' : ''}
