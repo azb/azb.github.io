@@ -738,12 +738,13 @@ function localSeatId() {
 function localIsActor() {
   if (!game) return false;
   const seat = localSeatId();
-  if (net.active && seat != null) {
+  if (net.active) {
+    if (seat == null) return false;
     if (game.phase === PHASE.DISCARD) return game.discardQueue.some((d) => d.player === seat);
     return game.current === seat;
   }
   if (game.phase === PHASE.DISCARD) return game.discardQueue.some((d) => !game.player(d.player).isAI);
-  return localIsActor();
+  return game.isHuman();
 }
 
 function humanCanAct() {
