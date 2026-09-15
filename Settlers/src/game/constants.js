@@ -116,7 +116,7 @@ export function formatMissing(hand, cost) {
   return `Not enough ${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
 }
 
-export const PIECE_LIMIT = { settlement: 5, city: 4, road: 15 };
+export const PIECE_LIMIT = { settlement: 5 };
 export const BANK_START = 19;
 
 export const DEV_TYPES = {

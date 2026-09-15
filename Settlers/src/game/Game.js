@@ -206,7 +206,6 @@ export class Game {
   validRoads(playerId, { setup = false, free = false } = {}) {
     const p = this.player(playerId);
     const out = [];
-    if (!free && !setup && p.roads.length >= PIECE_LIMIT.road) return out;
     for (const e of this.board.edges.values()) {
       if (e.road != null) continue;
       if (!e.touchesLand) continue;
@@ -231,7 +230,6 @@ export class Game {
 
   validCities(playerId) {
     const p = this.player(playerId);
-    if (p.cities.length >= PIECE_LIMIT.city) return [];
     return p.settlements.filter((id) => this.board.vertices.get(id).building?.type === 'settlement');
   }
 
@@ -288,7 +286,6 @@ export class Game {
         const miss = this.missingCostLabel(playerId, 'road');
         if (miss) return miss;
       }
-      if (!free && !setup && p.roads.length >= PIECE_LIMIT.road) return 'No roads left';
       return "Can't build a road now";
     }
     const e = this.board.edges.get(edgeId);
@@ -310,22 +307,18 @@ export class Game {
     } else if (!this.roadConnects(va, playerId) && !this.roadConnects(vb, playerId)) {
       return 'Need a road connection';
     }
-    if (!free && !setup && p.roads.length >= PIECE_LIMIT.road) return 'No roads left';
     return "Can't build here";
   }
 
   whyNotCity(vertexId, playerId = this.current) {
-    const p = this.player(playerId);
     if (vertexId == null) {
       if (this.phase !== PHASE.MAIN) return "Can't build a city now";
       const miss = this.missingCostLabel(playerId, 'city');
       if (miss) return miss;
-      if (p.cities.length >= PIECE_LIMIT.city) return 'No cities left';
       if (!this.validCities(playerId).length) return 'Need a settlement here';
       return "Can't build a city now";
     }
     if (this.phase !== PHASE.MAIN) return "Can't build a city now";
-    if (p.cities.length >= PIECE_LIMIT.city) return 'No cities left';
     const v = this.board.vertices.get(vertexId);
     if (v?.building?.type === 'city') return 'Already a city';
     if (!v?.building) return 'Need a settlement here';
@@ -633,7 +626,7 @@ export class Game {
       this.afterRobber = this.phase === PHASE.ROLL ? PHASE.ROLL : PHASE.MAIN;
       this.phase = PHASE.ROBBER;
     } else if (card.type === DEV_TYPES.ROAD) {
-      this.freeRoads = Math.min(2, PIECE_LIMIT.road - p.roads.length);
+      this.freeRoads = 2;
       this.phase = this.freeRoads ? PHASE.FREE_ROADS : PHASE.MAIN;
       this.note(`${p.name} plays Road Building.`);
     } else if (card.type === DEV_TYPES.PLENTY) {

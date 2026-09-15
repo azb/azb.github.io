@@ -164,7 +164,7 @@ function maybeDev(game, p) {
 
 function maybeTrade(game, p) {
   const goals = [];
-  if (p.cities.length < 4 && p.settlements.length) goals.push(BUILD_COST.city);
+  if (p.settlements.length) goals.push(BUILD_COST.city);
   if (p.settlements.length < 5) goals.push(BUILD_COST.settlement);
   goals.push(BUILD_COST.road, BUILD_COST.dev);
   for (const cost of goals) {

@@ -162,7 +162,6 @@ const handles = new BoardHandles(scene, stage);
 
 const _ctrlPos = new THREE.Vector3();
 const _ctrlQuat = new THREE.Quaternion();
-const _ctrlEuler = new THREE.Euler();
 const _offset = new THREE.Vector3();
 const _handA = new THREE.Vector3();
 const _handB = new THREE.Vector3();
@@ -1635,12 +1634,6 @@ function updateHighlights() {
   }
 }
 
-function controllerYaw(controller) {
-  _ctrlQuat.setFromRotationMatrix(controller.matrixWorld);
-  _ctrlEuler.setFromQuaternion(_ctrlQuat, 'YXZ');
-  return _ctrlEuler.y;
-}
-
 function sourcePos(source, out = _ctrlPos) {
   const tip = source.joints?.['index-finger-tip'];
   if (tip) tip.getWorldPosition(out);
@@ -1695,8 +1688,6 @@ function tryGrab(source) {
   grabs.set(source, {
     handle: root,
     offset: stage.position.clone().sub(_ctrlPos),
-    yaw0: controllerYaw(source),
-    stageYaw0: stage.rotation.y,
   });
   handles.stick(root, source);
   twoHand = grabs.size === 2 ? captureTwoHand() : null;
@@ -1727,8 +1718,6 @@ function releaseGrab(source) {
     const [c, grab] = grabs.entries().next().value;
     sourcePos(c, _ctrlPos);
     grab.offset = stage.position.clone().sub(_ctrlPos);
-    grab.yaw0 = controllerYaw(c);
-    grab.stageYaw0 = stage.rotation.y;
   }
 }
 
@@ -1760,10 +1749,7 @@ function updateGrabs() {
   }
   for (const [source, grab] of grabs) {
     sourcePos(source, _ctrlPos);
-    const dyaw = controllerYaw(source) - grab.yaw0;
-    _offset.copy(grab.offset).applyAxisAngle(_yAxis, dyaw);
-    stage.position.copy(_ctrlPos).add(_offset);
-    stage.rotation.y = grab.stageYaw0 + dyaw;
+    stage.position.copy(_ctrlPos).add(grab.offset);
   }
 }
 
