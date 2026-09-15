@@ -1,6 +1,31 @@
 export const HEX_SIZE = 0.13;
 export const TABLE_HEIGHT = 0.49;
 export const VP_TO_WIN = 10;
+export const WIN_SCORE_MIN = 5;
+export const WIN_SCORE_MAX = 20;
+export const LAND_RADIUS_ORIGINAL = 2;
+export const LAND_RADIUS_LARGE = 3;
+
+export function clampWinScore(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return VP_TO_WIN;
+  return Math.max(WIN_SCORE_MIN, Math.min(WIN_SCORE_MAX, v));
+}
+
+export function clampLandRadius(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return LAND_RADIUS_ORIGINAL;
+  return v >= LAND_RADIUS_LARGE ? LAND_RADIUS_LARGE : LAND_RADIUS_ORIGINAL;
+}
+
+export function landHexCount(radius) {
+  const r = clampLandRadius(radius);
+  return 1 + 3 * r * (r + 1);
+}
+
+export function boardSizeLabel(radius) {
+  return clampLandRadius(radius) >= LAND_RADIUS_LARGE ? 'Large' : 'Original';
+}
 
 export const RESOURCE = {
   WOOD: 'wood',

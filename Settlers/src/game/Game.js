@@ -10,6 +10,8 @@ import {
   PLAYERS,
   PHASE,
   VP_TO_WIN,
+  clampWinScore,
+  clampLandRadius,
   formatMissing,
 } from './constants.js';
 import { createBoard, vertexScore } from './board.js';
@@ -24,10 +26,19 @@ function totalCards(hand) {
 }
 
 export class Game {
-  constructor({ playerCount = 3, solo = true, seed = Date.now() } = {}) {
+  constructor({
+    playerCount = 3,
+    solo = true,
+    seed = Date.now(),
+    winScore = VP_TO_WIN,
+    landRadius = 2,
+    boardSize,
+  } = {}) {
     this.seed = seed >>> 0;
     this.rand = mulberry32(this.seed);
-    this.board = createBoard(this.seed);
+    this.winScore = clampWinScore(winScore);
+    this.landRadius = clampLandRadius(boardSize ?? landRadius);
+    this.board = createBoard(this.seed, this.landRadius);
     this.playerCount = playerCount;
     this.players = PLAYERS.slice(0, playerCount).map((p, i) => ({
       ...p,
@@ -40,7 +51,8 @@ export class Game {
       knightsPlayed: 0,
       lastSettlement: null,
     }));
-    this.bank = Object.fromEntries(RESOURCES.map((r) => [r, BANK_START]));
+    const bankN = Math.max(BANK_START, Math.round((BANK_START * this.board.land.length) / 19));
+    this.bank = Object.fromEntries(RESOURCES.map((r) => [r, bankN]));
     this.devDeck = shuffle(DEV_DECK, this.rand);
     this.current = 0;
     this.setupIndex = 0;
@@ -60,7 +72,7 @@ export class Game {
     this.lastSteal = null;
     this.lastTrade = null;
     this.afterRobber = PHASE.MAIN;
-    this.note(`Island seed ${this.seed}. ${playerCount} captains set sail.`);
+    this.note(`Island seed ${this.seed}. ${playerCount} captains set sail. First to ${this.winScore} VP.`);
   }
 
   on(fn) {
@@ -126,7 +138,7 @@ export class Game {
 
   checkWin(id = this.current) {
     const p = this.player(id);
-    if (this.totalVP(p) >= VP_TO_WIN) {
+    if (this.totalVP(p) >= this.winScore) {
       this.winner = p.id;
       this.phase = PHASE.GAME_OVER;
       this.note(`${p.name} reaches ${this.totalVP(p)} victory points and claims the island!`);
@@ -776,6 +788,8 @@ export class Game {
     return {
       seed: this.seed,
       playerCount: this.playerCount,
+      winScore: this.winScore,
+      landRadius: this.landRadius,
       players: this.players.map((p) => ({
         id: p.id,
         name: p.name,
@@ -816,12 +830,15 @@ export class Game {
 
   applySnapshot(snap) {
     if (!snap) return this;
-    if (this.seed !== snap.seed || this.playerCount !== snap.playerCount) {
+    const landRadius = clampLandRadius(snap.landRadius ?? this.landRadius);
+    if (this.seed !== snap.seed || this.playerCount !== snap.playerCount || this.landRadius !== landRadius) {
       const next = Game.fromSnapshot(snap);
       this.seed = next.seed;
       this.rand = next.rand;
       this.board = next.board;
       this.playerCount = next.playerCount;
+      this.landRadius = next.landRadius;
+      this.winScore = next.winScore;
     }
     hydrateGame(this, snap);
     return this;
@@ -832,6 +849,8 @@ export class Game {
       playerCount: snap.playerCount,
       solo: false,
       seed: snap.seed,
+      winScore: snap.winScore,
+      landRadius: snap.landRadius,
     });
     hydrateGame(g, snap);
     return g;
@@ -839,6 +858,8 @@ export class Game {
 }
 
 function hydrateGame(g, snap) {
+  if (snap.winScore != null) g.winScore = clampWinScore(snap.winScore);
+  if (snap.landRadius != null) g.landRadius = clampLandRadius(snap.landRadius);
   g.players = snap.players.map((p) => ({
     ...p,
     resources: { ...p.resources },

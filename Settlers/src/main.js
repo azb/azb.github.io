@@ -5,7 +5,24 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { Game } from './game/Game.js';
 import { takeAITurn } from './game/ai.js';
-import { PHASE, RESOURCES, RESOURCE_LABEL, RESOURCE_COLOR, DEV_TYPES, BUILD_COST, formatCost, TABLE_HEIGHT, normalizeResource } from './game/constants.js';
+import {
+  PHASE,
+  RESOURCES,
+  RESOURCE_LABEL,
+  RESOURCE_COLOR,
+  DEV_TYPES,
+  BUILD_COST,
+  formatCost,
+  TABLE_HEIGHT,
+  normalizeResource,
+  VP_TO_WIN,
+  WIN_SCORE_MIN,
+  WIN_SCORE_MAX,
+  clampWinScore,
+  clampLandRadius,
+  boardSizeLabel,
+  LAND_RADIUS_ORIGINAL,
+} from './game/constants.js';
 import { createWorld } from './gfx/world.js';
 import { BoardView } from './gfx/boardView.js';
 import { DicePair, Tray, BoardHandles, HelpBanner } from './gfx/props.js';
@@ -209,6 +226,21 @@ let modalOpen = false;
 let playerCount = 3;
 let playMode = 'solo';
 let solo = true;
+let winScore = VP_TO_WIN;
+let landRadius = LAND_RADIUS_ORIGINAL;
+try {
+  const storedWin = localStorage.getItem('catan-win-score');
+  if (storedWin != null) winScore = clampWinScore(storedWin);
+  const storedBoard = localStorage.getItem('catan-land-radius');
+  if (storedBoard != null) landRadius = clampLandRadius(storedBoard);
+} catch { /* ignore */ }
+
+function persistStartPrefs() {
+  try {
+    localStorage.setItem('catan-win-score', String(winScore));
+    localStorage.setItem('catan-land-radius', String(landRadius));
+  } catch { /* ignore */ }
+}
 const net = new MultiplayerSession();
 net.on({
   playerName: () => {
@@ -336,6 +368,12 @@ function syncStartControls() {
   if (modes) {
     for (const x of modes.children) x.classList.toggle('active', x.dataset.mode === playMode);
   }
+  const winLabel = document.getElementById('win-score-label');
+  if (winLabel) winLabel.textContent = String(winScore);
+  const sizes = document.getElementById('board-size');
+  if (sizes) {
+    for (const x of sizes.children) x.classList.toggle('active', Number(x.dataset.radius) === landRadius);
+  }
   const mp = document.getElementById('mp-panel');
   const start = document.getElementById('start-btn');
   mp?.classList.toggle('hidden', playMode !== 'mp');
@@ -359,6 +397,24 @@ document.getElementById('play-mode').addEventListener('click', (e) => {
   if (!b) return;
   playMode = b.dataset.mode;
   solo = playMode === 'solo';
+  syncStartControls();
+  if (!game) syncTrayButtons();
+});
+
+document.getElementById('win-score')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-win]');
+  if (!b) return;
+  winScore = clampWinScore(winScore + Number(b.dataset.win));
+  persistStartPrefs();
+  syncStartControls();
+  if (!game) syncTrayButtons();
+});
+
+document.getElementById('board-size')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-radius]');
+  if (!b) return;
+  landRadius = clampLandRadius(b.dataset.radius);
+  persistStartPrefs();
   syncStartControls();
   if (!game) syncTrayButtons();
 });
@@ -601,7 +657,8 @@ async function leaveMpRoom() {
 function applyRemoteSnap(snap) {
   const prevRollKey = game?.lastRoll ? `${game.lastRoll.playerId}:${game.lastRoll.dice?.join(',')}` : '';
   const prevSteal = game?.lastSteal;
-  if (!game || game.seed !== snap.seed || game.playerCount !== snap.playerCount) {
+  const snapRadius = clampLandRadius(snap.landRadius ?? 2);
+  if (!game || game.seed !== snap.seed || game.playerCount !== snap.playerCount || game.landRadius !== snapRadius) {
     game = Game.fromSnapshot(snap);
     boardView.rebuild(game.board);
     avatars.rebuild(game.players);
@@ -611,6 +668,8 @@ function applyRemoteSnap(snap) {
   }
   game.viewSeat = net.seat;
   playerCount = game.playerCount;
+  if (snap.winScore != null) winScore = clampWinScore(snap.winScore);
+  landRadius = game.landRadius;
   solo = false;
   const rollKey = game.lastRoll ? `${game.lastRoll.playerId}:${game.lastRoll.dice?.join(',')}` : '';
   refresh();
@@ -647,7 +706,12 @@ function startGame() {
     return;
   }
   const n = net.active ? Math.max(2, Math.min(4, net.roster.length || playerCount)) : playerCount;
-  game = new Game({ playerCount: n, solo: net.active ? false : solo });
+  game = new Game({
+    playerCount: n,
+    solo: net.active ? false : solo,
+    winScore,
+    landRadius,
+  });
   if (net.active) {
     for (const p of game.players) p.isAI = false;
     game.viewSeat = net.seat ?? 0;
@@ -948,6 +1012,8 @@ function titleButtons() {
   const buttons = [
     { label: `Players: ${playerCount}`, action: 'titlePlayers', disabled: playMode === 'mp' },
     { label: modeLabel, action: 'titleMode' },
+    { label: `Win: ${winScore} VP`, action: 'titleWin', disabled: playMode === 'mp' && net.active && !net.isHost },
+    { label: `Board: ${boardSizeLabel(landRadius)}`, action: 'titleBoard', disabled: playMode === 'mp' && net.active && !net.isHost },
   ];
   if (playMode === 'mp') {
     if (!net.active) {
@@ -1413,6 +1479,24 @@ function handleTrayAction(act) {
   if (act === 'titleMode') {
     playMode = playMode === 'solo' ? 'hotseat' : playMode === 'hotseat' ? 'mp' : 'solo';
     solo = playMode === 'solo';
+    syncStartControls();
+    syncTrayButtons();
+    sfx.click();
+    return true;
+  }
+  if (act === 'titleWin') {
+    if (playMode === 'mp' && net.active && !net.isHost) return true;
+    winScore = winScore >= WIN_SCORE_MAX ? WIN_SCORE_MIN : winScore + 1;
+    persistStartPrefs();
+    syncStartControls();
+    syncTrayButtons();
+    sfx.click();
+    return true;
+  }
+  if (act === 'titleBoard') {
+    if (playMode === 'mp' && net.active && !net.isHost) return true;
+    landRadius = landRadius >= 3 ? LAND_RADIUS_ORIGINAL : 3;
+    persistStartPrefs();
     syncStartControls();
     syncTrayButtons();
     sfx.click();

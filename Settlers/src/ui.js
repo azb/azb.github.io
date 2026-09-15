@@ -166,7 +166,7 @@ export function renderHud(game, intent) {
       .map((row) => `<button type="button" class="score-chip ${row.id === game.current ? 'active' : ''}" data-scores="1" style="--chip:${row.color};color:${bannerInk(row.color)}">
         <i class="swatch" style="background:${row.color}"></i>
         <span class="score-name">${row.name}</span>
-        <span class="score-vp">${row.publicVP}${row.isYou && row.hiddenVP ? `+${row.hiddenVP}` : ''}</span>
+        <span class="score-vp">${row.publicVP}${row.isYou && row.hiddenVP ? `+${row.hiddenVP}` : ''}/${row.winScore}</span>
         ${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}
         ${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}
       </button>`)
@@ -183,7 +183,7 @@ export function renderHud(game, intent) {
       return `<article class="player-card ${pl.id === game.current ? 'active' : ''} ${steal ? 'steal-target' : ''}" ${steal ? `data-steal="${pl.id}"` : ''}>
         <div class="player-head">
           <span><i class="swatch" style="background:${pl.color}"></i>${pl.name}${pl.isAI ? ' · AI' : ''}${row.isYou ? ' · You' : ''}${steal ? ' · steal' : ''}</span>
-          <span>${row.shownVP} VP${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}</span>
+          <span>${row.shownVP}/${row.winScore} VP${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}</span>
         </div>
         <div class="player-break">${scoreBreakdownLine(row)}</div>
         <div class="player-meta">${cards} cards · ${roads} roads · ${pl.knightsPlayed} knights</div>
@@ -265,6 +265,7 @@ export function scoreRows(game) {
       hiddenVP: isYou ? facts.hiddenVP : 0,
       publicVP: facts.publicVP,
       shownVP: isYou ? facts.totalVP : facts.publicVP,
+      winScore: game.winScore || 10,
     };
   });
 }
@@ -558,7 +559,7 @@ export function showScores(game, onClose) {
         (row) => `<article class="score-break">
         <div class="player-head">
           <span><i class="swatch" style="background:${row.color}"></i>${row.name}${row.isYou ? ' · You' : ''}</span>
-          <span>${row.shownVP} VP${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}</span>
+          <span>${row.shownVP}/${row.winScore} VP${row.longestRoad ? '<span class="award" title="Longest Road +2">R</span>' : ''}${row.largestArmy ? '<span class="award" title="Largest Army +2">A</span>' : ''}</span>
         </div>
         <div class="player-break">${scoreBreakdownLine(row)}</div>
       </article>`,

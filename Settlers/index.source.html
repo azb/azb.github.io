@@ -16,7 +16,7 @@
           <p class="eyebrow">Unofficial WebXR tabletop</p>
           <h1>Settlers of Catan</h1>
           <p class="lede">
-            Sit at the island, roll the dice, and race to 10 victory points.
+            Sit at the island, roll the dice, and race to the victory-point goal.
             Works in a headset or with a mouse on your desk.
           </p>
 
@@ -35,6 +35,23 @@
               <button type="button" data-mode="solo" class="active">You vs AI</button>
               <button type="button" data-mode="hotseat">Hotseat</button>
               <button type="button" data-mode="mp">Multiplayer</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Victory points to win</span>
+            <div class="segmented stepper" id="win-score">
+              <button type="button" data-win="-1" aria-label="Fewer victory points">−</button>
+              <span class="step-value" id="win-score-label">10</span>
+              <button type="button" data-win="1" aria-label="More victory points">+</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Board size</span>
+            <div class="segmented" id="board-size">
+              <button type="button" data-radius="2" class="active">Original</button>
+              <button type="button" data-radius="3">Large</button>
             </div>
           </label>
 

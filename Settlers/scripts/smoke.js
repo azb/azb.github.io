@@ -202,6 +202,23 @@ const seven = sevenDiscard();
 console.log(JSON.stringify(seven));
 if (seven.stuck) process.exitCode = 1;
 
+function largeBoardAndWin() {
+  const g = new Game({ playerCount: 3, solo: true, seed: 3, winScore: 7, landRadius: 3 });
+  if (g.board.land.length !== 37) return { stuck: true, why: 'land', n: g.board.land.length };
+  if (g.board.sea.length !== 24) return { stuck: true, why: 'sea', n: g.board.sea.length };
+  if (g.winScore !== 7) return { stuck: true, why: 'win' };
+  const snap = g.toSnapshot();
+  const g2 = Game.fromSnapshot(snap);
+  if (g2.landRadius !== 3 || g2.winScore !== 7 || g2.board.land.length !== 37) {
+    return { stuck: true, why: 'snap', landRadius: g2.landRadius, win: g2.winScore, n: g2.board.land.length };
+  }
+  return { stuck: false, largeBoard: true, harbors: g.board.harbors.length };
+}
+
+const boardUi = largeBoardAndWin();
+console.log(JSON.stringify(boardUi));
+if (boardUi.stuck) process.exitCode = 1;
+
 const seeds = [1, 2, 7, 42, 99, 2026, 7777];
 for (const s of seeds) {
   const r = play(s);

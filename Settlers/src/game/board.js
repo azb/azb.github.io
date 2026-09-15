@@ -5,6 +5,8 @@ import {
   TOKEN_NUMBERS,
   HARBOR_TYPES,
   PIPS,
+  clampLandRadius,
+  LAND_RADIUS_ORIGINAL,
 } from './constants.js';
 import {
   hexesInRadius,
@@ -30,21 +32,67 @@ function sixAndEightAdjacent(hexes) {
   return false;
 }
 
-export function createBoard(seed = Date.now()) {
+export function terrainCountsFor(landCount) {
+  if (landCount <= 19) return { ...RESOURCE_COUNTS };
+  const orig = RESOURCE_COUNTS;
+  const desert = Math.max(1, Math.round((orig.desert / 19) * landCount));
+  let rest = landCount - desert;
+  const keys = ['wood', 'brick', 'sheep', 'wheat', 'ore'];
+  const weight = keys.reduce((s, k) => s + orig[k], 0);
+  const out = { desert };
+  for (const k of keys) out[k] = Math.max(1, Math.round((orig[k] / weight) * rest));
+  let sum = keys.reduce((s, k) => s + out[k], 0);
+  const order = [...keys].sort((a, b) => orig[b] - orig[a]);
+  let i = 0;
+  while (sum > rest && i < 80) {
+    const k = order[i % order.length];
+    if (out[k] > 1) {
+      out[k] -= 1;
+      sum -= 1;
+    }
+    i += 1;
+  }
+  while (sum < rest && i < 160) {
+    const k = order[i % order.length];
+    out[k] += 1;
+    sum += 1;
+    i += 1;
+  }
+  return out;
+}
+
+function tokenBag(count, rand) {
+  const bag = [];
+  while (bag.length < count) bag.push(...TOKEN_NUMBERS);
+  return shuffle(bag.slice(0, count), rand);
+}
+
+function harborTypesFor(landRadius, rand) {
+  const n = landRadius <= LAND_RADIUS_ORIGINAL ? HARBOR_TYPES.length : landRadius === 3 ? 11 : 13;
+  const types = [...HARBOR_TYPES];
+  while (types.length < n) types.push('generic');
+  return shuffle(types.slice(0, n), rand);
+}
+
+export function createBoard(seed = Date.now(), landRadius = LAND_RADIUS_ORIGINAL) {
+  const radius = clampLandRadius(landRadius);
+  const seaRadius = radius + 1;
   const rand = mulberry32(seed >>> 0);
-  const landCoords = hexesInRadius(2);
-  const seaCoords = hexesInRadius(3).filter(
-    (h) => Math.max(Math.abs(h.q), Math.abs(h.r), Math.abs(h.q + h.r)) === 3,
+  const landCoords = hexesInRadius(radius);
+  const seaCoords = hexesInRadius(seaRadius).filter(
+    (h) => Math.max(Math.abs(h.q), Math.abs(h.r), Math.abs(h.q + h.r)) === seaRadius,
   );
 
+  const counts = terrainCountsFor(landCoords.length);
   let land = null;
   for (let attempt = 0; attempt < 80; attempt++) {
     const bag = [];
-    for (const [res, n] of Object.entries(RESOURCE_COUNTS)) {
+    for (const [res, n] of Object.entries(counts)) {
       for (let i = 0; i < n; i++) bag.push(res);
     }
     const resources = shuffle(bag, rand);
-    const numbers = shuffle(TOKEN_NUMBERS, rand);
+    const numberCount = resources.filter((r) => r !== RESOURCE.DESERT).length;
+    const numbers = tokenBag(numberCount, rand);
     let ni = 0;
     land = landCoords.map((c, i) => {
       const resource = resources[i];
@@ -149,7 +197,7 @@ export function createBoard(seed = Date.now()) {
 
   const harbors = [];
   const usedVerts = new Set();
-  const types = shuffle(HARBOR_TYPES, rand);
+  const types = harborTypesFor(radius, rand);
   const step = Math.max(1, Math.floor(coastal.length / types.length));
   let ti = 0;
   for (let i = 0; i < coastal.length && ti < types.length; i += step) {
@@ -168,6 +216,7 @@ export function createBoard(seed = Date.now()) {
 
   return {
     seed,
+    landRadius: radius,
     hexes,
     land,
     sea,

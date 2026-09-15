@@ -686,7 +686,7 @@ export class Tray {
       ctx.fillStyle = inkFor(row.color);
       const mark = `${row.longestRoad ? ' R' : ''}${row.largestArmy ? ' A' : ''}`;
       const extra = row.isYou && row.hiddenVP ? `+${row.hiddenVP}` : '';
-      fitText(ctx, `${row.name} ${row.publicVP}${extra}${mark}`, x + cw / 2, slot.py + slot.ph / 2, cw - 8, 22);
+      fitText(ctx, `${row.name} ${row.publicVP}${extra}/${row.winScore || 10}${mark}`, x + cw / 2, slot.py + slot.ph / 2, cw - 8, 22);
     });
   }
 
@@ -707,7 +707,7 @@ export class Tray {
       ctx.textBaseline = 'middle';
       const mark = `${row.longestRoad ? '  R' : ''}${row.largestArmy ? '  A' : ''}`;
       ctx.font = '800 26px Trebuchet MS, Segoe UI, sans-serif';
-      ctx.fillText(`${row.name}${row.isYou ? ' · You' : ''}  ${row.shownVP} VP${mark}`, 78, y + 24);
+      ctx.fillText(`${row.name}${row.isYou ? ' · You' : ''}  ${row.shownVP}/${row.winScore || 10} VP${mark}`, 78, y + 24);
       ctx.fillStyle = '#ffe08a';
       fitText(ctx, scoreLine(row), w / 2, y + h * 0.68, w - 120, 22);
     });

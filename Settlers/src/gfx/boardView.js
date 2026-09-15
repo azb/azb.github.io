@@ -118,15 +118,19 @@ export class BoardView {
       this.group.add(mesh);
     }
 
-    for (const h of board.land) {
-      const height = TILE_HEIGHT;
-      const mat = new THREE.MeshStandardMaterial({
+    const landMats = {};
+    for (const [res, color] of Object.entries(RESOURCE_COLOR)) {
+      landMats[res] = new THREE.MeshStandardMaterial({
         map: this.clay,
-        color: RESOURCE_COLOR[h.resource],
+        color,
         roughness: 1,
         metalness: 0,
         envMapIntensity: 0,
       });
+    }
+    for (const h of board.land) {
+      const height = TILE_HEIGHT;
+      const mat = landMats[h.resource] || landMats.desert;
       const mesh = new THREE.Mesh(this.landGeo, mat);
       mesh.rotation.y = Math.PI / 3;
       mesh.position.set(h.x, height / 2, h.z);
