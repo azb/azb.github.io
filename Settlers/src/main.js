@@ -15,6 +15,7 @@ import {
   formatCost,
   TABLE_HEIGHT,
   normalizeResource,
+  resourceAmount,
   VP_TO_WIN,
   WIN_SCORE_MIN,
   WIN_SCORE_MAX,
@@ -941,7 +942,7 @@ function tradeButtons() {
         action: `give:${r}`,
         color: RESOURCE_COLOR[r],
         selected: tradeGive === r,
-        disabled: (p.resources[r] || 0) < rate,
+        disabled: resourceAmount(p.resources, r) < rate,
       };
     }),
     ...RESOURCES.map((r) => ({
@@ -950,12 +951,12 @@ function tradeButtons() {
       action: `get:${r}`,
       color: RESOURCE_COLOR[r],
       selected: tradeGet === r,
-      disabled: r === tradeGive || (game.bank[r] || 0) < 1,
+      disabled: r === tradeGive,
     })),
     {
       label: tradeGive ? `Bank ${game.tradeRate(p, tradeGive)}:1` : 'Bank 4:1',
       action: 'tradeGo',
-      disabled: !game.canBankTrade(p.id, tradeGive, tradeGet),
+      disabled: !tradeGive || !tradeGet,
     },
     { label: 'Cancel', action: 'tradeCancel' },
   ];
@@ -1065,10 +1066,12 @@ function panelStatus() {
   }
   if (trayScreen === 'trade' && game) {
     const p = viewPlayer(game);
-    if (!tradeGive) return `${p.name} · Bank 4:1 — pick what to give, then Grain or another to get`;
+    if (!tradeGive) return `${p.name} · Bank 4:1 — pick what to give, then Ore or another to get`;
     const rate = game.tradeRate(p, tradeGive);
     const giveLabel = `${rate} ${RESOURCE_LABEL[tradeGive]}`;
     if (!tradeGet) return `${p.name} · Give ${giveLabel} to the bank — pick what to get`;
+    const why = game.whyNotBankTrade(p.id, tradeGive, tradeGet);
+    if (why) return why;
     return `${p.name} · Bank ${rate}:1 · ${giveLabel} → 1 ${RESOURCE_LABEL[tradeGet]}`;
   }
   if (trayScreen === 'cards' && game) {
@@ -1366,12 +1369,19 @@ function closeTradeUi() {
 
 function confirmTrade() {
   if (busy || !tradeGive || !tradeGet) return;
+  const why = game.whyNotBankTrade(viewPlayer(game).id, tradeGive, tradeGet);
+  if (why) {
+    showToast(why);
+    applyPanelStatus();
+    return;
+  }
   const result = submitNetAction(
     { k: 'trade', give: tradeGive, get: tradeGet },
     () => game.bankTrade(viewPlayer(game).id, tradeGive, tradeGet),
   );
   if (result === false) {
     showToast(game.whyNotBankTrade(viewPlayer(game).id, tradeGive, tradeGet) || 'Cannot make that trade.');
+    applyPanelStatus();
     return;
   }
   tradeGive = tradeGet = null;

@@ -48,6 +48,8 @@ const RESOURCE_ALIAS = {
   wheat: 'wheat',
   grain: 'wheat',
   ore: 'ore',
+  iron: 'ore',
+  metal: 'ore',
 };
 
 export function normalizeResource(id) {
@@ -55,6 +57,27 @@ export function normalizeResource(id) {
   const key = String(id).trim().toLowerCase();
   if (RESOURCE_ALIAS[key]) return RESOURCE_ALIAS[key];
   return RESOURCES.includes(key) ? key : null;
+}
+
+/** Sum a hand/bank pile, folding aliases (wool→sheep, grain→wheat, iron→ore). */
+export function resourceAmount(map, id) {
+  const res = normalizeResource(id);
+  if (!res || !map) return 0;
+  let n = 0;
+  for (const [k, v] of Object.entries(map)) {
+    if (normalizeResource(k) === res) n += Number(v) || 0;
+  }
+  return n;
+}
+
+export function foldResourceMap(map) {
+  const out = Object.fromEntries(RESOURCES.map((r) => [r, 0]));
+  if (!map) return out;
+  for (const [k, v] of Object.entries(map)) {
+    const res = normalizeResource(k);
+    if (res) out[res] += Number(v) || 0;
+  }
+  return out;
 }
 
 export const RESOURCE_LABEL = {
@@ -117,7 +140,8 @@ export function formatMissing(hand, cost) {
 }
 
 export const PIECE_LIMIT = { settlement: 5 };
-export const BANK_START = 19;
+/** Display-only starting pile; payouts and trades never fail for empty stock. */
+export const BANK_START = 9999;
 
 export const DEV_TYPES = {
   KNIGHT: 'knight',

@@ -2,6 +2,8 @@ import {
   RESOURCES,
   RESOURCE_LABEL,
   normalizeResource,
+  resourceAmount,
+  foldResourceMap,
   BUILD_COST,
   PIECE_LIMIT,
   BANK_START,
@@ -22,7 +24,7 @@ function emptyHand() {
 }
 
 function totalCards(hand) {
-  return RESOURCES.reduce((n, r) => n + hand[r], 0);
+  return RESOURCES.reduce((n, r) => n + resourceAmount(hand, r), 0);
 }
 
 export class Game {
@@ -156,7 +158,7 @@ export class Game {
       const h = this.board.vertices.get(vid)?.harbor;
       if (!h) continue;
       if (h === 'generic') rate = Math.min(rate, 3);
-      if (h === res) rate = Math.min(rate, 2);
+      if (normalizeResource(h) === res) rate = Math.min(rate, 2);
     }
     return rate;
   }
@@ -171,11 +173,8 @@ export class Game {
     if (give === get) return 'Give and get must be different.';
     const p = this.player(playerId);
     const rate = this.tradeRate(p, give);
-    if ((p.resources[give] || 0) < rate) {
+    if (resourceAmount(p.resources, give) < rate) {
       return `Need ${rate} ${RESOURCE_LABEL[give] || give} for a ${rate}:1 bank trade.`;
-    }
-    if ((this.bank[get] || 0) < 1) {
-      return `The bank is out of ${RESOURCE_LABEL[get] || get}.`;
     }
     return null;
   }
@@ -338,16 +337,24 @@ export class Game {
   }
 
   takeFromBank(type, n, player) {
-    const got = Math.min(n, this.bank[type]);
-    this.bank[type] -= got;
-    addResource(player.resources, type, got);
+    const res = normalizeResource(type);
+    if (!res) return 0;
+    player.resources = foldResourceMap(player.resources);
+    this.bank = foldResourceMap(this.bank);
+    const got = Math.max(0, n);
+    this.bank[res] = Math.max(0, (this.bank[res] || 0) - got);
+    addResource(player.resources, res, got);
     return got;
   }
 
   returnToBank(player, type, n) {
-    const give = Math.min(n, player.resources[type]);
-    player.resources[type] -= give;
-    this.bank[type] += give;
+    const res = normalizeResource(type);
+    if (!res) return;
+    player.resources = foldResourceMap(player.resources);
+    this.bank = foldResourceMap(this.bank);
+    const give = Math.min(n, player.resources[res] || 0);
+    player.resources[res] -= give;
+    this.bank[res] += give;
   }
 
   placeSettlement(vertexId, playerId = this.current) {
@@ -482,10 +489,6 @@ export class Game {
     for (const r of RESOURCES) {
       const need = grant.reduce((n, g) => n + g[r], 0);
       if (need === 0) continue;
-      if (need > this.bank[r]) {
-        this.note(`The ${RESOURCE_LABEL[r] || r} supply is too scarce to pay everyone.`);
-        continue;
-      }
       for (let i = 0; i < this.players.length; i++) {
         if (grant[i][r]) this.takeFromBank(r, grant[i][r], this.players[i]);
       }
@@ -855,13 +858,13 @@ function hydrateGame(g, snap) {
   if (snap.landRadius != null) g.landRadius = clampLandRadius(snap.landRadius);
   g.players = snap.players.map((p) => ({
     ...p,
-    resources: { ...p.resources },
+    resources: foldResourceMap(p.resources),
     roads: [...p.roads],
     settlements: [...p.settlements],
     cities: [...p.cities],
     devCards: (p.devCards || []).map((c) => ({ ...c })),
   }));
-  g.bank = { ...snap.bank };
+  g.bank = foldResourceMap(snap.bank);
   g.devDeck = [...(snap.devDeck || [])];
   g.current = snap.current;
   g.setupIndex = snap.setupIndex;

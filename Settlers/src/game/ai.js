@@ -174,7 +174,7 @@ function maybeTrade(game, p) {
       for (const give of RESOURCES) {
         if (give === want) continue;
         const rate = game.tradeRate(p, give);
-        if ((p.resources[give] || 0) < rate || game.bank[want] < 1) continue;
+        if ((p.resources[give] || 0) < rate) continue;
         if ((p.resources[give] - rate) < (cost[give] || 0)) continue;
         game.bankTrade(p.id, give, want);
         return true;

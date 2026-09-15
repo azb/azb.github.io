@@ -7,6 +7,7 @@ import {
   DEV_TYPES,
   formatCost,
   normalizeResource,
+  resourceAmount,
 } from './game/constants.js';
 
 const $ = (id) => document.getElementById(id);
@@ -473,33 +474,34 @@ export function showTrade(game, onDone) {
       <p>Give to the bank</p>
       <div class="picker" id="give-p">${RESOURCES.map((r) => {
         const rRate = game.tradeRate(p, r);
-        const poor = (p.resources[r] || 0) < rRate;
+        const poor = resourceAmount(p.resources, r) < rRate;
         return `<button type="button" data-res="${r}" ${poor ? 'disabled' : ''} style="border-color:${RESOURCE_COLOR[r]}">${RESOURCE_LABEL[r]} ${rRate}:1</button>`;
       }).join('')}</div>
       <p>Get from the bank</p>
       <div class="picker" id="get-p">${RESOURCES.map((r) => {
-        const blocked = r === give || (game.bank[r] || 0) < 1;
+        const blocked = r === give;
         return `<button type="button" data-res="${r}" ${blocked ? 'disabled' : ''} style="border-color:${RESOURCE_COLOR[r]}">${RESOURCE_LABEL[r]}</button>`;
       }).join('')}</div>
       ${why ? `<p class="trade-why">${why}</p>` : ''}
-      <button id="trade-go" class="primary" ${can ? '' : 'disabled'}>${give ? `Bank ${rate}:1` : 'Bank 4:1'}</button>
+      <button id="trade-go" class="primary" ${give && get ? '' : 'disabled'}>${give ? `Bank ${rate}:1` : 'Bank 4:1'}</button>
       <button id="trade-cancel">Cancel</button>`);
     if (give) $('give-p').querySelector(`[data-res="${give}"]`)?.classList.add('selected');
     if (get) $('get-p').querySelector(`[data-res="${get}"]`)?.classList.add('selected');
     $('give-p').onclick = (e) => {
       const r = normalizeResource(e.target.closest('[data-res]')?.dataset.res);
-      if (!r || (p.resources[r] || 0) < game.tradeRate(p, r)) return;
+      if (!r || resourceAmount(p.resources, r) < game.tradeRate(p, r)) return;
       give = r;
       if (get === give) get = null;
       paint();
     };
     $('get-p').onclick = (e) => {
       const r = normalizeResource(e.target.closest('[data-res]')?.dataset.res);
-      if (!r || r === give || (game.bank[r] || 0) < 1) return;
+      if (!r || r === give) return;
       get = r;
       paint();
     };
     $('trade-go').onclick = () => {
+      if (!give || !get) return;
       if (!can) return;
       closeModal();
       onDone(give, get);

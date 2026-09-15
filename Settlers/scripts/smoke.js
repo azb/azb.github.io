@@ -183,6 +183,39 @@ function bankTradeCheck() {
 
   g.players[0].resources = { ...empty, brick: 3 };
   if (g.bankTrade(0, 'brick', 'wheat')) return { stuck: true, why: 'poor' };
+
+  const wool = new Game({ playerCount: 3, solo: true, seed: 1 });
+  wool.phase = PHASE.MAIN;
+  wool.current = 0;
+  wool.players[0].resources = { ...empty, wool: 11 };
+  wool.bank.ore = 19;
+  if (wool.whyNotBankTrade(0, 'wool', 'ore')) {
+    return { stuck: true, why: 'woolWhy', msg: wool.whyNotBankTrade(0, 'wool', 'ore') };
+  }
+  if (!wool.bankTrade(0, 'wool', 'ore')) return { stuck: true, why: 'woolTrade' };
+  if (wool.players[0].resources.sheep !== 7 || wool.players[0].resources.ore !== 1) {
+    return { stuck: true, why: 'woolCounts', hand: wool.players[0].resources };
+  }
+  if (wool.lastTrade?.give !== 'sheep' || wool.lastTrade?.get !== 'ore' || wool.lastTrade?.rate !== 4) {
+    return { stuck: true, why: 'woolLast', last: wool.lastTrade };
+  }
+  const woolLine = formatTradeResult(wool);
+  if (woolLine !== 'Traded 4 Wool for 1 Ore') return { stuck: true, why: 'woolLine', got: woolLine };
+  if (!wool.log.at(-1)?.includes('Traded 4 Wool for 1 Ore')) {
+    return { stuck: true, why: 'woolLog', log: wool.log.at(-1) };
+  }
+  if (!trayStatus(wool).includes('Traded 4 Wool for 1 Ore')) {
+    return { stuck: true, why: 'woolTray', tray: trayStatus(wool) };
+  }
+
+  wool.bank.ore = 0;
+  if (wool.whyNotBankTrade(0, 'wool', 'ore')) {
+    return { stuck: true, why: 'emptyOre', msg: wool.whyNotBankTrade(0, 'wool', 'ore') };
+  }
+  if (!wool.bankTrade(0, 'wool', 'iron')) return { stuck: true, why: 'emptyTrade' };
+  if (wool.players[0].resources.ore !== 2) {
+    return { stuck: true, why: 'emptyCounts', hand: wool.players[0].resources };
+  }
   return { stuck: false, bankTrade: true };
 }
 
