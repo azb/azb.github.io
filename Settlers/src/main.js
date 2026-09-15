@@ -100,16 +100,14 @@ scene.add(camera);
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0.57, STAGE_FORWARD_Z);
 controls.enableDamping = true;
-controls.enablePan = true;
-controls.screenSpacePanning = true;
-controls.panSpeed = 1.25;
+controls.enablePan = false;
 controls.maxPolarAngle = Math.PI * 0.48;
 controls.minDistance = 0.6;
 controls.maxDistance = 3.2;
-controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
 controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
 controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
-controls.touches.ONE = THREE.TOUCH.PAN;
+controls.touches.ONE = THREE.TOUCH.ROTATE;
 controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
 controls.listenToKeyEvents(window);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1552,7 +1550,15 @@ function sourcePos(source, out = _ctrlPos) {
   return out;
 }
 
-function nearestFreeHandle(source, maxDist = 0.16) {
+function handlesAreGrabbable() {
+  return handlesOn && handles.group.visible;
+}
+
+/** Match the invisible handle hit-sphere radius in BoardHandles. */
+const HANDLE_GRAB_DIST = 0.09;
+
+function nearestFreeHandle(source, maxDist = HANDLE_GRAB_DIST) {
+  if (!handlesAreGrabbable()) return null;
   sourcePos(source, _ctrlPos);
   let best = null;
   let bestD = maxDist;
@@ -1567,17 +1573,25 @@ function nearestFreeHandle(source, maxDist = 0.16) {
   return best;
 }
 
-function tryGrab(source) {
-  if (grabs.has(source)) return true;
-  let root = nearestFreeHandle(source);
-  if (!root) {
-    const origin = new THREE.Vector3().setFromMatrixPosition(source.matrixWorld);
-    const dir = new THREE.Vector3(0, 0, -1).transformDirection(source.matrixWorld);
-    raycaster.set(origin, dir);
-    const hits = raycaster.intersectObjects(handles.pickables(), true);
-    root = hits[0]?.object?.userData?.handleRoot;
-    if (root && handles.isStuck(root)) root = null;
+function pointedHandle(source) {
+  if (!handlesAreGrabbable() || !source) return null;
+  const origin = new THREE.Vector3().setFromMatrixPosition(source.matrixWorld);
+  const dir = new THREE.Vector3(0, 0, -1).transformDirection(source.matrixWorld);
+  raycaster.set(origin, dir);
+  const hits = raycaster.intersectObjects(pickables(), true);
+  for (const hit of hits) {
+    if (ignoreLaserHit(hit.object)) continue;
+    const root = hit.object.userData?.handleRoot;
+    if (root) return handles.isStuck(root) ? null : root;
+    return null;
   }
+  return null;
+}
+
+function tryGrab(source) {
+  if (!source || !handlesAreGrabbable()) return false;
+  if (grabs.has(source)) return true;
+  const root = nearestFreeHandle(source) || pointedHandle(source);
   if (!root) return false;
   sourcePos(source, _ctrlPos);
   grabs.set(source, {
@@ -1620,7 +1634,15 @@ function releaseGrab(source) {
   }
 }
 
+function releaseAllGrabs() {
+  for (const source of [...grabs.keys()]) releaseGrab(source);
+}
+
 function updateGrabs() {
+  if (!handlesAreGrabbable()) {
+    if (grabs.size) releaseAllGrabs();
+    return;
+  }
   if (grabs.size === 2) {
     if (!twoHand) twoHand = captureTwoHand();
     const [c0, c1] = grabs.keys();
@@ -2036,7 +2058,7 @@ function markXRSelectHandled() {
 }
 
 function shouldTryGrab(inputSource, source) {
-  if (!source) return false;
+  if (!source || !handlesAreGrabbable()) return false;
   if (isTransientAim(inputSource)) return false;
   if (!hasPersistentPointer() && (sawTransientPointer || isLikelyVisionOS())) return false;
   return true;
@@ -2467,6 +2489,7 @@ function applyPresentingQuality(on) {
 
 function applyHandleVisibility() {
   handles.setVisible(handlesOn && renderer.xr.isPresenting);
+  if (!handles.group.visible) releaseAllGrabs();
 }
 
 function resetStageHome() {
@@ -2722,7 +2745,7 @@ async function enterVR() {
     session.addEventListener('end', () => {
       unbindXRSession();
       sawTransientPointer = false;
-      grabs.clear();
+      releaseAllGrabs();
       xrStageSnapPending = false;
       xrStageSnapTries = 0;
       xrStageUserMoved = false;
