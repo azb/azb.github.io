@@ -48,6 +48,21 @@ try {
 QUALITY.antialias = antialiasOn;
 
 const xrGlAttrs = { antialias: antialiasOn };
+/** Three.js WebXRManager caches this object; never sticky-store xrCompatible on it. */
+function syncXrGlAttrs(fromAttrs) {
+  if (fromAttrs) {
+    xrGlAttrs.alpha = fromAttrs.alpha;
+    xrGlAttrs.depth = fromAttrs.depth;
+    xrGlAttrs.stencil = fromAttrs.stencil;
+    xrGlAttrs.premultipliedAlpha = fromAttrs.premultipliedAlpha;
+    xrGlAttrs.preserveDrawingBuffer = fromAttrs.preserveDrawingBuffer;
+    xrGlAttrs.powerPreference = fromAttrs.powerPreference;
+    xrGlAttrs.failIfMajorPerformanceCaveat = fromAttrs.failIfMajorPerformanceCaveat;
+  }
+  xrGlAttrs.antialias = antialiasOn;
+  xrGlAttrs.xrCompatible = false;
+  return xrGlAttrs;
+}
 function patchGlAntialiasAttr() {
   const wrap = (proto) => {
     if (!proto?.getContextAttributes || proto.getContextAttributes.__catanAa) return;
@@ -55,8 +70,7 @@ function patchGlAntialiasAttr() {
     proto.getContextAttributes = function getContextAttributesAa() {
       const attrs = orig.call(this);
       if (!attrs) return attrs;
-      Object.assign(xrGlAttrs, attrs, { antialias: antialiasOn });
-      return xrGlAttrs;
+      return syncXrGlAttrs(attrs);
     };
     proto.getContextAttributes.__catanAa = true;
   };
@@ -369,7 +383,7 @@ document.getElementById('new-game-btn').addEventListener('click', () => {
   requestRestart({ fromHud: true });
 });
 
-document.getElementById('vr-btn').addEventListener('click', enterVR);
+bindEnterXrButton();
 window.addEventListener('resize', onResize);
 canvas.addEventListener('pointermove', (e) => {
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
@@ -2453,7 +2467,7 @@ function setPointerLines(on) {
 function setAntialias(on) {
   antialiasOn = !!on;
   QUALITY.antialias = antialiasOn;
-  xrGlAttrs.antialias = antialiasOn;
+  syncXrGlAttrs();
   try {
     localStorage.setItem('catan-antialias', antialiasOn ? '1' : '0');
   } catch { /* ignore */ }
@@ -2480,7 +2494,7 @@ function setPassthrough(on) {
 
 function applyPresentingQuality(on) {
   renderer.xr.setFramebufferScaleFactor(QUALITY.framebufferScale);
-  xrGlAttrs.antialias = antialiasOn;
+  syncXrGlAttrs();
   applyShadowMap(renderer, world.sun, {
     enabled: on ? QUALITY.xrShadows : QUALITY.shadows,
     size: on ? QUALITY.xrShadowSize : QUALITY.shadowSize,
@@ -2597,18 +2611,14 @@ async function configureXrReferenceSpace(session) {
 }
 
 renderer.xr.addEventListener('sessionstart', () => {
+  xrNeedsDesktopRestore = true;
   armXrTableSnap();
   applyWorldUiVisibility();
   syncTrayButtons();
   applyPanelStatus();
 });
 renderer.xr.addEventListener('sessionend', () => {
-  xrStageSnapPending = false;
-  xrStageSnapTries = 0;
-  xrStageUserMoved = false;
-  lastXRHover = null;
-  resetStageHome();
-  applyWorldUiVisibility();
+  onLeaveImmersive();
 });
 
 function resumeDesktopUi() {
@@ -2688,6 +2698,73 @@ function reopenDesktopModals() {
   }
 }
 
+let xrEnterGen = 0;
+let xrLeaving = false;
+let xrNeedsDesktopRestore = false;
+
+function xrSessionDead(session) {
+  return !session || session.ended === true;
+}
+
+function recoverXrManager() {
+  syncXrGlAttrs();
+  const live = renderer.xr.getSession?.();
+  if (xrSessionDead(live)) renderer.xr.isPresenting = false;
+}
+
+function restoreDesktopFramebuffer() {
+  try {
+    renderer.setPixelRatio(QUALITY.pixelRatio);
+    renderer.setSize(innerWidth, innerHeight, false);
+  } catch {
+    /* Quest may still be swapping the XR framebuffer. */
+  }
+  onResize();
+}
+
+function bindEnterXrButton() {
+  const btn = document.getElementById('vr-btn');
+  if (!btn) return;
+  btn.disabled = false;
+  btn.removeAttribute('disabled');
+  btn.removeEventListener('click', enterVR);
+  btn.addEventListener('click', enterVR);
+}
+
+function onLeaveImmersive() {
+  if (xrLeaving) return;
+  if (!xrNeedsDesktopRestore && !document.documentElement.classList.contains('xr-presenting') && !renderer.xr.isPresenting) {
+    bindEnterXrButton();
+    updateVRButton();
+    return;
+  }
+  xrLeaving = true;
+  xrNeedsDesktopRestore = false;
+  xrEnterGen += 1;
+  try {
+    unbindXRSession();
+    sawTransientPointer = false;
+    releaseAllGrabs();
+    xrStageSnapPending = false;
+    xrStageSnapTries = 0;
+    xrStageUserMoved = false;
+    lastXRHover = null;
+    resetStageHome();
+    recoverXrManager();
+    handles.setVisible(false);
+    applyPresentingQuality(false);
+    setPassthrough(false);
+    document.documentElement.classList.remove('xr-presenting');
+    restoreDesktopFramebuffer();
+    applyPointerVisuals();
+    resumeDesktopUi();
+    bindEnterXrButton();
+    updateVRButton();
+  } finally {
+    xrLeaving = false;
+  }
+}
+
 async function requestXRSession(mode, hud) {
   const withOverlay = {
     requiredFeatures: ['local-floor'],
@@ -2700,7 +2777,7 @@ async function requestXRSession(mode, hud) {
   try {
     return await navigator.xr.requestSession(mode, withOverlay);
   } catch {
-    return navigator.xr.requestSession(mode, lite);
+    return await navigator.xr.requestSession(mode, lite);
   }
 }
 
@@ -2710,9 +2787,14 @@ async function enterVR() {
     showToast('WebXR is not available in this browser.');
     return;
   }
+  recoverXrManager();
+  if (renderer.xr.isPresenting && !xrSessionDead(renderer.xr.getSession?.())) return;
+
+  const token = ++xrEnterGen;
   const overlay = document.getElementById('overlay-root') || document.getElementById('hud');
   const arOk = await navigator.xr.isSessionSupported?.('immersive-ar');
   const vrOk = await navigator.xr.isSessionSupported?.('immersive-vr');
+  if (token !== xrEnterGen) return;
   try {
     let session = null;
     let passthrough = false;
@@ -2724,55 +2806,51 @@ async function enterVR() {
         session = null;
       }
     }
-    if (!session && vrOk) session = await requestXRSession('immersive-vr', overlay);
-    if (!session) {
-      showToast('This browser has no AR or VR session.');
+    if (token !== xrEnterGen) {
+      session?.end?.().catch(() => {});
       return;
     }
+    if (!session && vrOk) session = await requestXRSession('immersive-vr', overlay);
+    if (token !== xrEnterGen) {
+      session?.end?.().catch(() => {});
+      return;
+    }
+    if (!session) {
+      showToast('This browser has no AR or VR session.');
+      bindEnterXrButton();
+      updateVRButton();
+      return;
+    }
+    session.addEventListener('end', onLeaveImmersive);
     await configureXrReferenceSpace(session);
     applyPresentingQuality(true);
     setPassthrough(passthrough);
     handles.setVisible(handlesOn);
     document.documentElement.classList.add('xr-presenting');
+    xrNeedsDesktopRestore = true;
     closeModal();
     bindXRSession(session);
+    syncXrGlAttrs();
     await renderer.xr.setSession(session);
+    if (token !== xrEnterGen) {
+      session.end().catch(() => {});
+      return;
+    }
     applyWorldUiVisibility();
     syncTrayButtons();
     applyPanelStatus();
     applyPointerVisuals();
     if (useHeadHover() || pointerMode === 'gaze') showToast('Point with your view, pinch to select.');
-    session.addEventListener('end', () => {
-      unbindXRSession();
-      sawTransientPointer = false;
-      releaseAllGrabs();
-      xrStageSnapPending = false;
-      xrStageSnapTries = 0;
-      xrStageUserMoved = false;
-      resetStageHome();
-      handles.setVisible(false);
-      applyPresentingQuality(false);
-      setPassthrough(false);
-      document.documentElement.classList.remove('xr-presenting');
-      applyPointerVisuals();
-      resumeDesktopUi();
-      updateVRButton();
-    });
   } catch {
-    unbindXRSession();
-    sawTransientPointer = false;
+    onLeaveImmersive();
     showToast('Could not start a mixed-reality session.');
-    handles.setVisible(false);
-    applyPresentingQuality(false);
-    setPassthrough(false);
-    document.documentElement.classList.remove('xr-presenting');
-    applyPointerVisuals();
-    applyWorldUiVisibility();
   }
 }
 
 async function updateVRButton() {
   const btn = document.getElementById('vr-btn');
+  if (!btn) return;
+  bindEnterXrButton();
   const arOk = navigator.xr && (await navigator.xr.isSessionSupported?.('immersive-ar'));
   const vrOk = navigator.xr && (await navigator.xr.isSessionSupported?.('immersive-vr'));
   if (arOk) {
