@@ -53,15 +53,43 @@ function createWorldPanel(lines, width, height, accent = "#82cfff") {
   panel.renderOrder = 5;
   return panel;
 }
-const controlsPanel = createWorldPanel([
-  { text: "CONTROLS", x: 768, y: 92, size: 54, color: "#a9dbff", align: "center" },
-  { text: "LEFT CONTROLLER", x: 100, y: 182, size: 36, color: "#a9dbff" },
-  { text: "RIGHT CONTROLLER", x: 835, y: 182, size: 36, color: "#a9dbff" },
-  { text: "Stick     Steer", x: 100, y: 268 }, { text: "Grip      Decrease throttle", x: 100, y: 338 }, { text: "Menu    Pause / resume", x: 100, y: 408 },
-  { text: "Stick     Roll and pitch", x: 835, y: 268 }, { text: "Grip      Increase throttle", x: 835, y: 338 }, { text: "Trigger  Fire", x: 835, y: 408 },
-  { text: "Third-person RC flight", x: 768, y: 626, size: 34, color: "#d8ecff", align: "center" },
-], 2.9, 1.45);
-controlsPanel.position.set(0, 1.5, -2.6); scene.add(controlsPanel);
+function createControlsPanel() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1600; canvas.height = 1050;
+  const context = canvas.getContext("2d");
+  const rounded = (x, y, width, height, radius, fill, stroke = null) => {
+    context.beginPath(); context.roundRect(x, y, width, height, radius);
+    if (fill) { context.fillStyle = fill; context.fill(); }
+    if (stroke) { context.strokeStyle = stroke; context.lineWidth = 7; context.stroke(); }
+  };
+  const label = (text, x, y, size = 42, align = "left", color = "#f4f7fb") => {
+    context.fillStyle = color; context.font = `${size}px system-ui, sans-serif`; context.textAlign = align; context.fillText(text, x, y);
+  };
+  const arrow = (fromX, fromY, toX, toY) => {
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+    context.strokeStyle = "#0636ec"; context.fillStyle = "#0636ec"; context.lineWidth = 15; context.lineCap = "round";
+    context.beginPath(); context.moveTo(fromX, fromY); context.lineTo(toX, toY); context.stroke();
+    context.beginPath(); context.moveTo(toX, toY); context.lineTo(toX - 34 * Math.cos(angle - .55), toY - 34 * Math.sin(angle - .55)); context.lineTo(toX - 34 * Math.cos(angle + .55), toY - 34 * Math.sin(angle + .55)); context.closePath(); context.fill();
+  };
+  rounded(28, 28, 1544, 994, 80, "rgba(10, 17, 25, .88)", "rgba(235, 245, 255, .72)");
+  label("Controls", 800, 135, 58, "center");
+  // A simplified controller illustration preserves the Lens panel's visual hierarchy.
+  context.save(); context.translate(800, 555);
+  context.fillStyle = "#eef1f4"; context.strokeStyle = "#b7bdc5"; context.lineWidth = 8;
+  context.beginPath(); context.moveTo(-280, -115); context.bezierCurveTo(-385, -115, -410, 38, -348, 128); context.bezierCurveTo(-310, 187, -225, 146, -150, 95); context.lineTo(150, 95); context.bezierCurveTo(225, 146, 310, 187, 348, 128); context.bezierCurveTo(410, 38, 385, -115, 280, -115); context.lineTo(160, -90); context.lineTo(-160, -90); context.closePath(); context.fill(); context.stroke();
+  [[-168, -10], [150, 28]].forEach(([x, y]) => { context.beginPath(); context.fillStyle = "#343b43"; context.arc(x, y, 50, 0, Math.PI * 2); context.fill(); context.strokeStyle = "#11161b"; context.lineWidth = 10; context.stroke(); context.beginPath(); context.fillStyle = "#555e68"; context.arc(x, y, 33, 0, Math.PI * 2); context.fill(); });
+  rounded(-63, -6, 24, 88, 5, "#252b31"); rounded(-96, 26, 88, 24, 5, "#252b31");
+  [[230, -22, "A", "#54a846"], [272, -66, "B", "#d14343"], [188, -66, "X", "#2b83d4"], [230, -110, "Y", "#e7c43c"]].forEach(([x, y, text, color]) => { context.beginPath(); context.fillStyle = color; context.arc(x, y, 24, 0, Math.PI * 2); context.fill(); label(text, x, y + 13, 24, "center", "#111820"); });
+  context.restore();
+  label("Decrease Throttle", 200, 290, 43); label("Fire", 800, 244, 43, "center"); label("Increase Throttle", 1400, 290, 43, "right");
+  label("Steer", 170, 625, 43); label("Left / Right", 170, 690, 43); label("Roll  Left / Right", 1410, 585, 39, "right"); label("Pitch  Up / Down", 1410, 650, 39, "right");
+  arrow(415, 305, 565, 430); arrow(800, 266, 810, 408); arrow(1190, 305, 1035, 430); arrow(435, 640, 625, 545); arrow(1180, 605, 975, 570);
+  rounded(585, 820, 430, 105, 52, "rgba(15, 19, 26, .94)", "rgba(235, 245, 255, .7)"); label("OK · press right trigger", 800, 888, 35, "center");
+  const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(3.55, 2.33), material); panel.renderOrder = 5;
+  return panel;
+}
+const controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.55, -2.8); scene.add(controlsPanel);
 const pausePanel = createWorldPanel([
   { text: "SIMULATION PAUSED", x: 768, y: 290, size: 72, color: "#a9dbff", align: "center" },
   { text: "Press the left controller Menu button to resume", x: 768, y: 425, size: 39, align: "center" },
@@ -157,7 +185,7 @@ class FlightModel {
     if (speed > .01) this.position.add(this.forward().multiplyScalar(speed * dt * .05));
   }
 }
-const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let simulationPaused = false; let pauseButtonWasPressed = false;
+const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true; let controlsDismissWasPressed = false;
 function setSimulationPaused(paused) {
   simulationPaused = paused;
   pausePanel.visible = paused;
@@ -248,7 +276,7 @@ function playBalloonPop() {
 function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
 addEventListener("resize", resize); resize(); let previous = performance.now();
-renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); updateEngineSound(); if (input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; renderer.render(scene, camera); });
+renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (controlsVisible && input.fire && !controlsDismissWasPressed) { controlsVisible = false; controlsPanel.visible = false; statusLabel.textContent = "Controls confirmed · third-person RC flight"; } controlsDismissWasPressed = input.fire; if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); updateEngineSound(); if (!controlsVisible && input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; renderer.render(scene, camera); });
 resetButton.addEventListener("click", () => flight.reset());
 async function configureVR() {
   if (!navigator.xr) { vrButton.textContent = "WebXR unavailable"; vrButton.disabled = true; return; }
