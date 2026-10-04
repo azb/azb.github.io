@@ -82,7 +82,7 @@ new GLTFLoader().load(fighterModelUrl, (gltf) => {
       };
       if (node.name === "Windshield") {
         node.material = new THREE.MeshStandardMaterial({ color: 0x090d12, metalness: .25, roughness: .18 });
-      } else if (node.name === "Cylinder") {
+      } else if (node.name === "LandingGear") {
         node.material = new THREE.MeshStandardMaterial({ color: 0x080a0c, metalness: .05, roughness: .9 });
       } else {
         node.material = Array.isArray(node.material) ? node.material.map(applyLensMaterial) : applyLensMaterial(node.material);
