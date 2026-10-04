@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.3";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.5";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -14,6 +14,7 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
 const assetUrl = (path) => new URL(`../assets/${path}`, import.meta.url).href;
 const lensWingspan = 2.84433;
+const worldSpeedScale = .05;
 let engineContext = null;
 let engineGain = null;
 let engineSource = null;
@@ -111,7 +112,7 @@ const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb");
 const spawnPosition = new THREE.Vector3(0, 1.5, -7);
 class FlightModel {
   constructor() { this.reset(); }
-  reset() { this.position = spawnPosition.clone(); this.rotation = new THREE.Quaternion(); this.throttle = 0; }
+  reset() { this.position = spawnPosition.clone(); this.rotation = new THREE.Quaternion(); this.throttle = 0; this.velocity = new THREE.Vector3(); }
   forward() { return new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation).normalize(); }
   step(input, seconds) {
     const dt = clamp(seconds, 0, .1); this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
@@ -122,7 +123,9 @@ class FlightModel {
     this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), input.roll * 110 * rate));
     this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -input.pitch * 70 * rate));
     this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 45 * rate)).normalize();
-    if (speed > .01) this.position.add(this.forward().multiplyScalar(speed * dt * .05));
+    const worldSpeed = speed * worldSpeedScale;
+    this.velocity.copy(this.forward()).multiplyScalar(speed > .01 ? worldSpeed : 0);
+    if (speed > .01) this.position.addScaledVector(this.velocity, dt);
   }
 }
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true; let controlsDismissWasPressed = false;
@@ -204,7 +207,7 @@ function clearVirtualEnvironment() {
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.3`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.5`);
     let fighterFromScene = false;
     const environment = [];
     let nextControls = null;
@@ -307,6 +310,48 @@ function animateAircraft(input, seconds) {
   deflect(animatedParts.rudder, input.yaw * 25, new THREE.Vector3(0, 1, 0));
   if (animatedParts.propeller) animatedParts.propeller.rotateY(-seconds * (4 + flight.throttle * 38));
 }
+const minEnginePitch = .55;
+const maxEnginePitch = 1.65;
+const dopplerAmount = .35;
+const maxPlaneSpeed = 100 * worldSpeedScale;
+const listenerPosition = new THREE.Vector3();
+const sourcePosition = new THREE.Vector3();
+const toListener = new THREE.Vector3();
+function engineListenerObject() {
+  if (renderer.xr.isPresenting) {
+    const xrCamera = renderer.xr.getCamera();
+    if (xrCamera) return xrCamera;
+  }
+  const namedRig = scene.getObjectByName("Camera Rig") ?? scene.getObjectByName("CameraRig");
+  const rig = namedRig ?? (typeof cameraRig !== "undefined" ? cameraRig : null);
+  if (rig) {
+    if (rig.isCamera) return rig;
+    const nested = typeof rig.getObjectByProperty === "function" ? rig.getObjectByProperty("isCamera", true) : null;
+    if (nested) return nested;
+  }
+  return camera;
+}
+function dopplerPitchScale() {
+  // Lens GameControllerMovement.getDopplerPitchScale: airplane velocity dotted with
+  // the direction from the plane to the listener, divided by max speed.
+  if (dopplerAmount <= 0 || !flight.velocity) return 1;
+  const listener = engineListenerObject();
+  if (!listener || !planeRoot) return 1;
+  listener.getWorldPosition(listenerPosition);
+  planeRoot.getWorldPosition(sourcePosition);
+  toListener.copy(listenerPosition).sub(sourcePosition);
+  const distance = toListener.length();
+  if (distance < 1) return 1;
+  toListener.multiplyScalar(1 / distance);
+  const closingSpeed = flight.velocity.dot(toListener);
+  const closingRatio = clamp(closingSpeed / Math.max(Math.abs(maxPlaneSpeed), 1), -1, 1);
+  return clamp(1 + closingRatio * dopplerAmount, .55, 1.6);
+}
+function enginePlaybackRate() {
+  const speedRatio = clamp(flight.throttle, 0, 1);
+  const throttlePitch = lerp(minEnginePitch, maxEnginePitch, speedRatio);
+  return clamp(throttlePitch * dopplerPitchScale(), .25, 3);
+}
 async function startEngineSound() {
   try {
     if (!engineContext) {
@@ -327,7 +372,7 @@ async function startEngineSound() {
       engineSource = engineContext.createBufferSource();
       engineSource.buffer = engineBuffer;
       engineSource.loop = true;
-      engineSource.playbackRate.value = lerp(.55, 1.45, flight.throttle);
+      engineSource.playbackRate.value = enginePlaybackRate();
       engineSource.connect(engineGain);
       engineSource.start();
     }
@@ -339,7 +384,7 @@ function pauseEngineSound() {
 function updateEngineSound() {
   if (!engineContext || !engineGain || !engineSource) return;
   const time = engineContext.currentTime;
-  engineSource.playbackRate.setTargetAtTime(lerp(.55, 1.45, flight.throttle), time, .04);
+  engineSource.playbackRate.setTargetAtTime(enginePlaybackRate(), time, .125);
   engineGain.gain.setTargetAtTime(lerp(.28, 1, flight.throttle), time, .04);
 }
 function playBalloonPop() {
@@ -350,7 +395,7 @@ function playBalloonPop() {
 function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
 addEventListener("resize", resize); resize(); let previous = performance.now();
-renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (controlsVisible && input.fire && !controlsDismissWasPressed) { controlsVisible = false; controlsPanel.visible = false; statusLabel.textContent = "Controls confirmed · third-person RC flight"; } controlsDismissWasPressed = input.fire; if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); updateEngineSound(); if (!controlsVisible && input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; renderer.render(scene, camera); });
+renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (controlsVisible && input.fire && !controlsDismissWasPressed) { controlsVisible = false; controlsPanel.visible = false; statusLabel.textContent = "Controls confirmed · third-person RC flight"; } controlsDismissWasPressed = input.fire; if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); if (!controlsVisible && input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; if (!simulationPaused) updateEngineSound(); renderer.render(scene, camera); });
 resetButton.addEventListener("click", () => flight.reset());
 async function configureVR() {
   if (!navigator.xr) { vrButton.textContent = "WebXR unavailable"; vrButton.disabled = true; return; }
