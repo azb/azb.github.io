@@ -9,7 +9,6 @@ const controllerLabel = document.querySelector("#controllers");
 const modelLabel = document.querySelector("#model");
 const vrButton = document.querySelector("#enter-vr");
 const resetButton = document.querySelector("#reset");
-const pauseOverlay = document.querySelector("#pause-overlay");
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
 const assetUrl = (path) => new URL(`../assets/${path}`, import.meta.url).href;
@@ -37,6 +36,37 @@ const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -3; virtualEnvironment.add(ground);
 const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a); grid.position.y = -2.98; virtualEnvironment.add(grid);
+
+function createWorldPanel(lines, width, height, accent = "#82cfff") {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1536; canvas.height = 768;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "rgba(4, 20, 34, .88)";
+  context.strokeStyle = accent;
+  context.lineWidth = 6;
+  context.beginPath(); context.roundRect(14, 14, canvas.width - 28, canvas.height - 28, 34); context.fill(); context.stroke();
+  lines.forEach(({ text, x = 76, y, size = 42, color = "#eaf6ff", align = "left" }) => {
+    context.fillStyle = color; context.font = `${size}px system-ui, sans-serif`; context.textAlign = align; context.fillText(text, x, y);
+  });
+  const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+  panel.renderOrder = 5;
+  return panel;
+}
+const controlsPanel = createWorldPanel([
+  { text: "CONTROLS", x: 768, y: 92, size: 54, color: "#a9dbff", align: "center" },
+  { text: "LEFT CONTROLLER", x: 100, y: 182, size: 36, color: "#a9dbff" },
+  { text: "RIGHT CONTROLLER", x: 835, y: 182, size: 36, color: "#a9dbff" },
+  { text: "Stick     Steer", x: 100, y: 268 }, { text: "Grip      Decrease throttle", x: 100, y: 338 }, { text: "Menu    Pause / resume", x: 100, y: 408 },
+  { text: "Stick     Roll and pitch", x: 835, y: 268 }, { text: "Grip      Increase throttle", x: 835, y: 338 }, { text: "Trigger  Fire", x: 835, y: 408 },
+  { text: "Third-person RC flight", x: 768, y: 626, size: 34, color: "#d8ecff", align: "center" },
+], 2.9, 1.45);
+controlsPanel.position.set(0, 1.5, -2.6); scene.add(controlsPanel);
+const pausePanel = createWorldPanel([
+  { text: "SIMULATION PAUSED", x: 768, y: 290, size: 72, color: "#a9dbff", align: "center" },
+  { text: "Press the left controller Menu button to resume", x: 768, y: 425, size: 39, align: "center" },
+], 2.9, 1.05);
+pausePanel.position.set(0, 1.6, -2.55); pausePanel.visible = false; scene.add(pausePanel);
 
 function createAircraft() {
   const plane = new THREE.Group();
@@ -130,7 +160,7 @@ class FlightModel {
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let simulationPaused = false; let pauseButtonWasPressed = false;
 function setSimulationPaused(paused) {
   simulationPaused = paused;
-  pauseOverlay.hidden = !paused;
+  pausePanel.visible = paused;
   if (paused) {
     engineSound.pause();
     statusLabel.textContent = "Simulation paused · left Menu resumes";
@@ -229,6 +259,6 @@ async function configureVR() {
   const mode = !isDesktopLink && arSupported ? "immersive-ar" : "immersive-vr";
   vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR";
   statusLabel.textContent = mode === "immersive-ar" ? "Passthrough ready · the aircraft stays in your room" : vrSupported ? "Quest Link VR · third-person RC flight" : "Quest Link is restarting · you can still retry VR";
-  vrButton.addEventListener("click", async () => { try { startEngineSound(); vrButton.disabled = true; vrButton.textContent = "Starting…"; const session = await Promise.race([navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor", "dom-overlay"], domOverlay: { root: document.body } }), new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000))]); if (mode === "immersive-ar") { renderer.setClearColor(0x000000, 0); scene.fog = null; virtualEnvironment.visible = false; } await renderer.xr.setSession(session); statusLabel.textContent = mode === "immersive-ar" ? "Passthrough · third-person RC flight" : "Quest Link VR · third-person RC flight"; vrButton.textContent = "XR active"; session.addEventListener("end", () => { engineSound.pause(); renderer.setClearColor(0x8ac5ee); scene.fog = new THREE.Fog(0x8ac5ee, 70, 350); virtualEnvironment.visible = true; vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR"; statusLabel.textContent = "Desktop preview · controller or keyboard"; }); } catch (error) { vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Retry VR"; statusLabel.textContent = error.message === "XR session timed out" ? "Quest Link did not start the session · wait a moment, then retry" : error.name === "InvalidStateError" ? "An immersive session is already active · exit it from the headset first" : "Could not start XR · wait a moment, then retry"; } });
+  vrButton.addEventListener("click", async () => { try { startEngineSound(); vrButton.disabled = true; vrButton.textContent = "Starting…"; const session = await Promise.race([navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] }), new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000))]); if (mode === "immersive-ar") { renderer.setClearColor(0x000000, 0); scene.fog = null; virtualEnvironment.visible = false; } await renderer.xr.setSession(session); statusLabel.textContent = mode === "immersive-ar" ? "Passthrough · third-person RC flight" : "Quest Link VR · third-person RC flight"; vrButton.textContent = "XR active"; session.addEventListener("end", () => { engineSound.pause(); renderer.setClearColor(0x8ac5ee); scene.fog = new THREE.Fog(0x8ac5ee, 70, 350); virtualEnvironment.visible = true; vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR"; statusLabel.textContent = "Desktop preview · controller or keyboard"; }); } catch (error) { vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Retry VR"; statusLabel.textContent = error.message === "XR session timed out" ? "Quest Link did not start the session · wait a moment, then retry" : error.name === "InvalidStateError" ? "An immersive session is already active · exit it from the headset first" : "Could not start XR · wait a moment, then retry"; } });
 }
 configureVR().catch((error) => { console.error(error); vrButton.textContent = "Unable to start VR"; vrButton.disabled = true; });
