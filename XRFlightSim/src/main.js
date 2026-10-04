@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.18";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.20";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -188,7 +188,7 @@ function createAircraft() {
 }
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
 const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, elevator: null, rudder: null, neutral: new Map() };
-const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.18");
+const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.20");
 
 const spawnPosition = new THREE.Vector3(0, 1.5, -7);
 class FlightModel {
@@ -218,14 +218,28 @@ class FlightModel {
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true;
 // Lens BulletSpawnPoint1/2 under Player (scale 0.296423). Scene units are cm → meters; flip Z for THREE -forward.
 const lensPlayerScale = 0.296423;
-const bulletSpawnLocal = [
-  new THREE.Vector3(-38.559101, -9.386186, 36.82412),
-  new THREE.Vector3(38.559086, -9.386186, 36.82412),
-].map((p) => new THREE.Vector3(
+const lensLocalToThree = (p) => new THREE.Vector3(
   p.x * lensPlayerScale * 0.01,
   p.y * lensPlayerScale * 0.01,
   -p.z * lensPlayerScale * 0.01,
-));
+);
+const bulletSpawnLocal = [
+  new THREE.Vector3(-38.559101, -9.386186, 36.82412),
+  new THREE.Vector3(38.559086, -9.386186, 36.82412),
+].map(lensLocalToThree);
+// Lens LeftWingTip / RightWingTip under Player (Scene.scene).
+const wingTipLocal = [
+  lensLocalToThree(new THREE.Vector3(81.310097, -7.972565, 24.621162)),
+  lensLocalToThree(new THREE.Vector3(-81.310097, -7.972565, 24.621147)),
+];
+// Lens WingtipVortexFX defaults / scene overrides.
+const vortexMinAirspeedRatio = 0.45;
+const vortexMaxSpawnsPerSecond = 28;
+const vortexWispLifetime = 0.65;
+// Lens wispLength/width are cm world scale → meters.
+const vortexWispLength = 5 * 0.01;
+const vortexWispWidth = 0.35 * 0.01;
+const vortexPoolSize = Math.max(Math.ceil(vortexMaxSpawnsPerSecond * vortexWispLifetime * 2), 36);
 // Lens GameControllerMovement: Unit Sphere setWorldScale(3,3,12) cm, speed 800 + planeVelocity, lifetime 3, cooldown 0.15.
 const bulletMuzzleSpeed = 800 * worldSpeedScale;
 const bulletLifetimeSec = 3;
@@ -234,6 +248,132 @@ const bulletGeom = new THREE.SphereGeometry(0.5, 8, 8);
 const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
 const fireHapticIntensity = 20 / 255;
 const fireHapticDurationMs = 10;
+
+// Lightweight Lens-style wingtip vapor: pooled InstancedMesh wisps (white elongated quads).
+const vortexGeom = new THREE.BoxGeometry(1, 1, 1);
+const vortexMat = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  transparent: true,
+  opacity: 0.55,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+const vortexMesh = new THREE.InstancedMesh(vortexGeom, vortexMat, vortexPoolSize);
+vortexMesh.frustumCulled = false;
+vortexMesh.count = vortexPoolSize;
+vortexMesh.renderOrder = 3;
+scene.add(vortexMesh);
+const vortexDummy = new THREE.Object3D();
+const vortexForward = new THREE.Vector3();
+const vortexUp = new THREE.Vector3();
+const vortexRight = new THREE.Vector3();
+const vortexOutward = new THREE.Vector3();
+const vortexTrailDir = new THREE.Vector3();
+const vortexSpawnPos = new THREE.Vector3();
+const vortexLookTarget = new THREE.Vector3();
+const vortexVelocity = new THREE.Vector3();
+const vortexActive = [];
+const vortexFree = [];
+const vortexSpawnTimers = [0, 0];
+function hideVortexInstance(instanceId) {
+  vortexDummy.position.set(0, -999, 0);
+  vortexDummy.scale.set(0, 0, 0);
+  vortexDummy.quaternion.identity();
+  vortexDummy.updateMatrix();
+  vortexMesh.setMatrixAt(instanceId, vortexDummy.matrix);
+}
+for (let i = 0; i < vortexPoolSize; i += 1) {
+  hideVortexInstance(i);
+  vortexFree.push(i);
+}
+vortexMesh.instanceMatrix.needsUpdate = true;
+
+function airspeedIntensity() {
+  // Lens getCurrentAirspeedRatio with minSpeed 0, maxSpeed 500 → ref = 125.
+  const controlAirspeed = lerp(0, 500, flight.throttle);
+  return clamp(controlAirspeed / Math.max(500 * 0.25, 1), 0, 1);
+}
+
+function spawnVortexWisp(side, intensity) {
+  if (vortexFree.length === 0) return;
+  const instanceId = vortexFree.pop();
+  vortexForward.set(0, 0, -1).applyQuaternion(flight.rotation).normalize();
+  vortexUp.set(0, 1, 0).applyQuaternion(flight.rotation).normalize();
+  vortexRight.set(1, 0, 0).applyQuaternion(flight.rotation).normalize();
+  // Match Lens WingtipVortexFX: Left uses -right, Right uses +right.
+  if (side === 0) vortexOutward.copy(vortexRight).multiplyScalar(-1);
+  else vortexOutward.copy(vortexRight);
+  vortexSpawnPos.copy(wingTipLocal[side]).applyQuaternion(flight.rotation).add(flight.position);
+  const length = vortexWispLength * (0.65 + intensity * 0.8);
+  const width = vortexWispWidth * (0.7 + intensity * 0.5);
+  vortexTrailDir.copy(vortexForward).multiplyScalar(-1).addScaledVector(vortexOutward, 0.18).normalize();
+  const airspeed = lerp(0, 500, flight.throttle) * 0.01;
+  vortexVelocity.copy(vortexTrailDir).multiplyScalar(airspeed * 0.35).addScaledVector(vortexUp, airspeed * 0.03);
+  vortexDummy.position.copy(vortexSpawnPos);
+  vortexDummy.up.copy(vortexUp);
+  vortexLookTarget.copy(vortexSpawnPos).add(vortexTrailDir);
+  vortexDummy.lookAt(vortexLookTarget);
+  vortexDummy.scale.set(width, width, length);
+  vortexDummy.updateMatrix();
+  vortexMesh.setMatrixAt(instanceId, vortexDummy.matrix);
+  vortexActive.push({
+    id: instanceId,
+    velocityX: vortexVelocity.x,
+    velocityY: vortexVelocity.y,
+    velocityZ: vortexVelocity.z,
+    age: 0,
+    lifetime: vortexWispLifetime * (0.75 + intensity * 0.35),
+    startLength: length,
+    startWidth: width,
+  });
+}
+
+function updateWingVortex(dt) {
+  let matricesDirty = false;
+  for (let i = vortexActive.length - 1; i >= 0; i -= 1) {
+    const wisp = vortexActive[i];
+    wisp.age += dt;
+    if (wisp.age >= wisp.lifetime) {
+      hideVortexInstance(wisp.id);
+      vortexFree.push(wisp.id);
+      vortexActive.splice(i, 1);
+      matricesDirty = true;
+      continue;
+    }
+    const lifeRatio = 1 - wisp.age / wisp.lifetime;
+    const width = wisp.startWidth * (0.2 + lifeRatio * 0.8);
+    const length = wisp.startLength * (0.35 + lifeRatio * 0.65);
+    vortexMesh.getMatrixAt(wisp.id, vortexDummy.matrix);
+    vortexDummy.matrix.decompose(vortexDummy.position, vortexDummy.quaternion, vortexDummy.scale);
+    vortexDummy.position.x += wisp.velocityX * dt;
+    vortexDummy.position.y += wisp.velocityY * dt;
+    vortexDummy.position.z += wisp.velocityZ * dt;
+    vortexDummy.scale.set(width, width, length);
+    vortexDummy.updateMatrix();
+    vortexMesh.setMatrixAt(wisp.id, vortexDummy.matrix);
+    matricesDirty = true;
+  }
+
+  if (!simulationPaused) {
+    const intensity = airspeedIntensity();
+    if (intensity >= vortexMinAirspeedRatio) {
+      const spawnRate =
+        vortexMaxSpawnsPerSecond *
+        ((intensity - vortexMinAirspeedRatio) / (1 - vortexMinAirspeedRatio));
+      const spawnInterval = 1 / Math.max(spawnRate, 0.001);
+      for (let side = 0; side < 2; side += 1) {
+        vortexSpawnTimers[side] += dt;
+        if (vortexSpawnTimers[side] >= spawnInterval) {
+          vortexSpawnTimers[side] = 0;
+          spawnVortexWisp(side, intensity);
+          matricesDirty = true;
+        }
+      }
+    }
+  }
+
+  if (matricesDirty) vortexMesh.instanceMatrix.needsUpdate = true;
+}
 function setSimulationPaused(paused) {
   simulationPaused = paused;
   pausePanel.visible = paused;
@@ -641,7 +781,7 @@ function applyDesktopCamera() {
   desktopCameraRig.getWorldQuaternion(camera.quaternion);
 }
 addEventListener("resize", resize); resize(); let previous = performance.now();
-renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); if (input.fire && time - lastFire > fireCooldownMs) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > bulletLifetimeSec) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); applyDesktopCamera(); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; if (!simulationPaused) updateEngineSound(); renderer.render(scene, camera); });
+renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); if (input.fire && time - lastFire > fireCooldownMs) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > bulletLifetimeSec) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); updateWingVortex(dt); applyDesktopCamera(); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; if (!simulationPaused) updateEngineSound(); renderer.render(scene, camera); });
 resetButton.addEventListener("click", () => flight.reset());
 const xrOptionalFeatures = ["local-floor", "bounded-floor", "hand-tracking"];
 // AVP Safari often omits "Vision" from UA; Macintosh + 5 touch points is the usual heuristic.
