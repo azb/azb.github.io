@@ -78,7 +78,10 @@ class FlightModel {
   forward() { return new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation).normalize(); }
   step(input, seconds) {
     const dt = clamp(seconds, 0, .1); this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
-    const speed = lerp(0, 100, this.throttle); const rate = clamp(speed / 30, .5, 1.25) * dt * Math.PI / 180;
+    // Keep the WebXR aircraft stationary at idle, but retain Lens Studio's control authority.
+    const speed = lerp(0, 100, this.throttle);
+    const controlAirspeed = lerp(30, 100, this.throttle);
+    const rate = clamp(controlAirspeed / 30, .5, 1.25) * dt * Math.PI / 180;
     this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), input.roll * 110 * rate));
     this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -input.pitch * 70 * rate));
     this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 45 * rate)).normalize();
@@ -140,10 +143,10 @@ function deflect(part, degrees, axis) {
 }
 function animateAircraft(input, seconds) {
   // These pivots and axes match the control objects in the Lens Studio fighter scene.
-  deflect(animatedParts.leftAileron, -input.roll * 24, new THREE.Vector3(1, 0, 0));
-  deflect(animatedParts.rightAileron, input.roll * 24, new THREE.Vector3(1, 0, 0));
-  deflect(animatedParts.elevator, input.pitch * 22, new THREE.Vector3(1, 0, 0));
-  deflect(animatedParts.rudder, input.yaw * 26, new THREE.Vector3(0, 1, 0));
+  deflect(animatedParts.leftAileron, -input.roll * 25, new THREE.Vector3(1, 0, 0));
+  deflect(animatedParts.rightAileron, input.roll * 25, new THREE.Vector3(1, 0, 0));
+  deflect(animatedParts.elevator, input.pitch * 25, new THREE.Vector3(1, 0, 0));
+  deflect(animatedParts.rudder, input.yaw * 25, new THREE.Vector3(0, 1, 0));
   if (animatedParts.propeller) animatedParts.propeller.rotateY(-seconds * (4 + flight.throttle * 38));
 }
 function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
