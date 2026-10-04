@@ -4,6 +4,7 @@ import { TransformControls } from "https://cdn.jsdelivr.net/npm/three@0.180.0/ex
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 
 const STORAGE_KEY = "xrflightsim-scene";
+const FLIGHT_SCENE_URL = "./scenes/flight-sim-scene.json?v=0.1.12";
 const canvas = document.querySelector("#scene");
 const list = document.querySelector("#object-list");
 const selection = document.querySelector("#selection");
@@ -507,10 +508,45 @@ function applyTransform(object, item) {
   object.visible = item.visible !== false;
 }
 
+function makeCamera() {
+  const group = new THREE.Group();
+  group.userData.scene = { type: "camera" };
+  const view = new THREE.PerspectiveCamera(70, 16 / 9, 0.25, 4);
+  view.name = "View";
+  view.userData.skipList = true;
+  group.add(view);
+  const helper = new THREE.CameraHelper(view);
+  helper.userData.skipList = true;
+  helper.userData.selectTarget = group;
+  helper.frustumCulled = false;
+  scene.add(helper);
+  group.userData.cameraHelper = helper;
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.42, 0.28, 0.52),
+    new THREE.MeshStandardMaterial({ color: 0x1a1e24, metalness: 0.45, roughness: 0.4 })
+  );
+  body.name = "Camera body";
+  body.position.z = 0.06;
+  body.userData.skipList = true;
+  body.userData.selectTarget = group;
+  const lens = new THREE.Mesh(
+    new THREE.ConeGeometry(0.12, 0.22, 16),
+    new THREE.MeshStandardMaterial({ color: 0xffaa00, metalness: 0.35, roughness: 0.4 })
+  );
+  lens.rotation.x = -Math.PI / 2;
+  lens.position.z = -0.26;
+  lens.userData.skipList = true;
+  lens.userData.selectTarget = group;
+  body.add(lens);
+  group.add(body);
+  return group;
+}
+
 function makeObject(item) {
   const type = item.type || "box";
   let object;
-  if (type === "group") object = new THREE.Group();
+  if (type === "camera") object = makeCamera();
+  else if (type === "group") object = new THREE.Group();
   else if (type === "text") object = makeText(item);
   else if (type === "arrow") object = makeArrow(item);
   else if (type === "asset") object = makeAsset(item);
@@ -535,6 +571,12 @@ function applyView(view) {
 
 function disposeObject(object) {
   object.traverse((node) => {
+    const helper = node.userData?.cameraHelper;
+    if (helper) {
+      helper.removeFromParent();
+      helper.dispose?.();
+      node.userData.cameraHelper = null;
+    }
     node.geometry?.dispose();
     const materials = node.material ? [].concat(node.material) : [];
     for (const material of materials) {
@@ -778,7 +820,8 @@ function selectInRectangle(left, top, right, bottom) {
   pendingSelectionPath = null;
   selectedSet.clear();
   content.traverse((object) => {
-    if (!(object.isMesh || object.isSprite) || object.userData?.skipList) return;
+    const cameraRig = object.userData?.scene?.type === "camera";
+    if (!cameraRig && (!(object.isMesh || object.isSprite) || object.userData?.skipList)) return;
     const point = object.getWorldPosition(new THREE.Vector3()).project(camera);
     const x = (point.x + 1) / 2 * canvas.clientWidth;
     const y = (-point.y + 1) / 2 * canvas.clientHeight;
@@ -832,7 +875,11 @@ canvas.addEventListener("pointerup", (event) => {
     pointer.x = x / rect.width * 2 - 1;
     pointer.y = -(y / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
-    const hit = raycaster.intersectObjects(content.children, true)[0];
+    const helpers = [];
+    content.traverse((object) => {
+      if (object.userData?.cameraHelper) helpers.push(object.userData.cameraHelper);
+    });
+    const hit = raycaster.intersectObjects([...content.children, ...helpers], true)[0];
     if (hit) select(hit.object);
     else selectInRectangle(left, top, right, bottom);
   } else selectInRectangle(left, top, right, bottom);
@@ -906,7 +953,7 @@ function serializeObject(object) {
   spec.scale = object.scale.toArray().map(round);
   if (!object.visible) spec.visible = false;
   const material = primaryMaterial(object);
-  if (material?.color && !["text", "arrow", "asset", "group"].includes(spec.type)) {
+  if (material?.color && !["text", "arrow", "asset", "group", "camera"].includes(spec.type)) {
     spec.color = material.color.getHex();
     if (material.metalness != null) spec.metalness = round(material.metalness);
     if (material.roughness != null) spec.roughness = round(material.roughness);
@@ -964,7 +1011,7 @@ function loadSceneData(data) {
 }
 
 async function loadSceneUrl(url) {
-  const response = await fetch(url);
+  const response = await fetch(url, { cache: "no-cache" });
   if (!response.ok) throw new Error(`Could not fetch ${url}`);
   loadSceneData(await response.json());
 }
@@ -972,7 +1019,7 @@ async function loadSceneUrl(url) {
 document.querySelector("#load-flight-scene").onclick = async () => {
   if (!confirmReplace()) return;
   try {
-    await loadSceneUrl("./scenes/flight-sim-scene.json");
+    await loadSceneUrl(FLIGHT_SCENE_URL);
     setStatus("Flight scene");
   } catch (error) {
     console.error(error);
@@ -1023,7 +1070,7 @@ async function boot() {
     }
   }
   try {
-    await loadSceneUrl("./scenes/flight-sim-scene.json");
+    await loadSceneUrl(FLIGHT_SCENE_URL);
     setStatus("Flight scene");
   } catch (error) {
     console.warn(error);
@@ -1032,4 +1079,10 @@ async function boot() {
 }
 
 boot();
-renderer.setAnimationLoop(() => { renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => {
+  content.traverse((object) => {
+    const helper = object.userData?.cameraHelper;
+    if (helper) helper.visible = object.visible;
+  });
+  renderer.render(scene, camera);
+});

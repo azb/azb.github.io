@@ -15,6 +15,25 @@
   },
   "objects": [
     {
+      "type": "camera",
+      "name": "Camera Rig",
+      "position": [
+        0,
+        2.1,
+        4.8
+      ],
+      "rotation": [
+        -0.0508,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
       "type": "plane",
       "size": [
         1000,

@@ -25,6 +25,7 @@ export async function loadFlightScene(url = FLIGHT_SCENE_URL) {
 
 export function sceneRole(item) {
   const name = item?.name || "";
+  if (item?.type === "camera" || name === "Camera Rig") return "camera";
   if (item?.type === "asset" && /FighterPlane/i.test(`${name} ${item.url || ""}`)) return "fighter";
   if (name === "Controls Panel") return "controls";
   if (name === "Pause Panel") return "pause";
@@ -241,7 +242,7 @@ function applyTransform(object, item) {
 export function createSceneObject(item, options = {}) {
   const type = item.type || "box";
   let object;
-  if (type === "group") object = new THREE.Group();
+  if (type === "group" || type === "camera") object = new THREE.Group();
   else if (type === "text") object = makeText(item);
   else if (type === "arrow") object = makeArrow(item);
   else if (type === "asset") object = makeAsset(item, options);
