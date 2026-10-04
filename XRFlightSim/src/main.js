@@ -18,9 +18,6 @@ engineSound.loop = true;
 engineSound.preload = "auto";
 engineSound.volume = .12;
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
-const aluminumTexture = new THREE.TextureLoader().load(assetUrl("textures/seamless-aluminum.jpg"));
-aluminumTexture.colorSpace = THREE.SRGBColorSpace;
-aluminumTexture.wrapS = aluminumTexture.wrapT = THREE.RepeatWrapping;
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.xr.enabled = true;
@@ -71,14 +68,14 @@ new GLTFLoader().load(fighterModelUrl, (gltf) => {
           // Lens Studio's blue accent material: solid paint, not the fuselage sheet metal.
           lensMaterial.map = null;
           lensMaterial.color.setRGB(0, .149, 1);
-          lensMaterial.metalness = .55;
-          lensMaterial.roughness = .48;
+          lensMaterial.metalness = .35;
+          lensMaterial.roughness = .58;
         } else {
-          // Lens Studio's aluminum fuselage material.
-          lensMaterial.map = aluminumTexture;
-          lensMaterial.color.setRGB(1, 1, 1);
-          lensMaterial.metalness = .55;
-          lensMaterial.roughness = .48;
+          // The source Blender body material has no image texture; it is smooth aluminum.
+          lensMaterial.map = null;
+          lensMaterial.color.setRGB(.78, .8, .82);
+          lensMaterial.metalness = .5;
+          lensMaterial.roughness = .6;
         }
         lensMaterial.needsUpdate = true;
         return lensMaterial;
