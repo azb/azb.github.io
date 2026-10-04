@@ -437,7 +437,7 @@
         },
         {
           "type": "text",
-          "text": "OK · PRESS RIGHT TRIGGER",
+          "text": "OK \u00b7 PRESS RIGHT TRIGGER",
           "name": "OK Label",
           "position": [
             0,
@@ -456,8 +456,10 @@
           ]
         },
         {
-          "type": "group",
+          "type": "asset",
           "name": "Left Quest Controller",
+          "url": "./assets/controllers/meta-quest-touch-left.glb",
+          "wingspan": 0.37,
           "position": [
             -0.55,
             -0.12,
@@ -465,169 +467,20 @@
           ],
           "rotation": [
             0,
-            0,
+            -0.18,
             0
           ],
           "scale": [
             1,
             1,
             1
-          ],
-          "children": [
-            {
-              "type": "capsule",
-              "radius": 0.15,
-              "length": 0.42,
-              "color": 15329777,
-              "name": "Left Body",
-              "position": [
-                0,
-                0,
-                0
-              ],
-              "rotation": [
-                0,
-                0,
-                -0.18
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.48
-            },
-            {
-              "type": "sphere",
-              "radius": 0.2,
-              "color": 15329777,
-              "name": "Left Top",
-              "position": [
-                0,
-                0.25,
-                0
-              ],
-              "rotation": [
-                0,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                0.42,
-                0.7
-              ],
-              "metalness": 0.12,
-              "roughness": 0.48
-            },
-            {
-              "type": "cylinder",
-              "radius": 0.065,
-              "height": 0.045,
-              "color": 1778217,
-              "name": "Left Stick",
-              "position": [
-                -0.06,
-                0.3,
-                0.1
-              ],
-              "rotation": [
-                1.5708,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.35
-            },
-            {
-              "type": "box",
-              "size": [
-                0.13,
-                0.18,
-                0.16
-              ],
-              "color": 1778217,
-              "name": "Left Grip",
-              "position": [
-                -0.16,
-                -0.08,
-                0.05
-              ],
-              "rotation": [
-                0,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.35
-            },
-            {
-              "type": "box",
-              "size": [
-                0.12,
-                0.07,
-                0.13
-              ],
-              "color": 1778217,
-              "name": "Left Trigger",
-              "position": [
-                0,
-                0.43,
-                -0.08
-              ],
-              "rotation": [
-                0,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.35
-            },
-            {
-              "type": "cylinder",
-              "radius": 0.028,
-              "height": 0.02,
-              "color": 1778217,
-              "name": "Left Menu",
-              "position": [
-                0.07,
-                0.31,
-                0.1
-              ],
-              "rotation": [
-                1.5708,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.35
-            }
           ]
         },
         {
-          "type": "group",
+          "type": "asset",
           "name": "Right Quest Controller",
+          "url": "./assets/controllers/meta-quest-touch-right.glb",
+          "wingspan": 0.37,
           "position": [
             0.55,
             -0.12,
@@ -635,140 +488,13 @@
           ],
           "rotation": [
             0,
-            0,
+            0.18,
             0
           ],
           "scale": [
             1,
             1,
             1
-          ],
-          "children": [
-            {
-              "type": "capsule",
-              "radius": 0.15,
-              "length": 0.42,
-              "color": 15329777,
-              "name": "Right Body",
-              "position": [
-                0,
-                0,
-                0
-              ],
-              "rotation": [
-                0,
-                0,
-                0.18
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.48
-            },
-            {
-              "type": "sphere",
-              "radius": 0.2,
-              "color": 15329777,
-              "name": "Right Top",
-              "position": [
-                0,
-                0.25,
-                0
-              ],
-              "rotation": [
-                0,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                0.42,
-                0.7
-              ],
-              "metalness": 0.12,
-              "roughness": 0.48
-            },
-            {
-              "type": "cylinder",
-              "radius": 0.065,
-              "height": 0.045,
-              "color": 1778217,
-              "name": "Right Stick",
-              "position": [
-                0.06,
-                0.3,
-                0.1
-              ],
-              "rotation": [
-                1.5708,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.35
-            },
-            {
-              "type": "box",
-              "size": [
-                0.13,
-                0.18,
-                0.16
-              ],
-              "color": 1778217,
-              "name": "Right Grip",
-              "position": [
-                0.16,
-                -0.08,
-                0.05
-              ],
-              "rotation": [
-                0,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.35
-            },
-            {
-              "type": "box",
-              "size": [
-                0.12,
-                0.07,
-                0.13
-              ],
-              "color": 1778217,
-              "name": "Right Trigger",
-              "position": [
-                0,
-                0.43,
-                -0.08
-              ],
-              "rotation": [
-                0,
-                0,
-                0
-              ],
-              "scale": [
-                1,
-                1,
-                1
-              ],
-              "metalness": 0.12,
-              "roughness": 0.35
-            }
           ]
         }
       ]

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.10";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.11";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -24,6 +24,11 @@ let engineBuffer = null;
 let engineLoad = null;
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const inputProfilesBase = "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/";
+const localControllerModelUrls = {
+  left: assetUrl("controllers/meta-quest-touch-left.glb"),
+  right: assetUrl("controllers/meta-quest-touch-right.glb"),
+};
+const instructionControllerGuideSize = .54;
 const instructionControllerSlots = {};
 let inputProfilesList = null;
 
@@ -67,29 +72,96 @@ function createWorldPanel(lines, width, height, accent = "#82cfff") {
 }
 function worldText(text, position, scale = .28) { const canvas = document.createElement("canvas"); canvas.width = 1536; canvas.height = 200; const c = canvas.getContext("2d"); c.fillStyle = "rgba(8, 16, 27, .94)"; c.fillRect(0, 0, canvas.width, canvas.height); c.fillStyle = "#ffffff"; c.font = "bold 78px system-ui"; c.textAlign = "center"; c.fillText(text, 768, 124); const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false })); sprite.position.copy(position); sprite.scale.set(scale * 5.6, scale, 1); return sprite; }
 function callout(group, text, start, end) { group.add(worldText(text, start, .25)); const direction = end.clone().sub(start).normalize(); group.add(new THREE.ArrowHelper(direction, start, end.distanceTo(start), 0x1686ff, .1, .055)); }
-function questController(hand) { const group = new THREE.Group(); const shell = new THREE.MeshStandardMaterial({ color: 0xe9edf1, roughness: .48, metalness: .12 }); const dark = new THREE.MeshStandardMaterial({ color: 0x1b2229, roughness: .35 }); const body = new THREE.Mesh(new THREE.CapsuleGeometry(.15, .42, 6, 12), shell); body.rotation.z = hand === "left" ? -.18 : .18; group.add(body); const top = new THREE.Mesh(new THREE.SphereGeometry(.2, 16, 12), shell); top.position.y = .25; top.scale.set(1, .42, .7); group.add(top); const stick = new THREE.Mesh(new THREE.CylinderGeometry(.065, .065, .045, 16), dark); stick.position.set(hand === "left" ? -.06 : .06, .3, .1); stick.rotation.x = Math.PI / 2; group.add(stick); const grip = new THREE.Mesh(new THREE.BoxGeometry(.13, .18, .16), dark); grip.position.set(hand === "left" ? -.16 : .16, -.08, .05); group.add(grip); const trigger = new THREE.Mesh(new THREE.BoxGeometry(.12, .07, .13), dark); trigger.position.set(0, .43, -.08); group.add(trigger); const menu = new THREE.Mesh(new THREE.CylinderGeometry(.028, .028, .02, 12), dark); menu.position.set(.07, .31, .1); menu.rotation.x = Math.PI / 2; if (hand === "left") group.add(menu); return { group, stick: stick.position.clone(), grip: grip.position.clone(), trigger: trigger.position.clone(), menu: menu.position.clone() }; }
-function createControlsPanel() { const panel = new THREE.Group(); const backing = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 2.3), new THREE.MeshBasicMaterial({ color: 0x0b1826, depthWrite: false })); backing.renderOrder = 3; panel.add(backing); panel.add(worldText("CONTROLS", new THREE.Vector3(0, .92, .03), .3)); const left = questController("left"), right = questController("right"); left.group.position.set(-.55, -.12, .12); right.group.position.set(.55, -.12, .12); panel.add(left.group, right.group); const L = (v) => v.add(left.group.position), R = (v) => v.add(right.group.position); callout(panel, "DECREASE THROTTLE", new THREE.Vector3(-1.04, .55, .13), L(left.grip)); callout(panel, "STEER LEFT / RIGHT", new THREE.Vector3(-1.03, -.53, .13), L(left.stick)); callout(panel, "MENU: PAUSE / RESUME", new THREE.Vector3(-1.05, .08, .13), L(left.menu)); callout(panel, "INCREASE THROTTLE", new THREE.Vector3(1.04, .55, .13), R(right.grip)); callout(panel, "FIRE", new THREE.Vector3(.94, .79, .13), R(right.trigger)); callout(panel, "ROLL / PITCH", new THREE.Vector3(1.04, -.53, .13), R(right.stick)); panel.add(worldText("OK · PRESS RIGHT TRIGGER", new THREE.Vector3(0, -.9, .13), .22)); return panel; }
+function fitInstructionControllerModel(model, hand) {
+  const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+  model.scale.setScalar(instructionControllerGuideSize / Math.max(size.x, size.y, size.z, .001));
+  model.rotation.set(0, hand === "left" ? -.18 : .18, 0);
+}
+function loadLocalInstructionController(hand, slot) {
+  if (!slot || slot.loaded || slot.loading) return;
+  slot.loading = true;
+  new GLTFLoader().load(localControllerModelUrls[hand], (gltf) => {
+    if (slot.loaded) return;
+    const model = gltf.scene;
+    fitInstructionControllerModel(model, hand);
+    slot.slot.add(model);
+    slot.fallback.visible = false;
+    slot.loaded = true;
+    slot.loading = false;
+  }, undefined, (error) => {
+    slot.loading = false;
+    console.warn(`Local Quest ${hand} controller failed; keeping guide fallback`, error);
+  });
+}
+function questController(hand) {
+  const group = new THREE.Group();
+  const fallback = new THREE.Group();
+  const shell = new THREE.MeshStandardMaterial({ color: 0xe9edf1, roughness: .48, metalness: .12 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1b2229, roughness: .35 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.15, .42, 6, 12), shell);
+  body.rotation.z = hand === "left" ? -.18 : .18;
+  fallback.add(body);
+  const top = new THREE.Mesh(new THREE.SphereGeometry(.2, 16, 12), shell);
+  top.position.y = .25; top.scale.set(1, .42, .7); fallback.add(top);
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(.065, .065, .045, 16), dark);
+  stick.position.set(hand === "left" ? -.06 : .06, .3, .1); stick.rotation.x = Math.PI / 2; fallback.add(stick);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(.13, .18, .16), dark);
+  grip.position.set(hand === "left" ? -.16 : .16, -.08, .05); fallback.add(grip);
+  const trigger = new THREE.Mesh(new THREE.BoxGeometry(.12, .07, .13), dark);
+  trigger.position.set(0, .43, -.08); fallback.add(trigger);
+  const menu = new THREE.Mesh(new THREE.CylinderGeometry(.028, .028, .02, 12), dark);
+  menu.position.set(.07, .31, .1); menu.rotation.x = Math.PI / 2;
+  if (hand === "left") fallback.add(menu);
+  group.add(fallback);
+  return { group, fallback, stick: stick.position.clone(), grip: grip.position.clone(), trigger: trigger.position.clone(), menu: menu.position.clone() };
+}
+function createControlsPanel() {
+  const panel = new THREE.Group();
+  const backing = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 2.3), new THREE.MeshBasicMaterial({ color: 0x0b1826, depthWrite: false }));
+  backing.renderOrder = 3; panel.add(backing);
+  panel.add(worldText("CONTROLS", new THREE.Vector3(0, .92, .03), .3));
+  const left = questController("left"), right = questController("right");
+  left.group.position.set(-.55, -.12, .12); right.group.position.set(.55, -.12, .12);
+  panel.add(left.group, right.group);
+  instructionControllerSlots.left = { slot: left.group, fallback: left.fallback, loaded: false, loading: false };
+  instructionControllerSlots.right = { slot: right.group, fallback: right.fallback, loaded: false, loading: false };
+  loadLocalInstructionController("left", instructionControllerSlots.left);
+  loadLocalInstructionController("right", instructionControllerSlots.right);
+  const L = (v) => v.add(left.group.position), R = (v) => v.add(right.group.position);
+  callout(panel, "DECREASE THROTTLE", new THREE.Vector3(-1.04, .55, .13), L(left.grip));
+  callout(panel, "STEER LEFT / RIGHT", new THREE.Vector3(-1.03, -.53, .13), L(left.stick));
+  callout(panel, "MENU: PAUSE / RESUME", new THREE.Vector3(-1.05, .08, .13), L(left.menu));
+  callout(panel, "INCREASE THROTTLE", new THREE.Vector3(1.04, .55, .13), R(right.grip));
+  callout(panel, "FIRE", new THREE.Vector3(.94, .79, .13), R(right.trigger));
+  callout(panel, "ROLL / PITCH", new THREE.Vector3(1.04, -.53, .13), R(right.stick));
+  panel.add(worldText("OK · PRESS RIGHT TRIGGER", new THREE.Vector3(0, -.9, .13), .22));
+  return panel;
+}
 let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.55, -2.8); scene.add(controlsPanel);
 async function loadInstructionControllerModels(session) {
+  for (const hand of ["left", "right"]) loadLocalInstructionController(hand, instructionControllerSlots[hand]);
   try {
     inputProfilesList ??= await fetch(`${inputProfilesBase}profilesList.json`).then((response) => response.json());
     for (const source of session.inputSources) {
       const hand = source.handedness;
       const slot = instructionControllerSlots[hand];
-      if (!slot || slot.loaded) continue;
+      if (!slot || slot.loaded || slot.loading) continue;
       const profileId = source.profiles.find((id) => inputProfilesList[id]);
       if (!profileId) continue;
       const profileUrl = new URL(inputProfilesList[profileId], inputProfilesBase).href;
       const profile = await fetch(profileUrl).then((response) => response.json());
       const layout = profile.layouts?.[hand] ?? profile.layouts?.none;
       if (!layout?.assetPath) continue;
+      slot.loading = true;
       new GLTFLoader().load(new URL(layout.assetPath, profileUrl).href, (gltf) => {
+        if (slot.loaded) return;
         const model = gltf.scene;
-        const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-        model.scale.setScalar(.54 / Math.max(size.x, size.y, size.z, .001));
-        model.rotation.set(0, hand === "left" ? -.18 : .18, 0);
-        slot.slot.add(model); slot.fallback.visible = false; slot.loaded = true;
-      }, undefined, (error) => console.warn("Controller profile model failed", error));
+        fitInstructionControllerModel(model, hand);
+        slot.slot.add(model); slot.fallback.visible = false; slot.loaded = true; slot.loading = false;
+      }, undefined, (error) => {
+        slot.loading = false;
+        console.warn("Controller profile model failed", error);
+      });
     }
   } catch (error) { console.warn("Controller profile lookup failed; using guide fallback", error); }
 }
@@ -232,7 +304,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.10`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.15`);
     let fighterFromScene = false;
     const environment = [];
     let nextControls = null;
