@@ -124,6 +124,29 @@ function applyTransformOverrides(root, overrides) {
   }
 }
 
+function round(value) {
+  return Math.round(value * 10000) / 10000;
+}
+
+function panelSizeFromItem(item, fallback = [1, 1]) {
+  if (Array.isArray(item?.size) && item.size.length >= 2) {
+    return [Math.max(0.001, Number(item.size[0]) || fallback[0]), Math.max(0.001, Number(item.size[1]) || fallback[1])];
+  }
+  return [fallback[0], fallback[1]];
+}
+
+/** Legacy text used a 1×1 plane and non-unit scale for apparent size. */
+function normalizeTextItem(item) {
+  if (Array.isArray(item.size) && item.size.length >= 2) return item;
+  const width = Math.max(0.001, Math.abs(Number(item.scale?.[0]) || 1));
+  const height = Math.max(0.001, Math.abs(Number(item.scale?.[1]) || 1));
+  return {
+    ...item,
+    size: [width, height],
+    scale: [1, 1, Number(item.scale?.[2]) || 1],
+  };
+}
+
 function paintLabel(label, text) {
   const labelCanvas = label.material.map.image;
   const context = labelCanvas.getContext("2d");
@@ -148,15 +171,16 @@ function faceLabelToCamera(label, cam) {
 }
 
 function makeText(item) {
+  const size = panelSizeFromItem(item, [1, 1]);
   const labelCanvas = document.createElement("canvas");
   labelCanvas.width = 1536;
   labelCanvas.height = 200;
   const label = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
+    new THREE.PlaneGeometry(size[0], size[1]),
     new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(labelCanvas), transparent: true, depthTest: false })
   );
   label.renderOrder = 2;
-  const spec = { type: "text", text: item.text || "Label" };
+  const spec = { type: "text", text: item.text || "Label", size: size.map(round) };
   if (item.lookAtCamera) spec.lookAtCamera = true;
   label.userData.scene = spec;
   paintLabel(label, spec.text);
@@ -248,23 +272,29 @@ function applyTransform(object, item) {
 }
 
 export function createSceneObject(item, options = {}) {
-  const type = item.type || "box";
+  let source = item;
+  const type = source.type || "box";
   if (type === "arrowEnd") return null;
+  if (type === "text") source = normalizeTextItem(source);
   let object;
   if (type === "group" || type === "camera") object = new THREE.Group();
-  else if (type === "text") object = makeText(item);
-  else if (type === "arrow") object = makeArrow(item);
-  else if (type === "asset") object = makeAsset(item, options);
-  else if (type === "plane") object = new THREE.Mesh(new THREE.PlaneGeometry(...(item.size || [1, 1])), standardMaterial(item));
-  else if (type === "sphere") object = new THREE.Mesh(new THREE.SphereGeometry(item.radius ?? 0.2, 16, 12), standardMaterial(item));
-  else if (type === "cylinder") object = new THREE.Mesh(new THREE.CylinderGeometry(item.radius ?? 0.05, item.radius ?? 0.05, item.height ?? 0.1, 16), standardMaterial(item));
-  else if (type === "capsule") object = new THREE.Mesh(new THREE.CapsuleGeometry(item.radius ?? 0.15, item.length ?? 0.4, 6, 12), standardMaterial(item));
-  else object = new THREE.Mesh(new THREE.BoxGeometry(...(item.size || [1, 1, 1])), standardMaterial({ ...item, type: "box" }));
-  if (!object.userData.scene) rememberSpec(object, item);
-  object.name = item.name || type;
-  applyTransform(object, item);
+  else if (type === "text") object = makeText(source);
+  else if (type === "arrow") object = makeArrow(source);
+  else if (type === "asset") object = makeAsset(source, options);
+  else if (type === "plane") {
+    const size = panelSizeFromItem(source, [1, 1]);
+    object = new THREE.Mesh(new THREE.PlaneGeometry(size[0], size[1]), standardMaterial({ ...source, size }));
+    rememberSpec(object, { ...source, size: size.map(round) });
+  }
+  else if (type === "sphere") object = new THREE.Mesh(new THREE.SphereGeometry(source.radius ?? 0.2, 16, 12), standardMaterial(source));
+  else if (type === "cylinder") object = new THREE.Mesh(new THREE.CylinderGeometry(source.radius ?? 0.05, source.radius ?? 0.05, source.height ?? 0.1, 16), standardMaterial(source));
+  else if (type === "capsule") object = new THREE.Mesh(new THREE.CapsuleGeometry(source.radius ?? 0.15, source.length ?? 0.4, 6, 12), standardMaterial(source));
+  else object = new THREE.Mesh(new THREE.BoxGeometry(...(source.size || [1, 1, 1])), standardMaterial({ ...source, type: "box" }));
+  if (!object.userData.scene) rememberSpec(object, source);
+  object.name = source.name || type;
+  applyTransform(object, source);
   if (type !== "asset" && type !== "arrow") {
-    for (const child of item.children || []) {
+    for (const child of source.children || []) {
       const childObject = createSceneObject(child, options);
       if (childObject) object.add(childObject);
     }

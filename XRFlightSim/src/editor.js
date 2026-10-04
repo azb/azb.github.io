@@ -11,6 +11,9 @@ const hierarchySearch = document.querySelector("#hierarchy-search");
 const selection = document.querySelector("#selection");
 const sceneStatus = document.querySelector("#scene-status");
 const transformSection = document.querySelector("#transform");
+const sizeSection = document.querySelector("#size-section");
+const widthInput = document.querySelector("#object-width");
+const heightInput = document.querySelector("#object-height");
 const materialSection = document.querySelector("#material");
 const materialSliders = document.querySelector("#material-sliders");
 const textSection = document.querySelector("#text-section");
@@ -208,6 +211,36 @@ function paintLabel(sprite, text) {
   sprite.userData.scene.text = text;
 }
 
+function panelSizeFromItem(item, fallback = [1, 1]) {
+  if (Array.isArray(item?.size) && item.size.length >= 2) {
+    return [Math.max(0.001, Number(item.size[0]) || fallback[0]), Math.max(0.001, Number(item.size[1]) || fallback[1])];
+  }
+  return [fallback[0], fallback[1]];
+}
+
+/** Legacy text used a 1×1 plane and non-unit scale for apparent size. */
+function normalizeTextItem(item) {
+  if (Array.isArray(item.size) && item.size.length >= 2) return item;
+  const width = Math.max(0.001, Math.abs(Number(item.scale?.[0]) || 1));
+  const height = Math.max(0.001, Math.abs(Number(item.scale?.[1]) || 1));
+  return {
+    ...item,
+    size: [width, height],
+    scale: [1, 1, Number(item.scale?.[2]) || 1],
+  };
+}
+
+function applyPanelSize(object, width, height) {
+  const type = object?.userData?.scene?.type;
+  if (type !== "plane" && type !== "text") return;
+  const w = Math.max(0.001, Number(width) || 0.001);
+  const h = Math.max(0.001, Number(height) || 0.001);
+  object.geometry?.dispose();
+  object.geometry = new THREE.PlaneGeometry(w, h);
+  object.userData.scene.size = [round(w), round(h)];
+  if (type === "text") paintLabel(object, object.userData.scene.text || "");
+}
+
 const labelWorldPosition = new THREE.Vector3();
 const labelRestoreQuaternion = new THREE.Quaternion();
 const meshRaycast = THREE.Mesh.prototype.raycast;
@@ -219,15 +252,16 @@ function faceLabelToCamera(label, cam) {
 }
 
 function makeText(item) {
+  const size = panelSizeFromItem(item, [1, 1]);
   const labelCanvas = document.createElement("canvas");
   labelCanvas.width = 1536;
   labelCanvas.height = 200;
   const label = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
+    new THREE.PlaneGeometry(size[0], size[1]),
     new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(labelCanvas), transparent: true, depthTest: false })
   );
   label.renderOrder = 2;
-  const spec = { type: "text", text: item.text || "Label" };
+  const spec = { type: "text", text: item.text || "Label", size: size.map(round) };
   if (item.lookAtCamera) spec.lookAtCamera = true;
   label.userData.scene = spec;
   paintLabel(label, spec.text);
@@ -592,23 +626,29 @@ function makeCamera() {
 }
 
 function makeObject(item) {
-  const type = item.type || "box";
+  let source = item;
+  const type = source.type || "box";
+  if (type === "text") source = normalizeTextItem(source);
   let object;
   if (type === "camera") object = makeCamera();
   else if (type === "group") object = new THREE.Group();
-  else if (type === "text") object = makeText(item);
-  else if (type === "arrow") object = makeArrow(item);
-  else if (type === "asset") object = makeAsset(item);
-  else if (type === "plane") object = new THREE.Mesh(new THREE.PlaneGeometry(...(item.size || [1, 1])), standardMaterial(item));
-  else if (type === "sphere") object = new THREE.Mesh(new THREE.SphereGeometry(item.radius ?? 0.2, 16, 12), standardMaterial(item));
-  else if (type === "cylinder") object = new THREE.Mesh(new THREE.CylinderGeometry(item.radius ?? 0.05, item.radius ?? 0.05, item.height ?? 0.1, 16), standardMaterial(item));
-  else if (type === "capsule") object = new THREE.Mesh(new THREE.CapsuleGeometry(item.radius ?? 0.15, item.length ?? 0.4, 6, 12), standardMaterial(item));
-  else object = new THREE.Mesh(new THREE.BoxGeometry(...(item.size || [1, 1, 1])), standardMaterial({ ...item, type: "box" }));
-  if (!object.userData.scene) rememberSpec(object, item);
-  object.name = item.name || type;
-  applyTransform(object, item);
+  else if (type === "text") object = makeText(source);
+  else if (type === "arrow") object = makeArrow(source);
+  else if (type === "asset") object = makeAsset(source);
+  else if (type === "plane") {
+    const size = panelSizeFromItem(source, [1, 1]);
+    object = new THREE.Mesh(new THREE.PlaneGeometry(size[0], size[1]), standardMaterial({ ...source, size }));
+    rememberSpec(object, { ...source, size: size.map(round) });
+  }
+  else if (type === "sphere") object = new THREE.Mesh(new THREE.SphereGeometry(source.radius ?? 0.2, 16, 12), standardMaterial(source));
+  else if (type === "cylinder") object = new THREE.Mesh(new THREE.CylinderGeometry(source.radius ?? 0.05, source.radius ?? 0.05, source.height ?? 0.1, 16), standardMaterial(source));
+  else if (type === "capsule") object = new THREE.Mesh(new THREE.CapsuleGeometry(source.radius ?? 0.15, source.length ?? 0.4, 6, 12), standardMaterial(source));
+  else object = new THREE.Mesh(new THREE.BoxGeometry(...(source.size || [1, 1, 1])), standardMaterial({ ...source, type: "box" }));
+  if (!object.userData.scene) rememberSpec(object, source);
+  object.name = source.name || type;
+  applyTransform(object, source);
   if (type !== "asset" && type !== "arrow") {
-    for (const child of item.children || []) {
+    for (const child of source.children || []) {
       if (child.type === "arrowEnd") continue;
       object.add(makeObject(child));
     }
@@ -646,6 +686,7 @@ function clearContent() {
   selected = null;
   selection.textContent = "Select an object";
   transformSection.hidden = true;
+  sizeSection.hidden = true;
   materialSection.hidden = true;
   textSection.hidden = true;
   visibleField.hidden = true;
@@ -659,6 +700,7 @@ function clearSelectionDisplay() {
   transform.detach();
   selection.textContent = "Select an object";
   transformSection.hidden = true;
+  sizeSection.hidden = true;
   materialSection.hidden = true;
   textSection.hidden = true;
   visibleField.hidden = true;
@@ -831,11 +873,40 @@ function syncInspector() {
   } else if (showArrowColor) {
     colorInput.value = `#${new THREE.Color(sceneSpec.color ?? 0x1686ff).getHexString()}`;
   }
+  const showSize = sceneSpec?.type === "plane" || sceneSpec?.type === "text";
+  sizeSection.hidden = !showSize;
+  if (showSize) {
+    const geo = selected.geometry?.parameters;
+    const size = panelSizeFromItem(sceneSpec, [
+      geo?.width ?? 1,
+      geo?.height ?? 1,
+    ]);
+    if (document.activeElement !== widthInput) widthInput.value = Number(size[0]).toFixed(3);
+    if (document.activeElement !== heightInput) heightInput.value = Number(size[1]).toFixed(3);
+  }
   textSection.hidden = sceneSpec?.type !== "text";
   if (sceneSpec?.type === "text" && document.activeElement !== textInput) textInput.value = sceneSpec.text ?? "";
   if (sceneSpec?.type === "text") lookAtInput.checked = sceneSpec.lookAtCamera === true;
   visibleInput.checked = selected.visible;
 }
+
+function commitSizeFromInputs() {
+  if (!selected) return;
+  const sceneSpec = selected.userData?.scene;
+  if (sceneSpec?.type !== "plane" && sceneSpec?.type !== "text") return;
+  beginEdit();
+  applyPanelSize(selected, widthInput.value, heightInput.value);
+  markDirty();
+  syncInspector();
+  endEdit();
+}
+
+widthInput.addEventListener("focus", beginEdit);
+widthInput.addEventListener("blur", endEdit);
+heightInput.addEventListener("focus", beginEdit);
+heightInput.addEventListener("blur", endEdit);
+widthInput.addEventListener("change", commitSizeFromInputs);
+heightInput.addEventListener("change", commitSizeFromInputs);
 
 document.querySelectorAll("[data-transform]").forEach((input) => {
   input.addEventListener("focus", beginEdit);
@@ -1049,6 +1120,13 @@ function serializeObject(object) {
   const spec = { ...(object.userData.scene ?? { type: object.isGroup ? "group" : "box" }) };
   if (spec.lookAtCamera !== true) delete spec.lookAtCamera;
   if (spec.type === "arrow") syncArrowVisual(object);
+  if ((spec.type === "plane" || spec.type === "text") && object.geometry?.parameters) {
+    const { width, height } = object.geometry.parameters;
+    if (width != null && height != null) {
+      spec.size = [round(width), round(height)];
+      if (object.userData.scene) object.userData.scene.size = spec.size;
+    }
+  }
   spec.name = object.name || spec.name || "Object";
   spec.position = object.position.toArray().map(round);
   spec.rotation = [object.rotation.x, object.rotation.y, object.rotation.z].map(round);
