@@ -62,7 +62,7 @@
     {
       "type": "asset",
       "url": "./assets/FighterPlaneWithControls.glb",
-      "wingspan": 2.84433,
+      "wingspan": 0.500226,
       "name": "FighterPlane",
       "position": [
         0,
@@ -86,8 +86,8 @@
       "name": "LandingStrip",
       "position": [
         0,
-        0.854449,
-        -6.979182
+        1.386468,
+        -6.996339
       ],
       "rotation": [
         0,
@@ -95,9 +95,9 @@
         0
       ],
       "scale": [
-        1.425736,
-        1.425736,
-        1.425736
+        0.250741,
+        0.250741,
+        0.250741
       ]
     },
     {
