@@ -16,7 +16,7 @@ const lensWingspan = 2.84433;
 const engineSound = new Audio(assetUrl("audio/PlaneEngineNoise.wav"));
 engineSound.loop = true;
 engineSound.preload = "auto";
-engineSound.volume = .12;
+engineSound.volume = .48;
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -266,7 +266,7 @@ function startEngineSound() {
 }
 function updateEngineSound() {
   engineSound.playbackRate = lerp(.55, 1.45, flight.throttle);
-  engineSound.volume = lerp(.07, .28, flight.throttle);
+  engineSound.volume = lerp(.28, 1, flight.throttle);
 }
 function playBalloonPop() {
   const pop = new Audio(balloonPopUrl);
