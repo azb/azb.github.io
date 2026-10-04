@@ -3,14 +3,14 @@
   "version": 1,
   "view": {
     "position": [
-      -14.7901,
-      4.9428,
-      7.0279
+      -1.4376,
+      0.7884,
+      -0.9012
     ],
     "target": [
-      -0.0662,
-      0.9807,
-      -3.3442
+      0.3149,
+      -0.8407,
+      -3.3077
     ]
   },
   "objects": [
@@ -61,7 +61,7 @@
     },
     {
       "type": "asset",
-      "url": "./assets/FighterPlaneWithControls.glb?v=0.4.17",
+      "url": "./assets/FighterPlaneWithControls.glb",
       "wingspan": 0.500226,
       "name": "FighterPlane",
       "position": [
@@ -83,11 +83,12 @@
     {
       "type": "asset",
       "url": "./assets/LandingStrip.glb",
+      "wingspan": null,
       "name": "LandingStrip",
       "position": [
         0,
-        1.386468,
-        -6.996339
+        1.3865,
+        -6.9963
       ],
       "rotation": [
         0,
@@ -95,9 +96,9 @@
         0
       ],
       "scale": [
-        0.250741,
-        0.250741,
-        0.250741
+        0.2507,
+        0.2507,
+        0.2507
       ]
     },
     {
@@ -170,7 +171,7 @@
           "text": "DECREASE THROTTLE",
           "name": "Decrease Throttle Label",
           "position": [
-            -1.04,
+            -1.6252,
             0.55,
             0.13
           ],
@@ -215,7 +216,7 @@
           "text": "STEER LEFT / RIGHT",
           "name": "Steer Label",
           "position": [
-            -1.03,
+            -1.6224,
             -0.53,
             0.13
           ],
@@ -260,7 +261,7 @@
           "text": "MENU: PAUSE / RESUME",
           "name": "Pause Label",
           "position": [
-            -1.05,
+            -1.741,
             0.08,
             0.13
           ],
@@ -305,9 +306,9 @@
           "text": "INCREASE THROTTLE",
           "name": "Increase Throttle Label",
           "position": [
-            1.04,
-            0.55,
-            0.13
+            1.8528,
+            0.1245,
+            -0.0757
           ],
           "rotation": [
             0,
@@ -350,9 +351,9 @@
           "text": "FIRE",
           "name": "Fire Label",
           "position": [
-            0.94,
-            0.79,
-            0.13
+            1.6677,
+            0.6029,
+            0.0395
           ],
           "rotation": [
             0,
@@ -395,7 +396,7 @@
           "text": "ROLL / PITCH",
           "name": "Roll Pitch Label",
           "position": [
-            1.04,
+            1.5835,
             -0.53,
             0.13
           ],
@@ -437,7 +438,7 @@
         },
         {
           "type": "text",
-          "text": "OK \u00b7 PRESS RIGHT TRIGGER",
+          "text": "OK · PRESS RIGHT TRIGGER",
           "name": "OK Label",
           "position": [
             0,
@@ -457,44 +458,44 @@
         },
         {
           "type": "asset",
-          "name": "Left Quest Controller",
           "url": "./assets/controllers/meta-quest-touch-left.glb",
           "wingspan": 0.37,
+          "name": "Left Quest Controller",
           "position": [
-            -0.55,
-            -0.12,
-            0.12
+            -0.6025,
+            -0.1034,
+            0.2601
           ],
           "rotation": [
-            0,
-            -0.18,
-            0
+            -2.0762,
+            -0.7342,
+            -2.6132
           ],
           "scale": [
-            1,
-            1,
-            1
+            1.5,
+            1.5,
+            1.5
           ]
         },
         {
           "type": "asset",
-          "name": "Right Quest Controller",
           "url": "./assets/controllers/meta-quest-touch-right.glb",
           "wingspan": 0.37,
+          "name": "Right Quest Controller",
           "position": [
             0.55,
-            -0.12,
-            0.12
+            -0.1316,
+            0.194
           ],
           "rotation": [
-            0,
-            0.18,
-            0
+            -2.1349,
+            0.6248,
+            2.8791
           ],
           "scale": [
-            1,
-            1,
-            1
+            1.5,
+            1.5,
+            1.5
           ]
         }
       ]
