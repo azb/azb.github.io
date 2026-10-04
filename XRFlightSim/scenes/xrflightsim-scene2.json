@@ -1,0 +1,826 @@
+{
+  "format": "XRFlightSimScene",
+  "version": 1,
+  "view": {
+    "position": [
+      2.6,
+      2.15,
+      0.85
+    ],
+    "target": [
+      0,
+      1.45,
+      -2.9
+    ]
+  },
+  "objects": [
+    {
+      "type": "plane",
+      "size": [
+        1000,
+        1000
+      ],
+      "color": 5013058,
+      "name": "Ground",
+      "position": [
+        0,
+        -3,
+        0
+      ],
+      "rotation": [
+        -1.5708,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "metalness": 0,
+      "roughness": 1
+    },
+    {
+      "type": "asset",
+      "url": "./assets/FighterPlaneWithControls.glb",
+      "wingspan": 2.84433,
+      "name": "FighterPlane",
+      "position": [
+        0,
+        1.5,
+        -7
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "type": "group",
+      "name": "Controls Panel",
+      "position": [
+        0,
+        1.55,
+        -2.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "children": [
+        {
+          "type": "plane",
+          "size": [
+            3.7,
+            2.3
+          ],
+          "color": 727078,
+          "name": "Controls Backing",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "metalness": 0,
+          "roughness": 1
+        },
+        {
+          "type": "text",
+          "text": "CONTROLS",
+          "name": "Controls Title",
+          "position": [
+            0,
+            0.92,
+            0.03
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.68,
+            0.3,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "DECREASE THROTTLE",
+          "name": "Decrease Throttle Label",
+          "position": [
+            -1.04,
+            0.55,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.4,
+            0.25,
+            1
+          ]
+        },
+        {
+          "type": "arrow",
+          "color": 1476351,
+          "end": [
+            0.33,
+            -0.75,
+            0.04
+          ],
+          "name": "Decrease Throttle Arrow",
+          "position": [
+            -1.04,
+            0.55,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "STEER LEFT / RIGHT",
+          "name": "Steer Label",
+          "position": [
+            -1.03,
+            -0.53,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.4,
+            0.25,
+            1
+          ]
+        },
+        {
+          "type": "arrow",
+          "color": 1476351,
+          "end": [
+            0.42,
+            0.71,
+            0.09
+          ],
+          "name": "Steer Arrow",
+          "position": [
+            -1.03,
+            -0.53,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "MENU: PAUSE / RESUME",
+          "name": "Pause Label",
+          "position": [
+            -1.05,
+            0.08,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.4,
+            0.25,
+            1
+          ]
+        },
+        {
+          "type": "arrow",
+          "color": 1476351,
+          "end": [
+            0.57,
+            0.11,
+            0.09
+          ],
+          "name": "Pause Arrow",
+          "position": [
+            -1.05,
+            0.08,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "INCREASE THROTTLE",
+          "name": "Increase Throttle Label",
+          "position": [
+            1.04,
+            0.55,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.4,
+            0.25,
+            1
+          ]
+        },
+        {
+          "type": "arrow",
+          "color": 1476351,
+          "end": [
+            -0.33,
+            -0.75,
+            0.04
+          ],
+          "name": "Increase Throttle Arrow",
+          "position": [
+            1.04,
+            0.55,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "BLAST",
+          "name": "Fire Label",
+          "position": [
+            0.94,
+            1.05,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.4,
+            0.25,
+            1
+          ]
+        },
+        {
+          "type": "arrow",
+          "color": 1476351,
+          "end": [
+            -0.39,
+            -0.48,
+            -0.09
+          ],
+          "name": "Fire Arrow",
+          "position": [
+            0.94,
+            0.79,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "ROLL / PITCH",
+          "name": "Roll Pitch Label",
+          "position": [
+            1.04,
+            -0.53,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.4,
+            0.25,
+            1
+          ]
+        },
+        {
+          "type": "arrow",
+          "color": 1476351,
+          "end": [
+            -0.43,
+            0.71,
+            0.09
+          ],
+          "name": "Roll Pitch Arrow",
+          "position": [
+            1.04,
+            -0.53,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "OK · PRESS RIGHT TRIGGER",
+          "name": "OK Label",
+          "position": [
+            0,
+            -0.9,
+            0.13
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.232,
+            0.22,
+            1
+          ]
+        },
+        {
+          "type": "group",
+          "name": "Left Quest Controller",
+          "position": [
+            -0.55,
+            -0.12,
+            0.12
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "children": [
+            {
+              "type": "capsule",
+              "radius": 0.15,
+              "length": 0.42,
+              "color": 15329777,
+              "name": "Left Body",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                -0.18
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.48
+            },
+            {
+              "type": "sphere",
+              "radius": 0.2,
+              "color": 15329777,
+              "name": "Left Top",
+              "position": [
+                0,
+                0.25,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                0.42,
+                0.7
+              ],
+              "metalness": 0.12,
+              "roughness": 0.48
+            },
+            {
+              "type": "cylinder",
+              "radius": 0.065,
+              "height": 0.045,
+              "color": 1778217,
+              "name": "Left Stick",
+              "position": [
+                -0.06,
+                0.3,
+                0.1
+              ],
+              "rotation": [
+                1.5708,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.35
+            },
+            {
+              "type": "box",
+              "size": [
+                0.13,
+                0.18,
+                0.16
+              ],
+              "color": 1778217,
+              "name": "Left Grip",
+              "position": [
+                -0.16,
+                -0.08,
+                0.05
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.35
+            },
+            {
+              "type": "box",
+              "size": [
+                0.12,
+                0.07,
+                0.13
+              ],
+              "color": 1778217,
+              "name": "Left Trigger",
+              "position": [
+                0,
+                0.43,
+                -0.08
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.35
+            },
+            {
+              "type": "cylinder",
+              "radius": 0.028,
+              "height": 0.02,
+              "color": 1778217,
+              "name": "Left Menu",
+              "position": [
+                0.07,
+                0.31,
+                0.1
+              ],
+              "rotation": [
+                1.5708,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.35
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "name": "Right Quest Controller",
+          "position": [
+            0.55,
+            -0.12,
+            0.12
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "children": [
+            {
+              "type": "capsule",
+              "radius": 0.15,
+              "length": 0.42,
+              "color": 15329777,
+              "name": "Right Body",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0.18
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.48
+            },
+            {
+              "type": "sphere",
+              "radius": 0.2,
+              "color": 15329777,
+              "name": "Right Top",
+              "position": [
+                0,
+                0.25,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                0.42,
+                0.7
+              ],
+              "metalness": 0.12,
+              "roughness": 0.48
+            },
+            {
+              "type": "cylinder",
+              "radius": 0.065,
+              "height": 0.045,
+              "color": 1778217,
+              "name": "Right Stick",
+              "position": [
+                0.06,
+                0.3,
+                0.1
+              ],
+              "rotation": [
+                1.5708,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.35
+            },
+            {
+              "type": "box",
+              "size": [
+                0.13,
+                0.18,
+                0.16
+              ],
+              "color": 1778217,
+              "name": "Right Grip",
+              "position": [
+                0.16,
+                -0.08,
+                0.05
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.35
+            },
+            {
+              "type": "box",
+              "size": [
+                0.12,
+                0.07,
+                0.13
+              ],
+              "color": 1778217,
+              "name": "Right Trigger",
+              "position": [
+                0,
+                0.43,
+                -0.08
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ],
+              "metalness": 0.12,
+              "roughness": 0.35
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "name": "Pause Panel",
+      "position": [
+        0,
+        1.6,
+        -2.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "visible": false,
+      "children": [
+        {
+          "type": "plane",
+          "size": [
+            2.9,
+            1.05
+          ],
+          "color": 270866,
+          "name": "Pause Backing",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "metalness": 0,
+          "roughness": 1
+        },
+        {
+          "type": "text",
+          "text": "SIMULATION PAUSED",
+          "name": "Pause Title",
+          "position": [
+            0,
+            0.16,
+            0.02
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.68,
+            0.3,
+            1
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Press the left controller Menu button to resume",
+          "name": "Pause Hint",
+          "position": [
+            0,
+            -0.18,
+            0.02
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.9,
+            0.22,
+            1
+          ]
+        }
+      ]
+    }
+  ]
+}

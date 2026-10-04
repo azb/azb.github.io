@@ -13,6 +13,7 @@ const materialSection = document.querySelector("#material");
 const materialSliders = document.querySelector("#material-sliders");
 const textSection = document.querySelector("#text-section");
 const textInput = document.querySelector("#object-text");
+const lookAtInput = document.querySelector("#text-look-at-camera");
 const visibleField = document.querySelector("#visible-field");
 const visibleInput = document.querySelector("#object-visible");
 const colorInput = document.querySelector("#material-color");
@@ -34,8 +35,28 @@ orbit.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
 orbit.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
 orbit.target.set(0, 1, 0);
 orbit.update();
+const wheelDollyOffset = new THREE.Vector3();
+canvas.addEventListener("wheel", (event) => {
+  if ((event.buttons & 4) === 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  wheelDollyOffset.copy(camera.position).sub(orbit.target);
+  const currentDistance = wheelDollyOffset.length();
+  if (currentDistance === 0) return;
+  const zoomScale = Math.pow(0.95, orbit.zoomSpeed * Math.abs(event.deltaY) * 0.01);
+  let distance = event.deltaY < 0 ? currentDistance * zoomScale : currentDistance / zoomScale;
+  if (Number.isFinite(orbit.minDistance)) distance = Math.max(orbit.minDistance, distance);
+  if (Number.isFinite(orbit.maxDistance)) distance = Math.min(orbit.maxDistance, distance);
+  wheelDollyOffset.setLength(distance);
+  camera.position.copy(orbit.target).add(wheelDollyOffset);
+  orbit.update();
+}, { passive: false });
 const transform = new TransformControls(camera, canvas);
-transform.addEventListener("dragging-changed", (event) => { orbit.enabled = !event.value; });
+transform.addEventListener("dragging-changed", (event) => {
+  orbit.enabled = !event.value;
+  if (event.value) beginEdit();
+  else endEdit();
+});
 transform.addEventListener("objectChange", () => { dirty = true; syncInspector(); });
 scene.add(transform.getHelper());
 const content = new THREE.Group();
@@ -46,8 +67,10 @@ const pointer = new THREE.Vector2();
 const selectedSet = new Set();
 const selectionBox = document.querySelector("#selection-box");
 let selected = null;
+let pendingSelectionPath = null;
 let selectionStart = null;
 let dirty = false;
+const listExpanded = new Map();
 
 function resize() {
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
@@ -59,11 +82,105 @@ resize();
 
 function setStatus(message) { sceneStatus.textContent = message; }
 function round(value) { return Math.round(value * 10000) / 10000; }
+function standardMaterials(object) {
+  if (!object?.material) return [];
+  return [].concat(object.material).filter((material) => material?.isMeshStandardMaterial);
+}
 function primaryMaterial(object) {
   if (!object?.material) return null;
-  return Array.isArray(object.material) ? object.material[0] : object.material;
+  return standardMaterials(object)[0] || [].concat(object.material)[0] || null;
 }
 function markDirty() { dirty = true; }
+
+const undoStack = [];
+const redoStack = [];
+let undoLock = false;
+let historyCheckpoint = null;
+
+function selectionPath() {
+  if (!selected) return null;
+  const path = [];
+  let node = selected;
+  while (node && node !== content) {
+    if (!node.parent) return null;
+    path.unshift(node.parent.children.indexOf(node));
+    node = node.parent;
+  }
+  return path;
+}
+
+function selectByPath(path) {
+  let node = content;
+  for (const index of path || []) node = node?.children?.[index];
+  if (node && node !== content) {
+    select(node, true);
+    pendingSelectionPath = null;
+    return true;
+  }
+  return false;
+}
+
+function sceneSnapshot() {
+  const data = currentScene();
+  delete data.view;
+  data.selected = selectionPath();
+  return JSON.stringify(data);
+}
+
+function resetHistory() {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  historyCheckpoint = null;
+}
+
+function beginEdit() {
+  if (undoLock || historyCheckpoint) return;
+  historyCheckpoint = sceneSnapshot();
+}
+
+function endEdit() {
+  if (undoLock || !historyCheckpoint) return;
+  const now = sceneSnapshot();
+  if (now !== historyCheckpoint) {
+    undoStack.push(historyCheckpoint);
+    if (undoStack.length > 60) undoStack.shift();
+    redoStack.length = 0;
+    dirty = true;
+  }
+  historyCheckpoint = null;
+}
+
+function restoreSnapshot(snapshot, status) {
+  undoLock = true;
+  const data = JSON.parse(snapshot);
+  const selectedPath = data.selected || null;
+  delete data.selected;
+  data.view = { position: camera.position.toArray(), target: orbit.target.toArray() };
+  loadSceneData(data);
+  pendingSelectionPath = selectedPath || null;
+  if (selectedPath) selectByPath(selectedPath);
+  dirty = true;
+  undoLock = false;
+  setStatus(status);
+}
+
+function undo() {
+  if (!undoStack.length) {
+    setStatus("Nothing to undo");
+    return;
+  }
+  redoStack.push(sceneSnapshot());
+  restoreSnapshot(undoStack.pop(), "Undo");
+}
+
+function redo() {
+  if (!redoStack.length) {
+    setStatus("Nothing to redo");
+    return;
+  }
+  undoStack.push(sceneSnapshot());
+  restoreSnapshot(redoStack.pop(), "Redo");
+}
 
 function paintLabel(sprite, text) {
   const labelCanvas = sprite.material.map.image;
@@ -80,15 +197,56 @@ function paintLabel(sprite, text) {
   sprite.userData.scene.text = text;
 }
 
+const labelWorldPosition = new THREE.Vector3();
+const labelRestoreQuaternion = new THREE.Quaternion();
+const meshRaycast = THREE.Mesh.prototype.raycast;
+
+function faceLabelToCamera(label, cam) {
+  label.getWorldPosition(labelWorldPosition);
+  if (labelWorldPosition.distanceToSquared(cam.position) < 1e-10) return;
+  label.lookAt(cam.position);
+}
+
 function makeText(item) {
   const labelCanvas = document.createElement("canvas");
   labelCanvas.width = 1536;
   labelCanvas.height = 200;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(labelCanvas), transparent: true, depthTest: false }));
-  sprite.renderOrder = 2;
-  sprite.userData.scene = { type: "text", text: item.text || "Label" };
-  paintLabel(sprite, sprite.userData.scene.text);
-  return sprite;
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(labelCanvas), transparent: true, depthTest: false })
+  );
+  label.renderOrder = 2;
+  const spec = { type: "text", text: item.text || "Label" };
+  if (item.lookAtCamera) spec.lookAtCamera = true;
+  label.userData.scene = spec;
+  paintLabel(label, spec.text);
+  const facing = { quaternion: new THREE.Quaternion(), active: false };
+  label.onBeforeRender = function (renderer, scene, cam) {
+    if (!this.userData.scene?.lookAtCamera || facing.active) return;
+    facing.quaternion.copy(this.quaternion);
+    facing.active = true;
+    faceLabelToCamera(this, cam);
+    this.updateMatrixWorld(true);
+  };
+  label.onAfterRender = function () {
+    if (!facing.active) return;
+    this.quaternion.copy(facing.quaternion);
+    facing.active = false;
+    this.updateMatrixWorld(true);
+  };
+  label.raycast = function (raycaster, intersects) {
+    if (!this.userData.scene?.lookAtCamera) {
+      meshRaycast.call(this, raycaster, intersects);
+      return;
+    }
+    labelRestoreQuaternion.copy(this.quaternion);
+    faceLabelToCamera(this, camera);
+    this.updateMatrixWorld(true);
+    meshRaycast.call(this, raycaster, intersects);
+    this.quaternion.copy(labelRestoreQuaternion);
+    this.updateMatrixWorld(true);
+  };
+  return label;
 }
 
 function makeArrow(item) {
@@ -105,18 +263,158 @@ function makeArrow(item) {
   return group;
 }
 
+function applyFighterMaterials(model) {
+  const applyLensMaterial = (sourceMaterial) => {
+    const lensMaterial = sourceMaterial.clone();
+    if (sourceMaterial.name === "tires") {
+      lensMaterial.map = null;
+      lensMaterial.color.setRGB(0.03, 0.035, 0.04);
+      lensMaterial.metalness = 0.03;
+      lensMaterial.roughness = 0.92;
+    } else if (sourceMaterial.name === "teamcolor") {
+      lensMaterial.map = null;
+      lensMaterial.color.setRGB(0, 0.149, 1);
+      lensMaterial.metalness = 0.35;
+      lensMaterial.roughness = 0.58;
+    } else {
+      lensMaterial.map = null;
+      lensMaterial.color.setRGB(0.78, 0.8, 0.82);
+      lensMaterial.metalness = 0.5;
+      lensMaterial.roughness = 0.6;
+    }
+    lensMaterial.needsUpdate = true;
+    return lensMaterial;
+  };
+  model.traverse((node) => {
+    if (!node.isMesh) return;
+    if (node.name === "Windshield") {
+      node.material = new THREE.MeshStandardMaterial({ color: 0x090d12, metalness: 0.25, roughness: 0.18 });
+      return;
+    }
+    node.material = Array.isArray(node.material) ? node.material.map(applyLensMaterial) : applyLensMaterial(node.material);
+  });
+}
+
+function materialOverrideValues(material) {
+  const override = {};
+  if (material?.color) override.color = material.color.getHex();
+  if (material?.metalness != null) override.metalness = round(material.metalness);
+  if (material?.roughness != null) override.roughness = round(material.roughness);
+  if (material?.name) override.material = material.name;
+  return override;
+}
+
+function rememberSubmeshMaterials(mesh) {
+  if (!mesh?.isMesh || mesh.userData?.scene) return;
+  const material = standardMaterials(mesh)[0];
+  if (!material) return;
+  mesh.userData.materialOverride = materialOverrideValues(material);
+}
+
+function applyMaterialOverrides(root, overrides) {
+  if (!root || !overrides?.length) return;
+  for (const override of overrides) {
+    let node = root;
+    for (const index of override.path || []) node = node?.children?.[index];
+    if (!node?.isMesh && override.name) {
+      root.traverse((child) => {
+        if (!node?.isMesh && child.isMesh && child.name === override.name) node = child;
+      });
+    }
+    if (!node?.isMesh) continue;
+    const materials = standardMaterials(node);
+    for (const material of materials.length ? materials : [].concat(node.material || [])) applyMaterialOverride(material, override);
+    const stored = {};
+    if (override.color != null) stored.color = override.color;
+    if (override.metalness != null) stored.metalness = override.metalness;
+    if (override.roughness != null) stored.roughness = override.roughness;
+    if (override.material) stored.material = override.material;
+    node.userData.materialOverride = stored;
+  }
+}
+
+function applyMaterialOverride(material, override) {
+  if (!material || !override) return;
+  if (override.color != null && material.color) material.color.setHex(override.color);
+  if (override.metalness != null && material.metalness != null) material.metalness = override.metalness;
+  if (override.roughness != null && material.roughness != null) material.roughness = override.roughness;
+  material.needsUpdate = true;
+}
+
+function indexPathFrom(ancestor, object) {
+  const path = [];
+  let node = object;
+  while (node && node !== ancestor) {
+    if (!node.parent) return null;
+    path.unshift(node.parent.children.indexOf(node));
+    node = node.parent;
+  }
+  return node === ancestor ? path : null;
+}
+
+function collectMaterialOverrides(object) {
+  const overrides = [];
+  const walk = (node) => {
+    for (const child of node.children) {
+      if (child.userData?.skipList) continue;
+      if (child.userData?.scene) continue;
+      if (child.isMesh && child.userData.materialOverride) {
+        const path = indexPathFrom(object, child);
+        if (path) {
+          const entry = { path, ...child.userData.materialOverride };
+          if (child.name) entry.name = child.name;
+          overrides.push(entry);
+        }
+      }
+      walk(child);
+    }
+  };
+  walk(object);
+  return overrides;
+}
+
+function ensureReadableMeshNames(root) {
+  const used = new Set();
+  root.traverse((node) => {
+    if (node.name && String(node.name).trim()) used.add(node.name);
+  });
+  let fallback = 1;
+  root.traverse((node) => {
+    if (!node.isMesh || node.userData?.skipList) return;
+    if (node.name && String(node.name).trim()) return;
+    const materialName = primaryMaterial(node)?.name?.trim();
+    let name = materialName || `Mesh ${fallback}`;
+    if (used.has(name)) {
+      const base = materialName || "Mesh";
+      let count = 2;
+      while (used.has(`${base} ${count}`)) count += 1;
+      name = `${base} ${count}`;
+    }
+    if (!materialName) fallback += 1;
+    node.name = name;
+    used.add(name);
+  });
+}
+
 function makeAsset(item) {
   const wrapper = new THREE.Group();
-  wrapper.userData.scene = { type: "asset", url: item.url, wingspan: item.wingspan ?? null };
+  const sceneSpec = { type: "asset", url: item.url, wingspan: item.wingspan ?? null };
+  if (item.materialOverrides?.length) sceneSpec.materialOverrides = item.materialOverrides;
+  wrapper.userData.scene = sceneSpec;
   if (!item.url) return wrapper;
+  const useFighterMaterials = /FighterPlane/i.test(`${item.name || ""} ${item.url || ""}`);
   new GLTFLoader().load(item.url, (gltf) => {
     const model = gltf.scene;
     if (item.wingspan) {
       const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
       model.scale.setScalar(item.wingspan / Math.max(size.x, 0.001));
     }
+    if (useFighterMaterials) applyFighterMaterials(model);
     wrapper.add(model);
+    ensureReadableMeshNames(model);
+    applyMaterialOverrides(wrapper, sceneSpec.materialOverrides);
     rebuildList();
+    if (pendingSelectionPath) selectByPath(pendingSelectionPath);
   }, undefined, (error) => {
     console.error("Scene asset failed to load", item.url, error);
     setStatus(`Could not load ${item.name || "asset"}`);
@@ -212,7 +510,8 @@ function clearSelectionDisplay() {
   visibleField.hidden = true;
 }
 
-function select(object) {
+function select(object, fromPath) {
+  if (!fromPath) pendingSelectionPath = null;
   const target = object?.userData?.selectTarget || object;
   if (!target) {
     selectedSet.clear();
@@ -232,18 +531,81 @@ function select(object) {
   syncInspector();
 }
 
+function listKey(object) {
+  const parts = [];
+  let node = object;
+  while (node && node !== content) {
+    const kind = node.userData?.scene?.type || (node.isMesh ? "mesh" : "node");
+    parts.unshift(`${kind}:${node.name || ""}`);
+    node = node.parent;
+  }
+  return parts.join("/");
+}
+
+function isListNode(object) {
+  if (!object || object.userData?.skipList) return false;
+  return Boolean(object.userData?.scene) || Boolean(object.isMesh);
+}
+
+function hasListDescendants(object) {
+  for (const child of object.children) {
+    if (child.userData?.skipList) continue;
+    if (isListNode(child) || hasListDescendants(child)) return true;
+  }
+  return false;
+}
+
+function isListExpanded(object) {
+  const key = listKey(object);
+  if (listExpanded.has(key)) return listExpanded.get(key);
+  return object.userData?.scene?.type !== "asset";
+}
+
 function rebuildList() {
+  ensureReadableMeshNames(content);
   list.innerHTML = "";
+  const addRow = (object, depth, expandable, expanded) => {
+    const row = document.createElement("div");
+    row.className = `object-row${selectedSet.has(object) ? " selected" : ""}${object.visible ? "" : " hidden-object"}`;
+    row.style.paddingLeft = `${0.15 + depth * 0.75}rem`;
+    if (expandable) {
+      const twist = document.createElement("button");
+      twist.type = "button";
+      twist.className = "twist";
+      twist.textContent = expanded ? "▾" : "▸";
+      twist.title = expanded ? "Collapse" : "Expand";
+      twist.setAttribute("aria-expanded", expanded ? "true" : "false");
+      twist.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
+      twist.onclick = (event) => {
+        event.stopPropagation();
+        listExpanded.set(listKey(object), !expanded);
+        rebuildList();
+      };
+      row.append(twist);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "twist-spacer";
+      row.append(spacer);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "object";
+    button.textContent = object.name || "Object";
+    button.onclick = () => select(object);
+    row.append(button);
+    list.append(row);
+  };
   const walk = (object, depth) => {
     for (const child of object.children) {
-      if (!child.userData?.scene) continue;
-      const button = document.createElement("button");
-      button.className = `object${selectedSet.has(child) ? " selected" : ""}${child.visible ? "" : " hidden-object"}`;
-      button.style.paddingLeft = `${0.45 + depth * 0.7}rem`;
-      button.textContent = child.name || "Object";
-      button.onclick = () => select(child);
-      list.append(button);
-      walk(child, depth + 1);
+      if (child.userData?.skipList) continue;
+      if (!isListNode(child)) {
+        walk(child, depth);
+        continue;
+      }
+      const expandable = hasListDescendants(child);
+      const expanded = expandable && isListExpanded(child);
+      addRow(child, depth, expandable, expanded);
+      if (expanded) walk(child, depth + 1);
     }
   };
   walk(content, 0);
@@ -273,21 +635,34 @@ function syncInspector() {
   }
   textSection.hidden = sceneSpec?.type !== "text";
   if (sceneSpec?.type === "text" && document.activeElement !== textInput) textInput.value = sceneSpec.text ?? "";
+  if (sceneSpec?.type === "text") lookAtInput.checked = sceneSpec.lookAtCamera === true;
   visibleInput.checked = selected.visible;
 }
 
-document.querySelectorAll("[data-transform]").forEach((input) => input.addEventListener("change", () => {
-  if (!selected) return;
-  const [group, axis] = input.dataset.transform.split(".");
-  let value = Number(input.value);
-  if (group === "rotation") value = THREE.MathUtils.degToRad(value);
-  selected[group][axis] = value;
-  markDirty();
-  syncInspector();
-}));
+document.querySelectorAll("[data-transform]").forEach((input) => {
+  input.addEventListener("focus", beginEdit);
+  input.addEventListener("blur", endEdit);
+  input.addEventListener("change", () => {
+    if (!selected) return;
+    beginEdit();
+    const [group, axis] = input.dataset.transform.split(".");
+    let value = Number(input.value);
+    if (group === "rotation") value = THREE.MathUtils.degToRad(value);
+    selected[group][axis] = value;
+    markDirty();
+    syncInspector();
+    endEdit();
+  });
+});
 
 for (const id of ["material-color", "material-metalness", "material-roughness"]) {
-  document.querySelector(`#${id}`).addEventListener("input", (event) => {
+  const input = document.querySelector(`#${id}`);
+  input.addEventListener("pointerdown", beginEdit);
+  input.addEventListener("focus", beginEdit);
+  input.addEventListener("change", endEdit);
+  input.addEventListener("blur", endEdit);
+  input.addEventListener("input", (event) => {
+    beginEdit();
     if (!selected) return;
     const sceneSpec = selected.userData?.scene;
     if (sceneSpec?.type === "arrow" && id === "material-color") {
@@ -297,29 +672,51 @@ for (const id of ["material-color", "material-metalness", "material-roughness"])
       markDirty();
       return;
     }
-    const material = primaryMaterial(selected);
-    if (!material) return;
-    if (id === "material-color") material.color.set(event.target.value);
-    else material[id.replace("material-", "")] = Number(event.target.value);
-    material.needsUpdate = true;
+    const materials = standardMaterials(selected);
+    if (!materials.length) return;
+    for (const material of materials) {
+      if (id === "material-color") material.color.set(event.target.value);
+      else material[id.replace("material-", "")] = Number(event.target.value);
+      material.needsUpdate = true;
+    }
+    rememberSubmeshMaterials(selected);
     markDirty();
   });
 }
 
+textInput.addEventListener("focus", beginEdit);
+textInput.addEventListener("blur", endEdit);
 textInput.addEventListener("input", () => {
+  beginEdit();
   if (selected?.userData?.scene?.type !== "text") return;
   paintLabel(selected, textInput.value);
   markDirty();
 });
 
+lookAtInput.addEventListener("pointerdown", beginEdit);
+lookAtInput.addEventListener("focus", beginEdit);
+lookAtInput.addEventListener("change", () => {
+  if (selected?.userData?.scene?.type !== "text") return;
+  beginEdit();
+  if (lookAtInput.checked) selected.userData.scene.lookAtCamera = true;
+  else delete selected.userData.scene.lookAtCamera;
+  markDirty();
+  endEdit();
+});
+
+visibleInput.addEventListener("pointerdown", beginEdit);
+visibleInput.addEventListener("focus", beginEdit);
 visibleInput.addEventListener("change", () => {
   if (!selected) return;
+  beginEdit();
   selected.visible = visibleInput.checked;
   markDirty();
   rebuildList();
+  endEdit();
 });
 
 function selectInRectangle(left, top, right, bottom) {
+  pendingSelectionPath = null;
   selectedSet.clear();
   content.traverse((object) => {
     if (!(object.isMesh || object.isSprite) || object.userData?.skipList) return;
@@ -387,8 +784,15 @@ function setTool(mode) {
   document.querySelectorAll("[data-tool]").forEach((button) => button.classList.toggle("active", button.dataset.tool === mode));
 }
 addEventListener("keydown", (event) => {
-  if (event.target.matches("input, textarea")) return;
   const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && (key === "z" || key === "y")) {
+    event.preventDefault();
+    endEdit();
+    if (key === "z" && !event.shiftKey) undo();
+    else redo();
+    return;
+  }
+  if (event.target.matches("input, textarea") || event.ctrlKey || event.metaKey || event.altKey) return;
   if (key === "w") setTool("translate");
   if (key === "e") setTool("rotate");
   if (key === "r") setTool("scale");
@@ -402,10 +806,12 @@ document.querySelector("#scale-tool").onclick = () => setTool("scale");
 setTool("translate");
 
 document.querySelector("#add-cube").onclick = () => {
+  beginEdit();
   const cube = makeObject({ type: "box", name: "Cube", size: [1, 1, 1], color: 0x4a9ee0, metalness: 0.2, roughness: 0.55, position: [0, 0.5, 0] });
   content.add(cube);
   markDirty();
   select(cube);
+  endEdit();
 };
 
 function fileToDataUrl(file) {
@@ -420,6 +826,7 @@ function fileToDataUrl(file) {
 document.querySelector("#file-input").addEventListener("change", async (event) => {
   const files = [...event.target.files];
   event.target.value = "";
+  beginEdit();
   for (const file of files) {
     const url = await fileToDataUrl(file);
     const wrapper = makeAsset({ type: "asset", name: file.name.replace(/\.(glb|gltf)$/i, ""), url });
@@ -428,10 +835,12 @@ document.querySelector("#file-input").addEventListener("change", async (event) =
     markDirty();
     select(wrapper);
   }
+  endEdit();
 });
 
 function serializeObject(object) {
   const spec = { ...(object.userData.scene ?? { type: object.isGroup ? "group" : "box" }) };
+  if (spec.lookAtCamera !== true) delete spec.lookAtCamera;
   spec.name = object.name || spec.name || "Object";
   spec.position = object.position.toArray().map(round);
   spec.rotation = [object.rotation.x, object.rotation.y, object.rotation.z].map(round);
@@ -444,6 +853,9 @@ function serializeObject(object) {
     if (material.roughness != null) spec.roughness = round(material.roughness);
     if (material.opacity < 1) spec.opacity = round(material.opacity);
   }
+  const materialOverrides = collectMaterialOverrides(object);
+  if (materialOverrides.length) spec.materialOverrides = materialOverrides;
+  else if (!(spec.type === "asset" && object.children.length === 0 && spec.materialOverrides?.length)) delete spec.materialOverrides;
   const children = [...object.children].filter((child) => child.userData?.scene).map(serializeObject);
   if (children.length) spec.children = children;
   return spec;
@@ -472,6 +884,7 @@ function loadSceneData(data) {
     applyView(data.view);
     dirty = false;
     rebuildList();
+    if (!undoLock) resetHistory();
     return;
   }
   if (data?.object || data?.metadata) {
@@ -481,6 +894,7 @@ function loadSceneData(data) {
     for (const node of nodes) content.add(node);
     dirty = false;
     rebuildList();
+    if (!undoLock) resetHistory();
     setStatus("Loaded a Three.js scene file");
     return;
   }
