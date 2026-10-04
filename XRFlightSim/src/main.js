@@ -27,11 +27,15 @@ const inputProfilesBase = "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/as
 const instructionControllerSlots = {};
 let inputProfilesList = null;
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+// alpha:true is required for WebXR passthrough (alpha-blend). Without it, clear
+// alpha is ignored and AR sessions composite as an opaque black wall (common on AVP).
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType("local-floor");
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setClearColor(0x8ac5ee);
+renderer.setClearColor(0x8ac5ee, 1);
 const scene = new THREE.Scene();
+scene.background = null;
 scene.fog = new THREE.Fog(0x8ac5ee, 70, 350);
 const camera = new THREE.PerspectiveCamera(70, 1, .05, 600);
 camera.position.set(0, 2.1, 4.8);
@@ -534,14 +538,96 @@ function applyDesktopCamera() {
 addEventListener("resize", resize); resize(); let previous = performance.now();
 renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (controlsVisible && input.fire && !controlsDismissWasPressed) { controlsVisible = false; controlsPanel.visible = false; statusLabel.textContent = "Controls confirmed · third-person RC flight"; } controlsDismissWasPressed = input.fire; if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); if (!controlsVisible && input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); applyDesktopCamera(); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; if (!simulationPaused) updateEngineSound(); renderer.render(scene, camera); });
 resetButton.addEventListener("click", () => flight.reset());
+const xrOptionalFeatures = ["local-floor", "bounded-floor", "hand-tracking"];
+function probeSessionSupport(mode, timeoutMs) {
+  return Promise.race([
+    navigator.xr.isSessionSupported(mode).catch(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+function restoreDesktopPresentation() {
+  renderer.setClearColor(0x8ac5ee, 1);
+  scene.background = null;
+  scene.fog = new THREE.Fog(0x8ac5ee, 70, 350);
+  virtualEnvironment.visible = true;
+}
+function applyPassthroughPresentation() {
+  renderer.setClearColor(0x000000, 0);
+  renderer.setClearAlpha(0);
+  scene.background = null;
+  scene.fog = null;
+  virtualEnvironment.visible = false;
+}
+function applyOpaqueXrPresentation() {
+  renderer.setClearColor(0x8ac5ee, 1);
+  scene.background = null;
+  scene.fog = new THREE.Fog(0x8ac5ee, 70, 350);
+  virtualEnvironment.visible = true;
+}
 async function configureVR() {
   if (!navigator.xr) { vrButton.textContent = "WebXR unavailable"; vrButton.disabled = true; return; }
-  const arProbe = Promise.race([navigator.xr.isSessionSupported("immersive-ar"), new Promise((resolve) => setTimeout(() => resolve(false), 2500))]);
-  const vrProbe = Promise.race([navigator.xr.isSessionSupported("immersive-vr"), new Promise((resolve) => setTimeout(() => resolve(false), 3500))]);
-  const [arSupported, vrSupported] = await Promise.all([arProbe, vrProbe]);
-  const mode = arSupported ? "immersive-ar" : "immersive-vr";
-  vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR";
-  statusLabel.textContent = mode === "immersive-ar" ? "Passthrough ready · the aircraft stays in your room" : vrSupported ? "Quest Link VR · third-person RC flight" : "Quest Link is restarting · you can still retry VR";
-  vrButton.addEventListener("click", async () => { try { startEngineSound(); vrButton.disabled = true; vrButton.textContent = "Starting…"; const session = await Promise.race([navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] }), new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000))]); if (mode === "immersive-ar") { renderer.setClearColor(0x000000, 0); scene.fog = null; virtualEnvironment.visible = false; } await renderer.xr.setSession(session); statusLabel.textContent = mode === "immersive-ar" ? "Passthrough · third-person RC flight" : "Quest Link VR · third-person RC flight"; vrButton.textContent = "XR active"; session.addEventListener("end", () => { pauseEngineSound(); renderer.setClearColor(0x8ac5ee); scene.fog = new THREE.Fog(0x8ac5ee, 70, 350); virtualEnvironment.visible = true; vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR"; statusLabel.textContent = "Desktop preview · controller or keyboard"; }); } catch (error) { vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Retry VR"; statusLabel.textContent = error.message === "XR session timed out" ? "Quest Link did not start the session · wait a moment, then retry" : error.name === "InvalidStateError" ? "An immersive session is already active · exit it from the headset first" : "Could not start XR · wait a moment, then retry"; } });
+  // AVP/Safari can report AR late; allow a longer probe than Quest needs.
+  let [arSupported, vrSupported] = await Promise.all([
+    probeSessionSupport("immersive-ar", 5000),
+    probeSessionSupport("immersive-vr", 3500),
+  ]);
+  let preferredMode = arSupported ? "immersive-ar" : "immersive-vr";
+  const labelFor = (mode) => (mode === "immersive-ar" ? "Start passthrough" : "Enter VR");
+  vrButton.textContent = labelFor(preferredMode);
+  statusLabel.textContent = preferredMode === "immersive-ar"
+    ? "Passthrough ready · the aircraft stays in your room"
+    : vrSupported
+      ? "Quest Link VR · third-person RC flight"
+      : "Quest Link is restarting · you can still retry VR";
+  vrButton.addEventListener("click", async () => {
+    try {
+      startEngineSound();
+      vrButton.disabled = true;
+      vrButton.textContent = "Starting…";
+      // Re-probe on click: Vision Pro may briefly report AR unsupported at page load.
+      const arNow = await probeSessionSupport("immersive-ar", 4000);
+      const mode = arNow ? "immersive-ar" : "immersive-vr";
+      preferredMode = mode;
+      const session = await Promise.race([
+        navigator.xr.requestSession(mode, { optionalFeatures: xrOptionalFeatures }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000)),
+      ]);
+      // Clear transparent before the first XR frame so alpha-blend devices show the room.
+      if (mode === "immersive-ar") applyPassthroughPresentation();
+      else applyOpaqueXrPresentation();
+      await renderer.xr.setSession(session);
+      const blend = session.environmentBlendMode ?? renderer.xr.getEnvironmentBlendMode?.();
+      console.info(`[WebXR] mode=${mode} environmentBlendMode=${blend ?? "unknown"}`);
+      if (mode === "immersive-ar" && blend === "opaque") {
+        // AVP has historically granted AR flags while still compositing opaque; keep a visible world.
+        console.warn("[WebXR] immersive-ar granted opaque blend; passthrough unavailable on this device/browser");
+        applyOpaqueXrPresentation();
+        statusLabel.textContent = "AR session · opaque blend (no passthrough)";
+      } else if (mode === "immersive-ar" && blend === "additive") {
+        renderer.setClearColor(0x000000, 1);
+        statusLabel.textContent = "Passthrough · third-person RC flight";
+      } else if (mode === "immersive-ar") {
+        statusLabel.textContent = "Passthrough · third-person RC flight";
+      } else {
+        statusLabel.textContent = "Quest Link VR · third-person RC flight";
+      }
+      vrButton.textContent = "XR active";
+      session.addEventListener("end", () => {
+        pauseEngineSound();
+        restoreDesktopPresentation();
+        vrButton.disabled = false;
+        vrButton.textContent = labelFor(preferredMode);
+        statusLabel.textContent = "Desktop preview · controller or keyboard";
+      });
+    } catch (error) {
+      vrButton.disabled = false;
+      vrButton.textContent = preferredMode === "immersive-ar" ? "Start passthrough" : "Retry VR";
+      statusLabel.textContent = error.message === "XR session timed out"
+        ? "Quest Link did not start the session · wait a moment, then retry"
+        : error.name === "InvalidStateError"
+          ? "An immersive session is already active · exit it from the headset first"
+          : "Could not start XR · wait a moment, then retry";
+    }
+  });
 }
 configureVR().catch((error) => { console.error(error); vrButton.textContent = "Unable to start VR"; vrButton.disabled = true; });
