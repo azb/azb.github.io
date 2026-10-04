@@ -6,6 +6,7 @@ const speedLabel = document.querySelector("#speed");
 const throttleLabel = document.querySelector("#throttle");
 const statusLabel = document.querySelector("#status");
 const controllerLabel = document.querySelector("#controllers");
+const modelLabel = document.querySelector("#model");
 const vrButton = document.querySelector("#enter-vr");
 const resetButton = document.querySelector("#reset");
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -42,7 +43,9 @@ function createAircraft() {
   return plane;
 }
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
-new GLTFLoader().load("../assets/FighterPlaneWithControls.glb", (gltf) => {
+const fighterModelUrl = new URL("../assets/FighterPlaneWithControls.glb", import.meta.url).href;
+modelLabel.textContent = "Fighter model: loading GLB…";
+new GLTFLoader().load(fighterModelUrl, (gltf) => {
   const model = gltf.scene;
   const bounds = new THREE.Box3().setFromObject(model);
   const size = bounds.getSize(new THREE.Vector3());
@@ -52,8 +55,14 @@ new GLTFLoader().load("../assets/FighterPlaneWithControls.glb", (gltf) => {
   planeRoot.remove(aircraft);
   aircraft = model;
   planeRoot.add(aircraft);
+  modelLabel.textContent = "Fighter model: GLB loaded";
   statusLabel.textContent = "Lens fighter model loaded · third-person RC view";
-}, undefined, () => { statusLabel.textContent = "Fighter model could not load · using the backup aircraft"; });
+}, undefined, (error) => {
+  console.error("Fighter GLB failed to load", error);
+  const detail = String(error?.message ?? error).replace(/\s+/g, " ").slice(0, 90);
+  modelLabel.textContent = `Fighter model: load failed — ${detail}`;
+  statusLabel.textContent = "Fighter model could not load · using the backup aircraft";
+});
 for (let i = 0; i < 14; i += 1) {
   const ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, .12, 10, 28), new THREE.MeshStandardMaterial({ color: 0xffc447, emissive: 0x5b3700, emissiveIntensity: .7 }));
   ring.position.set((i % 2 ? -1 : 1) * 3.8, 1.3 + (i % 3) * .65, -7 - i * 3.5); virtualEnvironment.add(ring);
