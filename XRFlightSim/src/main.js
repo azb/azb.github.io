@@ -19,6 +19,9 @@ let engineSource = null;
 let engineBuffer = null;
 let engineLoad = null;
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
+const inputProfilesBase = "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/";
+const instructionControllerSlots = {};
+let inputProfilesList = null;
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.xr.enabled = true;
@@ -54,43 +57,34 @@ function createWorldPanel(lines, width, height, accent = "#82cfff") {
   panel.renderOrder = 5;
   return panel;
 }
-function createControlsPanel() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1600; canvas.height = 1050;
-  const context = canvas.getContext("2d");
-  const rounded = (x, y, width, height, radius, fill, stroke = null) => {
-    context.beginPath(); context.roundRect(x, y, width, height, radius);
-    if (fill) { context.fillStyle = fill; context.fill(); }
-    if (stroke) { context.strokeStyle = stroke; context.lineWidth = 7; context.stroke(); }
-  };
-  const label = (text, x, y, size = 42, align = "left", color = "#f4f7fb") => {
-    context.fillStyle = color; context.font = `${size}px system-ui, sans-serif`; context.textAlign = align; context.fillText(text, x, y);
-  };
-  const arrow = (fromX, fromY, toX, toY) => {
-    const angle = Math.atan2(toY - fromY, toX - fromX);
-    context.strokeStyle = "#0636ec"; context.fillStyle = "#0636ec"; context.lineWidth = 15; context.lineCap = "round";
-    context.beginPath(); context.moveTo(fromX, fromY); context.lineTo(toX, toY); context.stroke();
-    context.beginPath(); context.moveTo(toX, toY); context.lineTo(toX - 34 * Math.cos(angle - .55), toY - 34 * Math.sin(angle - .55)); context.lineTo(toX - 34 * Math.cos(angle + .55), toY - 34 * Math.sin(angle + .55)); context.closePath(); context.fill();
-  };
-  rounded(28, 28, 1544, 994, 80, "rgba(10, 17, 25, .88)", "rgba(235, 245, 255, .72)");
-  label("Controls", 800, 135, 58, "center");
-  // A simplified controller illustration preserves the Lens panel's visual hierarchy.
-  context.save(); context.translate(800, 555);
-  context.fillStyle = "#eef1f4"; context.strokeStyle = "#b7bdc5"; context.lineWidth = 8;
-  context.beginPath(); context.moveTo(-280, -115); context.bezierCurveTo(-385, -115, -410, 38, -348, 128); context.bezierCurveTo(-310, 187, -225, 146, -150, 95); context.lineTo(150, 95); context.bezierCurveTo(225, 146, 310, 187, 348, 128); context.bezierCurveTo(410, 38, 385, -115, 280, -115); context.lineTo(160, -90); context.lineTo(-160, -90); context.closePath(); context.fill(); context.stroke();
-  [[-168, -10], [150, 28]].forEach(([x, y]) => { context.beginPath(); context.fillStyle = "#343b43"; context.arc(x, y, 50, 0, Math.PI * 2); context.fill(); context.strokeStyle = "#11161b"; context.lineWidth = 10; context.stroke(); context.beginPath(); context.fillStyle = "#555e68"; context.arc(x, y, 33, 0, Math.PI * 2); context.fill(); });
-  rounded(-63, -6, 24, 88, 5, "#252b31"); rounded(-96, 26, 88, 24, 5, "#252b31");
-  [[230, -22, "A", "#54a846"], [272, -66, "B", "#d14343"], [188, -66, "X", "#2b83d4"], [230, -110, "Y", "#e7c43c"]].forEach(([x, y, text, color]) => { context.beginPath(); context.fillStyle = color; context.arc(x, y, 24, 0, Math.PI * 2); context.fill(); label(text, x, y + 13, 24, "center", "#111820"); });
-  context.restore();
-  label("Decrease Throttle", 200, 290, 43); label("Fire", 800, 244, 43, "center"); label("Increase Throttle", 1400, 290, 43, "right");
-  label("Steer", 170, 625, 43); label("Left / Right", 170, 690, 43); label("Roll  Left / Right", 1410, 585, 39, "right"); label("Pitch  Up / Down", 1410, 650, 39, "right");
-  arrow(415, 305, 565, 430); arrow(800, 266, 810, 408); arrow(1190, 305, 1035, 430); arrow(435, 640, 625, 545); arrow(1180, 605, 975, 570);
-  rounded(585, 820, 430, 105, 52, "rgba(15, 19, 26, .94)", "rgba(235, 245, 255, .7)"); label("OK · press right trigger", 800, 888, 35, "center");
-  const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
-  const panel = new THREE.Mesh(new THREE.PlaneGeometry(3.55, 2.33), material); panel.renderOrder = 5;
-  return panel;
-}
+function worldText(text, position, scale = .24) { const canvas = document.createElement("canvas"); canvas.width = 1024; canvas.height = 160; const c = canvas.getContext("2d"); c.fillStyle = "#f4f7fb"; c.font = "bold 64px system-ui"; c.textAlign = "center"; c.fillText(text, 512, 100); const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false })); sprite.position.copy(position); sprite.scale.set(scale * 5.6, scale, 1); return sprite; }
+function callout(group, text, start, end) { group.add(worldText(text, start, .2)); const direction = end.clone().sub(start).normalize(); group.add(new THREE.ArrowHelper(direction, start, end.distanceTo(start), 0x0636ec, .13, .07)); }
+function questController(hand) { const group = new THREE.Group(); const shell = new THREE.MeshStandardMaterial({ color: 0xe9edf1, roughness: .48, metalness: .12 }); const dark = new THREE.MeshStandardMaterial({ color: 0x1b2229, roughness: .35 }); const body = new THREE.Mesh(new THREE.CapsuleGeometry(.15, .42, 6, 12), shell); body.rotation.z = hand === "left" ? -.18 : .18; group.add(body); const top = new THREE.Mesh(new THREE.SphereGeometry(.2, 16, 12), shell); top.position.y = .25; top.scale.set(1, .42, .7); group.add(top); const stick = new THREE.Mesh(new THREE.CylinderGeometry(.065, .065, .045, 16), dark); stick.position.set(hand === "left" ? -.06 : .06, .3, .1); stick.rotation.x = Math.PI / 2; group.add(stick); const grip = new THREE.Mesh(new THREE.BoxGeometry(.13, .18, .16), dark); grip.position.set(hand === "left" ? -.16 : .16, -.08, .05); group.add(grip); const trigger = new THREE.Mesh(new THREE.BoxGeometry(.12, .07, .13), dark); trigger.position.set(0, .43, -.08); group.add(trigger); const menu = new THREE.Mesh(new THREE.CylinderGeometry(.028, .028, .02, 12), dark); menu.position.set(.07, .31, .1); menu.rotation.x = Math.PI / 2; if (hand === "left") group.add(menu); return { group, stick: stick.position.clone(), grip: grip.position.clone(), trigger: trigger.position.clone(), menu: menu.position.clone() }; }
+function createControlsPanel() { const panel = new THREE.Group(); const backing = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 2.3), new THREE.MeshBasicMaterial({ color: 0x08121c, transparent: true, opacity: .88, depthWrite: false })); backing.renderOrder = 3; panel.add(backing); panel.add(worldText("Controls", new THREE.Vector3(0, .92, .03), .28)); const left = questController("left"), right = questController("right"); left.group.position.set(-.55, -.12, .12); right.group.position.set(.55, -.12, .12); const leftSlot = new THREE.Group(), rightSlot = new THREE.Group(); leftSlot.position.copy(left.group.position); rightSlot.position.copy(right.group.position); panel.add(left.group, right.group, leftSlot, rightSlot); instructionControllerSlots.left = { slot: leftSlot, fallback: left.group }; instructionControllerSlots.right = { slot: rightSlot, fallback: right.group }; const L = (v) => v.add(left.group.position), R = (v) => v.add(right.group.position); callout(panel, "Decrease Throttle", new THREE.Vector3(-1.22, .56, .13), L(left.grip)); callout(panel, "Steer Left / Right", new THREE.Vector3(-1.2, -.46, .13), L(left.stick)); callout(panel, "Menu Pause / Resume", new THREE.Vector3(-1.18, .15, .13), L(left.menu)); callout(panel, "Increase Throttle", new THREE.Vector3(1.22, .56, .13), R(right.grip)); callout(panel, "Fire", new THREE.Vector3(.9, .83, .13), R(right.trigger)); callout(panel, "Roll / Pitch", new THREE.Vector3(1.16, -.46, .13), R(right.stick)); panel.add(worldText("OK · press right trigger", new THREE.Vector3(0, -.9, .13), .2)); return panel; }
 const controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.55, -2.8); scene.add(controlsPanel);
+async function loadInstructionControllerModels(session) {
+  try {
+    inputProfilesList ??= await fetch(`${inputProfilesBase}profilesList.json`).then((response) => response.json());
+    for (const source of session.inputSources) {
+      const hand = source.handedness;
+      const slot = instructionControllerSlots[hand];
+      if (!slot || slot.loaded) continue;
+      const profileId = source.profiles.find((id) => inputProfilesList[id]);
+      if (!profileId) continue;
+      const profileUrl = new URL(inputProfilesList[profileId], inputProfilesBase).href;
+      const profile = await fetch(profileUrl).then((response) => response.json());
+      const layout = profile.layouts?.[hand] ?? profile.layouts?.none;
+      if (!layout?.assetPath) continue;
+      new GLTFLoader().load(new URL(layout.assetPath, profileUrl).href, (gltf) => {
+        const model = gltf.scene;
+        const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+        model.scale.setScalar(.54 / Math.max(size.x, size.y, size.z, .001));
+        model.rotation.set(0, hand === "left" ? -.18 : .18, 0);
+        slot.slot.add(model); slot.fallback.visible = false; slot.loaded = true;
+      }, undefined, (error) => console.warn("Controller profile model failed", error));
+    }
+  } catch (error) { console.warn("Controller profile lookup failed; using guide fallback", error); }
+}
 const pausePanel = createWorldPanel([
   { text: "SIMULATION PAUSED", x: 768, y: 290, size: 72, color: "#a9dbff", align: "center" },
   { text: "Press the left controller Menu button to resume", x: 768, y: 425, size: 39, align: "center" },
@@ -316,6 +310,6 @@ async function configureVR() {
   const mode = !isDesktopLink && arSupported ? "immersive-ar" : "immersive-vr";
   vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR";
   statusLabel.textContent = mode === "immersive-ar" ? "Passthrough ready · the aircraft stays in your room" : vrSupported ? "Quest Link VR · third-person RC flight" : "Quest Link is restarting · you can still retry VR";
-  vrButton.addEventListener("click", async () => { try { startEngineSound(); vrButton.disabled = true; vrButton.textContent = "Starting…"; const session = await Promise.race([navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] }), new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000))]); if (mode === "immersive-ar") { renderer.setClearColor(0x000000, 0); scene.fog = null; virtualEnvironment.visible = false; } await renderer.xr.setSession(session); statusLabel.textContent = mode === "immersive-ar" ? "Passthrough · third-person RC flight" : "Quest Link VR · third-person RC flight"; vrButton.textContent = "XR active"; session.addEventListener("end", () => { pauseEngineSound(); renderer.setClearColor(0x8ac5ee); scene.fog = new THREE.Fog(0x8ac5ee, 70, 350); virtualEnvironment.visible = true; vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR"; statusLabel.textContent = "Desktop preview · controller or keyboard"; }); } catch (error) { vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Retry VR"; statusLabel.textContent = error.message === "XR session timed out" ? "Quest Link did not start the session · wait a moment, then retry" : error.name === "InvalidStateError" ? "An immersive session is already active · exit it from the headset first" : "Could not start XR · wait a moment, then retry"; } });
+  vrButton.addEventListener("click", async () => { try { startEngineSound(); vrButton.disabled = true; vrButton.textContent = "Starting…"; const session = await Promise.race([navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] }), new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000))]); if (mode === "immersive-ar") { renderer.setClearColor(0x000000, 0); scene.fog = null; virtualEnvironment.visible = false; } await renderer.xr.setSession(session); loadInstructionControllerModels(session); session.addEventListener("inputsourceschange", () => loadInstructionControllerModels(session)); statusLabel.textContent = mode === "immersive-ar" ? "Passthrough · third-person RC flight" : "Quest Link VR · third-person RC flight"; vrButton.textContent = "XR active"; session.addEventListener("end", () => { pauseEngineSound(); renderer.setClearColor(0x8ac5ee); scene.fog = new THREE.Fog(0x8ac5ee, 70, 350); virtualEnvironment.visible = true; vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR"; statusLabel.textContent = "Desktop preview · controller or keyboard"; }); } catch (error) { vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Retry VR"; statusLabel.textContent = error.message === "XR session timed out" ? "Quest Link did not start the session · wait a moment, then retry" : error.name === "InvalidStateError" ? "An immersive session is already active · exit it from the headset first" : "Could not start XR · wait a moment, then retry"; } });
 }
 configureVR().catch((error) => { console.error(error); vrButton.textContent = "Unable to start VR"; vrButton.disabled = true; });
