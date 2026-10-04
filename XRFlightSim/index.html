@@ -4,13 +4,26 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>XRFlightSim — WebXR Demo</title>
-    <link rel="stylesheet" href="./src/style.css?v=0.3.5" />
+    <link rel="stylesheet" href="./src/style.css?v=0.3.6" />
     <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"}}</script>
   </head>
   <body>
     <canvas id="scene"></canvas>
-    <section id="hud"><p id="speed">Speed 30</p><p id="throttle">Throttle 0%</p><p id="status">Desktop preview · controller or keyboard</p><p id="model">Fighter model: preparing…</p><p id="controllers">Sticks: waiting for XR controllers</p><p>Build 0.3.5</p></section>
-    <section id="overlay"><h1>XRFlightSim</h1><p>WebXR flight-controls prototype.</p><p>Build 0.3.5 · separate tire material</p><button id="enter-vr">Checking VR support…</button><button id="reset">Reset flight</button></section>
-    <script type="module" src="./src/main.js?v=0.3.5"></script>
+    <section id="hud"><p id="speed">Speed 30</p><p id="throttle">Throttle 0%</p><p id="status">Desktop preview · controller or keyboard</p><p id="model">Fighter model: preparing…</p><p id="controllers">Sticks: waiting for XR controllers</p><p>Build 0.3.6</p></section>
+    <section id="overlay">
+      <h1>XRFlightSim</h1>
+      <p>WebXR flight-controls prototype.</p>
+      <section class="controls-guide" aria-label="Controls">
+        <h2>Controls</h2>
+        <div class="control-columns">
+          <div><strong>Left controller</strong><span>Stick · steer</span><span>Grip · decrease throttle</span><span>Menu · pause / resume</span></div>
+          <div><strong>Right controller</strong><span>Stick · roll and pitch</span><span>Grip · increase throttle</span><span>Trigger · fire</span></div>
+        </div>
+      </section>
+      <p class="build">Build 0.3.6 · Quest controls guide and pause</p>
+      <button id="enter-vr">Checking VR support…</button><button id="reset">Reset flight</button>
+    </section>
+    <section id="pause-overlay" hidden><h1>Simulation Paused</h1><p>Press the left controller Menu button to resume.</p></section>
+    <script type="module" src="./src/main.js?v=0.3.6"></script>
   </body>
 </html>

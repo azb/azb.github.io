@@ -9,6 +9,7 @@ const controllerLabel = document.querySelector("#controllers");
 const modelLabel = document.querySelector("#model");
 const vrButton = document.querySelector("#enter-vr");
 const resetButton = document.querySelector("#reset");
+const pauseOverlay = document.querySelector("#pause-overlay");
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
 const assetUrl = (path) => new URL(`../assets/${path}`, import.meta.url).href;
@@ -126,8 +127,19 @@ class FlightModel {
     if (speed > .01) this.position.add(this.forward().multiplyScalar(speed * dt * .05));
   }
 }
-const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity;
-addEventListener("keydown", (event) => { if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) event.preventDefault(); keys.add(event.code); if (event.code === "KeyR") flight.reset(); });
+const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let simulationPaused = false; let pauseButtonWasPressed = false;
+function setSimulationPaused(paused) {
+  simulationPaused = paused;
+  pauseOverlay.hidden = !paused;
+  if (paused) {
+    engineSound.pause();
+    statusLabel.textContent = "Simulation paused · left Menu resumes";
+  } else {
+    startEngineSound();
+    statusLabel.textContent = renderer.xr.isPresenting ? "Third-person RC flight" : "Desktop preview · controller or keyboard";
+  }
+}
+addEventListener("keydown", (event) => { if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) event.preventDefault(); keys.add(event.code); if (event.code === "KeyR") flight.reset(); if (event.code === "Escape" && !event.repeat) setSimulationPaused(!simulationPaused); });
 addEventListener("keyup", (event) => keys.delete(event.code));
 function stick(value) { return Math.abs(value) < .12 ? 0 : value; }
 function activeStick(gamepad) {
@@ -141,7 +153,7 @@ function gamepadForSource(source, connectedPads) {
   return connectedPads.find((pad) => pad && pad.id.toLowerCase().includes(hand)) ?? null;
 }
 function controls() {
-  const value = { pitch: 0, roll: 0, yaw: 0, throttle: 0, fire: false };
+  const value = { pitch: 0, roll: 0, yaw: 0, throttle: 0, fire: false, pause: false };
   const xrSources = renderer.xr.getSession()?.inputSources ?? [];
   const connectedPads = [...navigator.getGamepads()].filter(Boolean);
   let hasXRControllers = false;
@@ -160,6 +172,10 @@ function controls() {
       value.yaw += x;
       value.throttle -= grip;
       value.fire ||= indexTrigger > .55;
+      // Meta's Quest Touch profile exposes Menu at button 6. Some older profiles omit
+      // empty button entries, so button 5 is retained as a compatibility fallback.
+      const menu = gamepad.buttons[6] ?? gamepad.buttons[5];
+      value.pause ||= Boolean(menu?.pressed);
     }
     if (source.handedness === "right") {
       value.roll += x;
@@ -202,7 +218,7 @@ function playBalloonPop() {
 function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
 addEventListener("resize", resize); resize(); let previous = performance.now();
-renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); flight.step(input, dt); animateAircraft(input, dt); updateEngineSound(); planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); if (input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; renderer.render(scene, camera); });
+renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); updateEngineSound(); if (input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; renderer.render(scene, camera); });
 resetButton.addEventListener("click", () => flight.reset());
 async function configureVR() {
   if (!navigator.xr) { vrButton.textContent = "WebXR unavailable"; vrButton.disabled = true; return; }
@@ -213,6 +229,6 @@ async function configureVR() {
   const mode = !isDesktopLink && arSupported ? "immersive-ar" : "immersive-vr";
   vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR";
   statusLabel.textContent = mode === "immersive-ar" ? "Passthrough ready · the aircraft stays in your room" : vrSupported ? "Quest Link VR · third-person RC flight" : "Quest Link is restarting · you can still retry VR";
-  vrButton.addEventListener("click", async () => { try { startEngineSound(); vrButton.disabled = true; vrButton.textContent = "Starting…"; const session = await Promise.race([navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] }), new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000))]); if (mode === "immersive-ar") { renderer.setClearColor(0x000000, 0); scene.fog = null; virtualEnvironment.visible = false; } await renderer.xr.setSession(session); statusLabel.textContent = mode === "immersive-ar" ? "Passthrough · third-person RC flight" : "Quest Link VR · third-person RC flight"; vrButton.textContent = "XR active"; session.addEventListener("end", () => { engineSound.pause(); renderer.setClearColor(0x8ac5ee); scene.fog = new THREE.Fog(0x8ac5ee, 70, 350); virtualEnvironment.visible = true; vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR"; statusLabel.textContent = "Desktop preview · controller or keyboard"; }); } catch (error) { vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Retry VR"; statusLabel.textContent = error.message === "XR session timed out" ? "Quest Link did not start the session · wait a moment, then retry" : error.name === "InvalidStateError" ? "An immersive session is already active · exit it from the headset first" : "Could not start XR · wait a moment, then retry"; } });
+  vrButton.addEventListener("click", async () => { try { startEngineSound(); vrButton.disabled = true; vrButton.textContent = "Starting…"; const session = await Promise.race([navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor", "dom-overlay"], domOverlay: { root: document.body } }), new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), 8000))]); if (mode === "immersive-ar") { renderer.setClearColor(0x000000, 0); scene.fog = null; virtualEnvironment.visible = false; } await renderer.xr.setSession(session); statusLabel.textContent = mode === "immersive-ar" ? "Passthrough · third-person RC flight" : "Quest Link VR · third-person RC flight"; vrButton.textContent = "XR active"; session.addEventListener("end", () => { engineSound.pause(); renderer.setClearColor(0x8ac5ee); scene.fog = new THREE.Fog(0x8ac5ee, 70, 350); virtualEnvironment.visible = true; vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Enter VR"; statusLabel.textContent = "Desktop preview · controller or keyboard"; }); } catch (error) { vrButton.disabled = false; vrButton.textContent = mode === "immersive-ar" ? "Start passthrough" : "Retry VR"; statusLabel.textContent = error.message === "XR session timed out" ? "Quest Link did not start the session · wait a moment, then retry" : error.name === "InvalidStateError" ? "An immersive session is already active · exit it from the headset first" : "Could not start XR · wait a moment, then retry"; } });
 }
 configureVR().catch((error) => { console.error(error); vrButton.textContent = "Unable to start VR"; vrButton.disabled = true; });
