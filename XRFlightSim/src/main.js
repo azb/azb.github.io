@@ -508,7 +508,8 @@ function fire() {
   const local = bulletSpawnLocal[nextBulletSpawnIndex % bulletSpawnLocal.length];
   nextBulletSpawnIndex += 1;
   const offset = local.clone().applyQuaternion(flight.rotation);
-  const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 }));
+  // Mesh was authored at .09 for the large fighter; ÷ (2.84433/0.500226) ≈ 5.686 to match Spectacles scale.
+  const shot = new THREE.Mesh(new THREE.SphereGeometry(.09 * (lensWingspan / 2.84433), 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 }));
   shot.position.copy(flight.position).add(offset);
   shot.userData.velocity = flight.forward().multiplyScalar(95);
   shot.userData.age = 0;
