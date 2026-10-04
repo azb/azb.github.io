@@ -81,6 +81,26 @@
       ]
     },
     {
+      "type": "asset",
+      "url": "./assets/LandingStrip.glb",
+      "name": "LandingStrip",
+      "position": [
+        0,
+        0.854449,
+        -6.979182
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.425736,
+        1.425736,
+        1.425736
+      ]
+    },
+    {
       "type": "group",
       "name": "Controls Panel",
       "position": [
