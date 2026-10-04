@@ -42,7 +42,7 @@
     },
     {
       "type": "asset",
-      "url": "./assets/FighterPlaneWithControls.glb",
+      "url": "./assets/FighterPlaneWithControls.glb?v=0.4.17",
       "wingspan": 0.500226,
       "name": "FighterPlane",
       "position": [

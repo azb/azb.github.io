@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.11";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.17";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -185,7 +185,7 @@ function createAircraft() {
 }
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
 const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, elevator: null, rudder: null, neutral: new Map() };
-const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb");
+const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.17");
 
 const spawnPosition = new THREE.Vector3(0, 1.5, -7);
 class FlightModel {
@@ -310,7 +310,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.15`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.17`);
     let fighterFromScene = false;
     const environment = [];
     let nextControls = null;
