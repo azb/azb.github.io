@@ -4,16 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>XRFlightSim Scene Editor</title>
-    <link rel="stylesheet" href="./src/editor.css?v=0.1.1" />
+    <link rel="stylesheet" href="./src/editor.css?v=0.1.2" />
     <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"}}</script>
   </head>
   <body>
     <header><strong>XRFlightSim Scene Editor</strong><label class="button">Import GLB / GLTF<input id="file-input" type="file" accept=".glb,.gltf" multiple hidden /></label><button id="add-cube">Add cube</button><button id="move-tool">Move (W)</button><button id="rotate-tool">Rotate (E)</button><button id="scale-tool">Scale (R)</button><button id="save-scene">Download scene</button><a href="./">Back to flight demo</a></header>
     <main>
       <aside id="outliner"><h2>Scene</h2><div id="object-list"></div></aside>
-      <section id="viewport"><canvas id="scene"></canvas><div id="hint">Orbit: drag · Pan: right-drag · Select: click · Move/rotate/scale: W / E / R</div></section>
+      <section id="viewport"><canvas id="scene"></canvas><div id="hint">Orbit: drag · Pan: middle-drag · Zoom: right-drag · Select: click · Move/rotate/scale: W / E / R</div></section>
       <aside id="inspector"><h2>Inspector</h2><p id="selection">Select an object</p><section id="transform" hidden><h3>Transform</h3><div class="fields"><label>Position X<input data-transform="position.x" type="number" step="0.01" /></label><label>Y<input data-transform="position.y" type="number" step="0.01" /></label><label>Z<input data-transform="position.z" type="number" step="0.01" /></label><label>Rotation X<input data-transform="rotation.x" type="number" step="1" /></label><label>Y<input data-transform="rotation.y" type="number" step="1" /></label><label>Z<input data-transform="rotation.z" type="number" step="1" /></label><label>Scale X<input data-transform="scale.x" type="number" step="0.01" /></label><label>Y<input data-transform="scale.y" type="number" step="0.01" /></label><label>Z<input data-transform="scale.z" type="number" step="0.01" /></label></div></section><section id="material" hidden><h3>Material</h3><label>Color<input id="material-color" type="color" /></label><label>Metalness<input id="material-metalness" type="range" min="0" max="1" step="0.01" /></label><label>Roughness<input id="material-roughness" type="range" min="0" max="1" step="0.01" /></label></section></aside>
     </main>
-    <script type="module" src="./src/editor.js?v=0.1.1"></script>
+    <script type="module" src="./src/editor.js?v=0.1.2"></script>
   </body>
 </html>
