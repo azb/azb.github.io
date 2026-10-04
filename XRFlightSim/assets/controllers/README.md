@@ -2,13 +2,12 @@
 
 ## Active (Touch Pro / Quest Pro)
 
-Converted from the Meta/Oculus Integration meshes bundled with Strategeality:
+Exported from `QuestProControllers.blend` (SpectaclesFlightSim/XRFlightSim) with submeshes separated per part:
 
-- `Assets/Oculus/VR/Meshes/MetaQuestTouchPro/MetaQuestTouchPro_Left.fbx`
-- `Assets/Oculus/VR/Meshes/MetaQuestTouchPro/MetaQuestTouchPro_Right.fbx`
-- Albedo from `Assets/Oculus/VR/Textures/MetaQuestTouchPro/controller_{l,r}_lo_BaseColor.png`
+- `meta-quest-touch-pro-left.glb` — `left_controller` + faceplate / innerplate / outerplate / joystick_base / joystick_hat
+- `meta-quest-touch-pro-right.glb` — same hierarchy under `right_controller`
 
-ASCII FBX → OBJ → GLB (Blender 3.6). Main controller mesh only (battery/nub helpers omitted). Albedo resized to 1024 JPEG for web. Geometry origin centered on bounds so the controls panel / scene placement stays predictable.
+Source meshes/textures originate from Meta/Oculus Integration (`MetaQuestTouchPro` FBX + `controller_{l,r}_lo_BaseColor`). Blender 3.6 GLB export: apply modifiers, Y-up, materials/textures preserved, part names kept. Same unit scale as the prior single-mesh Pro GLBs, so scene wingspan / panel fit still apply.
 
 Touch Pro has no tracking ring over the face buttons (unlike Quest 2 Touch), so X/Y/A/B stay readable on the guide.
 
