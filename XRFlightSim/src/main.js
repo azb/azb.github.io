@@ -64,7 +64,12 @@ new GLTFLoader().load(fighterModelUrl, (gltf) => {
       node.receiveShadow = true;
       const applyLensMaterial = (sourceMaterial) => {
         const lensMaterial = sourceMaterial.clone();
-        if (sourceMaterial.name === "teamcolor") {
+        if (sourceMaterial.name === "tires") {
+          lensMaterial.map = null;
+          lensMaterial.color.setRGB(.03, .035, .04);
+          lensMaterial.metalness = .03;
+          lensMaterial.roughness = .92;
+        } else if (sourceMaterial.name === "teamcolor") {
           // Lens Studio's blue accent material: solid paint, not the fuselage sheet metal.
           lensMaterial.map = null;
           lensMaterial.color.setRGB(0, .149, 1);
@@ -82,8 +87,6 @@ new GLTFLoader().load(fighterModelUrl, (gltf) => {
       };
       if (node.name === "Windshield") {
         node.material = new THREE.MeshStandardMaterial({ color: 0x090d12, metalness: .25, roughness: .18 });
-      } else if (node.name === "LandingGear") {
-        node.material = new THREE.MeshStandardMaterial({ color: 0x080a0c, metalness: .05, roughness: .9 });
       } else {
         node.material = Array.isArray(node.material) ? node.material.map(applyLensMaterial) : applyLensMaterial(node.material);
       }
