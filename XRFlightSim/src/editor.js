@@ -196,19 +196,28 @@ function redo() {
   restoreSnapshot(redoStack.pop(), "Redo");
 }
 
-function paintLabel(sprite, text) {
-  const labelCanvas = sprite.material.map.image;
+function paintLabel(label, text) {
+  const labelCanvas = label.material.map.image;
+  const [worldW, worldH] = panelSizeFromItem(label.userData?.scene, [1, 1]);
+  const aspect = Math.max(0.05, worldW / Math.max(worldH, 0.001));
+  const pixelH = 256;
+  const pixelW = Math.max(64, Math.min(4096, Math.round(pixelH * aspect)));
+  if (labelCanvas.width !== pixelW || labelCanvas.height !== pixelH) {
+    labelCanvas.width = pixelW;
+    labelCanvas.height = pixelH;
+  }
   const context = labelCanvas.getContext("2d");
-  context.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
+  context.clearRect(0, 0, pixelW, pixelH);
   context.fillStyle = "rgba(8, 16, 27, .94)";
-  context.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
+  context.fillRect(0, 0, pixelW, pixelH);
   context.fillStyle = "#ffffff";
-  context.font = "bold 64px system-ui, sans-serif";
+  const fontPx = Math.max(12, Math.round(pixelH * 0.45));
+  context.font = `bold ${fontPx}px system-ui, sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(text || " ", labelCanvas.width / 2, labelCanvas.height / 2);
-  sprite.material.map.needsUpdate = true;
-  sprite.userData.scene.text = text;
+  context.fillText(text || " ", pixelW / 2, pixelH / 2);
+  label.material.map.needsUpdate = true;
+  if (label.userData.scene) label.userData.scene.text = text;
 }
 
 function panelSizeFromItem(item, fallback = [1, 1]) {
