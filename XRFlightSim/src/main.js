@@ -80,7 +80,13 @@ new GLTFLoader().load(fighterModelUrl, (gltf) => {
         lensMaterial.needsUpdate = true;
         return lensMaterial;
       };
-      node.material = Array.isArray(node.material) ? node.material.map(applyLensMaterial) : applyLensMaterial(node.material);
+      if (node.name === "Windshield") {
+        node.material = new THREE.MeshStandardMaterial({ color: 0x090d12, metalness: .25, roughness: .18 });
+      } else if (node.name === "Cylinder") {
+        node.material = new THREE.MeshStandardMaterial({ color: 0x080a0c, metalness: .05, roughness: .9 });
+      } else {
+        node.material = Array.isArray(node.material) ? node.material.map(applyLensMaterial) : applyLensMaterial(node.material);
+      }
     }
     const key = ({ LeftAileron: "leftAileron", RightAileron: "rightAileron", Elevator: "elevator", Rudder: "rudder", Propeller: "propeller" })[node.name];
     if (key) { animatedParts[key] = node; animatedParts.neutral.set(node, node.quaternion.clone()); }
