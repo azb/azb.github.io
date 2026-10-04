@@ -5,6 +5,7 @@ const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
 const throttleLabel = document.querySelector("#throttle");
 const statusLabel = document.querySelector("#status");
+const controllerLabel = document.querySelector("#controllers");
 const vrButton = document.querySelector("#enter-vr");
 const resetButton = document.querySelector("#reset");
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -74,18 +75,32 @@ const flight = new FlightModel(); const keys = new Set(); const bullets = []; le
 addEventListener("keydown", (event) => { if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) event.preventDefault(); keys.add(event.code); if (event.code === "KeyR") flight.reset(); });
 addEventListener("keyup", (event) => keys.delete(event.code));
 function stick(value) { return Math.abs(value) < .12 ? 0 : value; }
+function activeStick(gamepad) {
+  const axisPairs = [[0, 1], [2, 3], [4, 5]];
+  return axisPairs.map(([x, y]) => [gamepad.axes[x] ?? 0, gamepad.axes[y] ?? 0])
+    .reduce((best, pair) => pair[0] ** 2 + pair[1] ** 2 > best[0] ** 2 + best[1] ** 2 ? pair : best, [0, 0]);
+}
+function gamepadForSource(source, connectedPads) {
+  if (source.gamepad) return source.gamepad;
+  const hand = source.handedness;
+  return connectedPads.find((pad) => pad && pad.id.toLowerCase().includes(hand)) ?? null;
+}
 function controls() {
   const value = { pitch: 0, roll: 0, yaw: 0, throttle: 0, fire: false };
   const xrSources = renderer.xr.getSession()?.inputSources ?? [];
+  const connectedPads = [...navigator.getGamepads()].filter(Boolean);
   let hasXRControllers = false;
+  const controllerReadout = [];
   for (const source of xrSources) {
-    const gamepad = source.gamepad;
+    const gamepad = gamepadForSource(source, connectedPads);
     if (!gamepad) continue;
     hasXRControllers = true;
-    const x = stick(gamepad.axes[0] ?? 0);
-    const y = stick(gamepad.axes[1] ?? 0);
+    const [rawX, rawY] = activeStick(gamepad);
+    const x = stick(rawX);
+    const y = stick(rawY);
     const indexTrigger = gamepad.buttons[0]?.value ?? 0;
     const grip = gamepad.buttons[1]?.value ?? 0;
+    controllerReadout.push(`${source.handedness[0].toUpperCase()}: ${x.toFixed(2)}, ${y.toFixed(2)}`);
     if (source.handedness === "left") {
       value.yaw += x;
       value.throttle -= grip;
@@ -99,9 +114,10 @@ function controls() {
     }
   }
   // Ignore XR controllers here: their axes are already read through XR input sources.
-  const pad = !hasXRControllers ? [...navigator.getGamepads()].filter((item) => item?.mapping === "standard" && item.axes.length >= 4).find(Boolean) : null;
+  const pad = !hasXRControllers ? connectedPads.filter((item) => item.mapping === "standard" && item.axes.length >= 4).find(Boolean) : null;
   if (pad) { value.yaw = stick(pad.axes[0] || 0); value.roll = stick(pad.axes[2] || 0); value.pitch = -stick(pad.axes[3] || 0); value.throttle = (pad.buttons[5]?.value || 0) - (pad.buttons[4]?.value || 0); value.fire = Boolean(pad.buttons[7]?.pressed || pad.buttons[0]?.pressed); }
   value.pitch += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0); value.roll += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0); value.yaw += (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0); value.throttle += (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0); value.fire ||= keys.has("Space");
+  controllerLabel.textContent = controllerReadout.length ? `Sticks ${controllerReadout.join(" · ")}` : "Sticks: waiting for XR controllers";
   for (const key of ["pitch", "roll", "yaw", "throttle"]) value[key] = clamp(value[key], -1, 1); return value;
 }
 function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
