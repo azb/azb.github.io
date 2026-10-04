@@ -27,6 +27,8 @@ export function sceneRole(item) {
   const name = item?.name || "";
   if (item?.type === "camera" || name === "Camera Rig") return "camera";
   if (item?.type === "asset" && /FighterPlane/i.test(`${name} ${item.url || ""}`)) return "fighter";
+  // Room props stay visible in passthrough (virtualEnvironment is hidden in AR).
+  if (item?.type === "asset" && /LandingStrip/i.test(`${name} ${item.url || ""}`)) return "room";
   if (name === "Controls Panel") return "controls";
   if (name === "Pause Panel") return "pause";
   if (/course/i.test(name) && /ring/i.test(name)) return "course";

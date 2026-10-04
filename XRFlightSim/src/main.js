@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.17";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.18";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -46,6 +46,9 @@ const camera = new THREE.PerspectiveCamera(70, 1, .05, 600);
 camera.position.set(0, 2.1, 4.8);
 const virtualEnvironment = new THREE.Group();
 scene.add(virtualEnvironment);
+// Room props (landing strip) stay visible in passthrough; ground/grid hide with virtualEnvironment.
+const roomContent = new THREE.Group();
+scene.add(roomContent);
 const planeRoot = new THREE.Group();
 scene.add(planeRoot);
 scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 3.2));
@@ -185,7 +188,7 @@ function createAircraft() {
 }
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
 const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, elevator: null, rudder: null, neutral: new Map() };
-const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.17");
+const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.18");
 
 const spawnPosition = new THREE.Vector3(0, 1.5, -7);
 class FlightModel {
@@ -303,16 +306,23 @@ function replacePanel(next, role) {
   }
   scene.add(next);
 }
+function clearGroup(group) {
+  while (group.children.length) group.remove(group.children[0]);
+}
 function clearVirtualEnvironment() {
-  while (virtualEnvironment.children.length) virtualEnvironment.remove(virtualEnvironment.children[0]);
+  clearGroup(virtualEnvironment);
+}
+function clearRoomContent() {
+  clearGroup(roomContent);
 }
 let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.17`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.18`);
     let fighterFromScene = false;
     const environment = [];
+    const room = [];
     let nextControls = null;
     let nextPause = null;
     if (desktopCameraRig) scene.remove(desktopCameraRig);
@@ -346,10 +356,13 @@ async function mountFlightScene() {
       const object = createSceneObject(item);
       if (role === "controls") nextControls = object;
       else if (role === "pause") nextPause = object;
+      else if (role === "room") room.push(object);
       else environment.push(object);
     }
     clearVirtualEnvironment();
+    clearRoomContent();
     for (const object of environment) virtualEnvironment.add(object);
+    for (const object of room) roomContent.add(object);
     replacePanel(nextControls, "controls");
     replacePanel(nextPause, "pause");
     if (!fighterFromScene) loadFallbackFighter();
