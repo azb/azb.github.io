@@ -73,25 +73,34 @@ class FlightModel {
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity;
 addEventListener("keydown", (event) => { if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) event.preventDefault(); keys.add(event.code); if (event.code === "KeyR") flight.reset(); });
 addEventListener("keyup", (event) => keys.delete(event.code));
+function stick(value) { return Math.abs(value) < .12 ? 0 : value; }
 function controls() {
   const value = { pitch: 0, roll: 0, yaw: 0, throttle: 0, fire: false };
   const xrSources = renderer.xr.getSession()?.inputSources ?? [];
+  let hasXRControllers = false;
   for (const source of xrSources) {
     const gamepad = source.gamepad;
     if (!gamepad) continue;
+    hasXRControllers = true;
+    const x = stick(gamepad.axes[0] ?? 0);
+    const y = stick(gamepad.axes[1] ?? 0);
+    const indexTrigger = gamepad.buttons[0]?.value ?? 0;
+    const grip = gamepad.buttons[1]?.value ?? 0;
     if (source.handedness === "left") {
-      value.yaw += gamepad.axes[0] || 0;
-      value.throttle -= gamepad.buttons[0]?.value || 0;
+      value.yaw += x;
+      value.throttle -= grip;
+      value.fire ||= indexTrigger > .55;
     }
     if (source.handedness === "right") {
-      value.roll += gamepad.axes[0] || 0;
-      value.pitch -= gamepad.axes[1] || 0;
-      value.throttle += gamepad.buttons[0]?.value || 0;
-      value.fire ||= Boolean(gamepad.buttons[1]?.pressed);
+      value.roll += x;
+      value.pitch -= y;
+      value.throttle += grip;
+      value.fire ||= indexTrigger > .55;
     }
   }
-  const pad = [...navigator.getGamepads()].filter(Boolean).find((item) => item.axes.length >= 4);
-  if (pad) { value.yaw = pad.axes[0] || 0; value.roll = pad.axes[2] || 0; value.pitch = -(pad.axes[3] || 0); value.throttle = (pad.buttons[7]?.value || 0) - (pad.buttons[6]?.value || 0); value.fire = Boolean(pad.buttons[5]?.pressed || pad.buttons[0]?.pressed); }
+  // Ignore XR controllers here: their axes are already read through XR input sources.
+  const pad = !hasXRControllers ? [...navigator.getGamepads()].filter((item) => item?.mapping === "standard" && item.axes.length >= 4).find(Boolean) : null;
+  if (pad) { value.yaw = stick(pad.axes[0] || 0); value.roll = stick(pad.axes[2] || 0); value.pitch = -stick(pad.axes[3] || 0); value.throttle = (pad.buttons[5]?.value || 0) - (pad.buttons[4]?.value || 0); value.fire = Boolean(pad.buttons[7]?.pressed || pad.buttons[0]?.pressed); }
   value.pitch += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0); value.roll += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0); value.yaw += (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0); value.throttle += (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0); value.fire ||= keys.has("Space");
   for (const key of ["pitch", "roll", "yaw", "throttle"]) value[key] = clamp(value[key], -1, 1); return value;
 }
