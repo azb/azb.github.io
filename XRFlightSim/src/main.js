@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.3";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -61,7 +62,7 @@ function worldText(text, position, scale = .28) { const canvas = document.create
 function callout(group, text, start, end) { group.add(worldText(text, start, .25)); const direction = end.clone().sub(start).normalize(); group.add(new THREE.ArrowHelper(direction, start, end.distanceTo(start), 0x1686ff, .1, .055)); }
 function questController(hand) { const group = new THREE.Group(); const shell = new THREE.MeshStandardMaterial({ color: 0xe9edf1, roughness: .48, metalness: .12 }); const dark = new THREE.MeshStandardMaterial({ color: 0x1b2229, roughness: .35 }); const body = new THREE.Mesh(new THREE.CapsuleGeometry(.15, .42, 6, 12), shell); body.rotation.z = hand === "left" ? -.18 : .18; group.add(body); const top = new THREE.Mesh(new THREE.SphereGeometry(.2, 16, 12), shell); top.position.y = .25; top.scale.set(1, .42, .7); group.add(top); const stick = new THREE.Mesh(new THREE.CylinderGeometry(.065, .065, .045, 16), dark); stick.position.set(hand === "left" ? -.06 : .06, .3, .1); stick.rotation.x = Math.PI / 2; group.add(stick); const grip = new THREE.Mesh(new THREE.BoxGeometry(.13, .18, .16), dark); grip.position.set(hand === "left" ? -.16 : .16, -.08, .05); group.add(grip); const trigger = new THREE.Mesh(new THREE.BoxGeometry(.12, .07, .13), dark); trigger.position.set(0, .43, -.08); group.add(trigger); const menu = new THREE.Mesh(new THREE.CylinderGeometry(.028, .028, .02, 12), dark); menu.position.set(.07, .31, .1); menu.rotation.x = Math.PI / 2; if (hand === "left") group.add(menu); return { group, stick: stick.position.clone(), grip: grip.position.clone(), trigger: trigger.position.clone(), menu: menu.position.clone() }; }
 function createControlsPanel() { const panel = new THREE.Group(); const backing = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 2.3), new THREE.MeshBasicMaterial({ color: 0x0b1826, depthWrite: false })); backing.renderOrder = 3; panel.add(backing); panel.add(worldText("CONTROLS", new THREE.Vector3(0, .92, .03), .3)); const left = questController("left"), right = questController("right"); left.group.position.set(-.55, -.12, .12); right.group.position.set(.55, -.12, .12); panel.add(left.group, right.group); const L = (v) => v.add(left.group.position), R = (v) => v.add(right.group.position); callout(panel, "DECREASE THROTTLE", new THREE.Vector3(-1.04, .55, .13), L(left.grip)); callout(panel, "STEER LEFT / RIGHT", new THREE.Vector3(-1.03, -.53, .13), L(left.stick)); callout(panel, "MENU: PAUSE / RESUME", new THREE.Vector3(-1.05, .08, .13), L(left.menu)); callout(panel, "INCREASE THROTTLE", new THREE.Vector3(1.04, .55, .13), R(right.grip)); callout(panel, "FIRE", new THREE.Vector3(.94, .79, .13), R(right.trigger)); callout(panel, "ROLL / PITCH", new THREE.Vector3(1.04, -.53, .13), R(right.stick)); panel.add(worldText("OK · PRESS RIGHT TRIGGER", new THREE.Vector3(0, -.9, .13), .22)); return panel; }
-const controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.55, -2.8); scene.add(controlsPanel);
+let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.55, -2.8); scene.add(controlsPanel);
 async function loadInstructionControllerModels(session) {
   try {
     inputProfilesList ??= await fetch(`${inputProfilesBase}profilesList.json`).then((response) => response.json());
@@ -85,7 +86,7 @@ async function loadInstructionControllerModels(session) {
     }
   } catch (error) { console.warn("Controller profile lookup failed; using guide fallback", error); }
 }
-const pausePanel = createWorldPanel([
+let pausePanel = createWorldPanel([
   { text: "SIMULATION PAUSED", x: 768, y: 290, size: 72, color: "#a9dbff", align: "center" },
   { text: "Press the left controller Menu button to resume", x: 768, y: 425, size: 39, align: "center" },
 ], 2.9, 1.05);
@@ -106,70 +107,11 @@ function createAircraft() {
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
 const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, elevator: null, rudder: null, neutral: new Map() };
 const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb");
-modelLabel.textContent = "Fighter model: loading GLB…";
-new GLTFLoader().load(fighterModelUrl, (gltf) => {
-  const model = gltf.scene;
-  const bounds = new THREE.Box3().setFromObject(model);
-  const size = bounds.getSize(new THREE.Vector3());
-  model.scale.setScalar(lensWingspan / Math.max(size.x, .001));
-  model.traverse((node) => {
-    if (node.isMesh) {
-      node.castShadow = true;
-      node.receiveShadow = true;
-      const applyLensMaterial = (sourceMaterial) => {
-        const lensMaterial = sourceMaterial.clone();
-        if (sourceMaterial.name === "tires") {
-          lensMaterial.map = null;
-          lensMaterial.color.setRGB(.03, .035, .04);
-          lensMaterial.metalness = .03;
-          lensMaterial.roughness = .92;
-        } else if (sourceMaterial.name === "teamcolor") {
-          // Lens Studio's blue accent material: solid paint, not the fuselage sheet metal.
-          lensMaterial.map = null;
-          lensMaterial.color.setRGB(0, .149, 1);
-          lensMaterial.metalness = .35;
-          lensMaterial.roughness = .58;
-        } else {
-          // The source Blender body material has no image texture; it is smooth aluminum.
-          lensMaterial.map = null;
-          lensMaterial.color.setRGB(.78, .8, .82);
-          lensMaterial.metalness = .5;
-          lensMaterial.roughness = .6;
-        }
-        lensMaterial.needsUpdate = true;
-        return lensMaterial;
-      };
-      if (node.name === "Windshield") {
-        node.material = new THREE.MeshStandardMaterial({ color: 0x090d12, metalness: .25, roughness: .18 });
-      } else {
-        node.material = Array.isArray(node.material) ? node.material.map(applyLensMaterial) : applyLensMaterial(node.material);
-      }
-    }
-    const key = ({ LeftAileron: "leftAileron", RightAileron: "rightAileron", Elevator: "elevator", Rudder: "rudder", Propeller: "propeller" })[node.name];
-    if (key) { animatedParts[key] = node; animatedParts.neutral.set(node, node.quaternion.clone()); }
-  });
-  planeRoot.remove(aircraft);
-  aircraft = model;
-  planeRoot.add(aircraft);
-  modelLabel.textContent = "Fighter model: GLB loaded";
-  statusLabel.textContent = "Lens fighter model loaded · third-person RC view";
-}, undefined, (error) => {
-  console.error("Fighter GLB failed to load", error);
-  const detail = String(error?.message ?? error).replace(/\s+/g, " ").slice(0, 90);
-  modelLabel.textContent = `Fighter model: load failed — ${detail}`;
-  statusLabel.textContent = "Fighter model could not load · using the backup aircraft";
-});
-const courseRings = new THREE.Group();
-virtualEnvironment.add(courseRings);
-for (let i = 0; i < 14; i += 1) {
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, .12, 10, 28), new THREE.MeshStandardMaterial({ color: 0xffc447, emissive: 0x5b3700, emissiveIntensity: .7 }));
-  ring.position.set((i % 2 ? -1 : 1) * 3.8, 1.3 + (i % 3) * .65, -7 - i * 3.5); courseRings.add(ring);
-}
-courseRings.visible = false;
 
+const spawnPosition = new THREE.Vector3(0, 1.5, -7);
 class FlightModel {
   constructor() { this.reset(); }
-  reset() { this.position = new THREE.Vector3(0, 1.5, -7); this.rotation = new THREE.Quaternion(); this.throttle = 0; }
+  reset() { this.position = spawnPosition.clone(); this.rotation = new THREE.Quaternion(); this.throttle = 0; }
   forward() { return new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation).normalize(); }
   step(input, seconds) {
     const dt = clamp(seconds, 0, .1); this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
@@ -195,6 +137,112 @@ function setSimulationPaused(paused) {
     statusLabel.textContent = renderer.xr.isPresenting ? "Third-person RC flight" : "Desktop preview · controller or keyboard";
   }
 }
+function notePreviewStatus(text) {
+  if (renderer.xr.isPresenting || simulationPaused) return;
+  const current = statusLabel.textContent;
+  if (current.startsWith("Desktop preview") || current.startsWith("Flight scene") || current.startsWith("Lens fighter") || current.startsWith("Fighter model could not") || current.startsWith("Scene file")) statusLabel.textContent = text;
+}
+function useSpawn(position) {
+  if (!position) return;
+  const next = new THREE.Vector3().fromArray(position);
+  const parked = flight.position.distanceToSquared(spawnPosition) < 1e-6;
+  spawnPosition.copy(next);
+  if (parked) flight.position.copy(spawnPosition);
+}
+let fighterHooked = false;
+let fallbackStarted = false;
+function hookFighterModel(model, item, statusText) {
+  if (fighterHooked) return;
+  fighterHooked = true;
+  if (model.parent) model.parent.remove(model);
+  model.position.set(0, 0, 0);
+  model.rotation.set(0, 0, 0);
+  if (Array.isArray(item?.scale)) model.scale.multiply(new THREE.Vector3(item.scale[0] ?? 1, item.scale[1] ?? 1, item.scale[2] ?? 1));
+  model.traverse((node) => {
+    if (!node.isMesh) return;
+    node.castShadow = true;
+    node.receiveShadow = true;
+  });
+  bindControlSurfaces(model, animatedParts);
+  planeRoot.remove(aircraft);
+  aircraft = model;
+  planeRoot.add(aircraft);
+  modelLabel.textContent = "Fighter model: GLB loaded";
+  if (statusText) notePreviewStatus(statusText);
+}
+function loadFallbackFighter() {
+  if (fighterHooked || fallbackStarted) return;
+  fallbackStarted = true;
+  modelLabel.textContent = "Fighter model: loading GLB…";
+  const item = { type: "asset", name: "FighterPlane", url: fighterModelUrl, wingspan: lensWingspan, scale: [1, 1, 1] };
+  createSceneObject(item, {
+    onAssetLoaded: (_wrapper, model) => hookFighterModel(model, item, "Lens fighter model loaded · third-person RC view"),
+    onAssetError: (error) => {
+      console.error("Fighter GLB failed to load", error);
+      const detail = String(error?.message ?? error).replace(/\s+/g, " ").slice(0, 90);
+      modelLabel.textContent = `Fighter model: load failed — ${detail}`;
+      notePreviewStatus("Fighter model could not load · using the backup aircraft");
+    },
+  });
+}
+function replacePanel(next, role) {
+  if (!next) return;
+  const previous = role === "controls" ? controlsPanel : pausePanel;
+  scene.remove(previous);
+  if (role === "controls") {
+    controlsPanel = next;
+    controlsPanel.visible = controlsVisible;
+  } else {
+    pausePanel = next;
+    pausePanel.visible = simulationPaused;
+  }
+  scene.add(next);
+}
+function clearVirtualEnvironment() {
+  while (virtualEnvironment.children.length) virtualEnvironment.remove(virtualEnvironment.children[0]);
+}
+async function mountFlightScene() {
+  modelLabel.textContent = "Fighter model: loading scene…";
+  try {
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.3`);
+    let fighterFromScene = false;
+    const environment = [];
+    let nextControls = null;
+    let nextPause = null;
+    for (const item of data.objects) {
+      const role = sceneRole(item);
+      if (role === "course") continue;
+      if (role === "fighter") {
+        fighterFromScene = true;
+        useSpawn(item.position);
+        modelLabel.textContent = "Fighter model: loading GLB…";
+        createSceneObject(item, {
+          onAssetLoaded: (_wrapper, model) => hookFighterModel(model, item, "Flight scene loaded · third-person RC flight"),
+          onAssetError: (error) => {
+            console.error("Scene fighter failed to load", error);
+            loadFallbackFighter();
+          },
+        });
+        continue;
+      }
+      const object = createSceneObject(item);
+      if (role === "controls") nextControls = object;
+      else if (role === "pause") nextPause = object;
+      else environment.push(object);
+    }
+    clearVirtualEnvironment();
+    for (const object of environment) virtualEnvironment.add(object);
+    replacePanel(nextControls, "controls");
+    replacePanel(nextPause, "pause");
+    if (!fighterFromScene) loadFallbackFighter();
+  } catch (error) {
+    console.error("Flight scene failed to load", error);
+    modelLabel.textContent = "Fighter model: loading GLB…";
+    notePreviewStatus("Scene file unavailable · built-in layout");
+    loadFallbackFighter();
+  }
+}
+mountFlightScene();
 addEventListener("keydown", (event) => { if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) event.preventDefault(); keys.add(event.code); if (event.code === "KeyR") flight.reset(); if (event.code === "Escape" && !event.repeat) setSimulationPaused(!simulationPaused); });
 addEventListener("keyup", (event) => keys.delete(event.code));
 function stick(value) { return Math.abs(value) < .12 ? 0 : value; }
