@@ -34,8 +34,8 @@ const virtualEnvironment = new THREE.Group();
 scene.add(virtualEnvironment);
 const planeRoot = new THREE.Group();
 scene.add(planeRoot);
-scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 2.2));
-const sun = new THREE.DirectionalLight(0xfff2d4, 2.5); sun.position.set(25, 55, 10); scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 3.2));
+const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 10); scene.add(sun);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -3; virtualEnvironment.add(ground);
 const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a); grid.position.y = -2.98; virtualEnvironment.add(grid);
@@ -65,13 +65,25 @@ new GLTFLoader().load(fighterModelUrl, (gltf) => {
     if (node.isMesh) {
       node.castShadow = true;
       node.receiveShadow = true;
-      const lensMaterial = node.material.clone();
-      lensMaterial.map = aluminumTexture;
-      lensMaterial.color.setRGB(0, .149, 1);
-      lensMaterial.metalness = 1;
-      lensMaterial.roughness = .41;
-      lensMaterial.needsUpdate = true;
-      node.material = lensMaterial;
+      const applyLensMaterial = (sourceMaterial) => {
+        const lensMaterial = sourceMaterial.clone();
+        if (sourceMaterial.name === "teamcolor") {
+          // Lens Studio's blue accent material: solid paint, not the fuselage sheet metal.
+          lensMaterial.map = null;
+          lensMaterial.color.setRGB(0, .149, 1);
+          lensMaterial.metalness = .55;
+          lensMaterial.roughness = .48;
+        } else {
+          // Lens Studio's aluminum fuselage material.
+          lensMaterial.map = aluminumTexture;
+          lensMaterial.color.setRGB(1, 1, 1);
+          lensMaterial.metalness = .55;
+          lensMaterial.roughness = .48;
+        }
+        lensMaterial.needsUpdate = true;
+        return lensMaterial;
+      };
+      node.material = Array.isArray(node.material) ? node.material.map(applyLensMaterial) : applyLensMaterial(node.material);
     }
     const key = ({ LeftAileron: "leftAileron", RightAileron: "rightAileron", Elevator: "elevator", Rudder: "rudder", Propeller: "propeller" })[node.name];
     if (key) { animatedParts[key] = node; animatedParts.neutral.set(node, node.quaternion.clone()); }
