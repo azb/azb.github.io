@@ -7,6 +7,7 @@ const STORAGE_KEY = "xrflightsim-scene";
 const FLIGHT_SCENE_URL = "./scenes/flight-sim-scene.json?v=0.1.12";
 const canvas = document.querySelector("#scene");
 const list = document.querySelector("#object-list");
+const hierarchySearch = document.querySelector("#hierarchy-search");
 const selection = document.querySelector("#selection");
 const sceneStatus = document.querySelector("#scene-status");
 const transformSection = document.querySelector("#transform");
@@ -79,6 +80,7 @@ let pendingSelectionPath = null;
 let selectionStart = null;
 let dirty = false;
 const listExpanded = new Map();
+const filterCollapsed = new Set();
 
 function resize() {
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
@@ -661,9 +663,34 @@ function isListExpanded(object) {
   return object.userData?.scene?.type !== "asset";
 }
 
+function hierarchyQuery() {
+  return hierarchySearch.value.trim().toLowerCase();
+}
+
+function listLabel(object) {
+  return object.name || "Object";
+}
+
+function matchesHierarchyQuery(object, query) {
+  return listLabel(object).toLowerCase().includes(query);
+}
+
+function branchHasMatch(object, query) {
+  for (const child of object.children) {
+    if (child.userData?.skipList) continue;
+    if (!isListNode(child)) {
+      if (branchHasMatch(child, query)) return true;
+      continue;
+    }
+    if (matchesHierarchyQuery(child, query) || branchHasMatch(child, query)) return true;
+  }
+  return false;
+}
+
 function rebuildList() {
   ensureReadableMeshNames(content);
   list.innerHTML = "";
+  const query = hierarchyQuery();
   const addRow = (object, depth, expandable, expanded) => {
     const row = document.createElement("div");
     row.className = `object-row${selectedSet.has(object) ? " selected" : ""}${object.visible ? "" : " hidden-object"}`;
@@ -678,7 +705,13 @@ function rebuildList() {
       twist.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
       twist.onclick = (event) => {
         event.stopPropagation();
-        listExpanded.set(listKey(object), !expanded);
+        const key = listKey(object);
+        if (hierarchyQuery()) {
+          if (filterCollapsed.has(key)) filterCollapsed.delete(key);
+          else filterCollapsed.add(key);
+        } else {
+          listExpanded.set(key, !expanded);
+        }
         rebuildList();
       };
       row.append(twist);
@@ -690,7 +723,7 @@ function rebuildList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "object";
-    button.textContent = object.name || "Object";
+    button.textContent = listLabel(object);
     button.onclick = () => select(object);
     row.append(button);
     list.append(row);
@@ -702,14 +735,27 @@ function rebuildList() {
         walk(child, depth);
         continue;
       }
-      const expandable = hasListDescendants(child);
-      const expanded = expandable && isListExpanded(child);
+      const descendantMatch = query ? branchHasMatch(child, query) : false;
+      if (query && !matchesHierarchyQuery(child, query) && !descendantMatch) continue;
+      const expandable = query ? descendantMatch : hasListDescendants(child);
+      const expanded = expandable && (query ? !filterCollapsed.has(listKey(child)) : isListExpanded(child));
       addRow(child, depth, expandable, expanded);
       if (expanded) walk(child, depth + 1);
     }
   };
   walk(content, 0);
+  if (query && !list.children.length) {
+    const empty = document.createElement("p");
+    empty.className = "hierarchy-empty";
+    empty.textContent = "No matches";
+    list.append(empty);
+  }
 }
+
+hierarchySearch.addEventListener("input", () => {
+  filterCollapsed.clear();
+  rebuildList();
+});
 
 function syncInspector() {
   if (!selected) return;
