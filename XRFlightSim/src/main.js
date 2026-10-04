@@ -194,13 +194,19 @@ class FlightModel {
   forward() { return new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation).normalize(); }
   step(input, seconds) {
     const dt = clamp(seconds, 0, .1); this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
-    // Keep the WebXR aircraft stationary at idle, but retain Lens Studio's control authority.
+    // Match Lens Scene.scene GameControllerMovement: minSpeed 0, maxSpeed 500,
+    // turnSpeed 240, pitch/roll/yaw 70. Keep WebXR translation at 0..100 * scale
+    // (Lens cm-ish 500 ≈ same feel after worldSpeedScale), but use the Lens
+    // authority curve: referenceSpeed = maxSpeed * 0.25 when minSpeed is 0.
     const speed = lerp(0, 100, this.throttle);
-    const controlAirspeed = lerp(30, 100, this.throttle);
-    const rate = clamp(controlAirspeed / 30, .5, 1.25) * dt * Math.PI / 180;
-    this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), input.roll * 110 * rate));
+    const controlAirspeed = lerp(0, 500, this.throttle);
+    const referenceSpeed = Math.max(500 * .25, 1);
+    const authority = clamp(controlAirspeed / referenceSpeed, .5, 1.25);
+    const controlScale = 240 / 120;
+    const rate = controlScale * authority * dt * Math.PI / 180;
+    this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), input.roll * 70 * rate));
     this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -input.pitch * 70 * rate));
-    this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 45 * rate)).normalize();
+    this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 70 * rate)).normalize();
     const worldSpeed = speed * worldSpeedScale;
     this.velocity.copy(this.forward()).multiplyScalar(speed > .01 ? worldSpeed : 0);
     if (speed > .01) this.position.addScaledVector(this.velocity, dt);
@@ -357,7 +363,13 @@ async function mountFlightScene() {
 mountFlightScene();
 addEventListener("keydown", (event) => { if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) event.preventDefault(); keys.add(event.code); if (event.code === "KeyR") flight.reset(); if (event.code === "Escape" && !event.repeat) setSimulationPaused(!simulationPaused); });
 addEventListener("keyup", (event) => keys.delete(event.code));
-function stick(value) { return Math.abs(value) < .12 ? 0 : value; }
+// Lens GameControllerMovement.applyJoystickDeadzone (joystickDeadzone 0.1).
+function stick(value) {
+  const deadzone = .1;
+  const magnitude = Math.abs(value);
+  if (magnitude <= deadzone) return 0;
+  return Math.sign(value) * (magnitude - deadzone) / (1 - deadzone);
+}
 function activeStick(gamepad) {
   const axisPairs = [[0, 1], [2, 3], [4, 5]];
   return axisPairs.map(([x, y]) => [gamepad.axes[x] ?? 0, gamepad.axes[y] ?? 0])
