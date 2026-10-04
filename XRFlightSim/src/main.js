@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
+import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -42,7 +42,8 @@ function createAircraft() {
   return plane;
 }
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
-new FBXLoader().load("../assets/FighterPlaneWithControls.fbx", (model) => {
+new GLTFLoader().load("../assets/FighterPlaneWithControls.glb", (gltf) => {
+  const model = gltf.scene;
   const bounds = new THREE.Box3().setFromObject(model);
   const size = bounds.getSize(new THREE.Vector3());
   model.scale.setScalar(3.8 / Math.max(size.x, size.y, size.z, .001));
