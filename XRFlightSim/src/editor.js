@@ -64,6 +64,7 @@ transform.addEventListener("mouseUp", () => {
 });
 transform.addEventListener("objectChange", () => {
   rememberTransformOverride(selected);
+  syncArrowFromSelection(selected);
   dirty = true;
   syncInspector();
 });
@@ -259,17 +260,55 @@ function makeText(item) {
   return label;
 }
 
+function arrowEndPosition(item) {
+  const child = (item.children || []).find((entry) => entry.type === "arrowEnd" || entry.name === "End" || entry.name === "Arrow End");
+  if (child?.position) return new THREE.Vector3(...child.position);
+  return new THREE.Vector3(...(item.end || [0, 0.4, 0]));
+}
+
+function makeArrowEnd(position, color) {
+  const end = new THREE.Mesh(
+    new THREE.SphereGeometry(0.045, 12, 8),
+    new THREE.MeshBasicMaterial({ color: color ?? 0x1686ff, transparent: true, opacity: 0.45, depthWrite: false, depthTest: true })
+  );
+  end.name = "End";
+  end.position.copy(position);
+  end.userData.scene = { type: "arrowEnd" };
+  return end;
+}
+
+function syncArrowVisual(group) {
+  if (group?.userData?.scene?.type !== "arrow") return;
+  const end = group.children.find((child) => child.userData?.scene?.type === "arrowEnd");
+  const helper = group.children.find((child) => child.isArrowHelper);
+  if (!end || !helper) return;
+  const direction = end.position.clone();
+  const length = Math.max(direction.length(), 0.001);
+  helper.setDirection(direction.normalize());
+  helper.setLength(length, Math.min(0.1, length * 0.25), Math.min(0.055, length * 0.12));
+  group.userData.scene.end = end.position.toArray().map(round);
+}
+
+function syncArrowFromSelection(object) {
+  if (!object) return;
+  if (object.userData?.scene?.type === "arrow") syncArrowVisual(object);
+  else if (object.userData?.scene?.type === "arrowEnd" && object.parent) syncArrowVisual(object.parent);
+}
+
 function makeArrow(item) {
   const group = new THREE.Group();
-  const end = new THREE.Vector3(...(item.end || [0, 0.4, 0]));
+  const color = item.color ?? 0x1686ff;
+  const end = arrowEndPosition(item);
   const length = Math.max(end.length(), 0.001);
-  const helper = new THREE.ArrowHelper(end.clone().normalize(), new THREE.Vector3(), length, item.color ?? 0x1686ff, Math.min(0.1, length * 0.25), Math.min(0.055, length * 0.12));
+  const helper = new THREE.ArrowHelper(end.clone().normalize(), new THREE.Vector3(), length, color, Math.min(0.1, length * 0.25), Math.min(0.055, length * 0.12));
+  helper.userData.skipList = true;
   helper.line.userData.skipList = true;
   helper.cone.userData.skipList = true;
   helper.line.userData.selectTarget = group;
   helper.cone.userData.selectTarget = group;
   group.add(helper);
-  group.userData.scene = { type: "arrow", color: item.color ?? 0x1686ff, end: end.toArray() };
+  group.add(makeArrowEnd(end, color));
+  group.userData.scene = { type: "arrow", color, end: end.toArray() };
   return group;
 }
 
@@ -560,7 +599,12 @@ function makeObject(item) {
   if (!object.userData.scene) rememberSpec(object, item);
   object.name = item.name || type;
   applyTransform(object, item);
-  if (type !== "asset") for (const child of item.children || []) object.add(makeObject(child));
+  if (type !== "asset" && type !== "arrow") {
+    for (const child of item.children || []) {
+      if (child.type === "arrowEnd") continue;
+      object.add(makeObject(child));
+    }
+  }
   return object;
 }
 
@@ -796,6 +840,7 @@ document.querySelectorAll("[data-transform]").forEach((input) => {
     if (group === "rotation") value = THREE.MathUtils.degToRad(value);
     selected[group][axis] = value;
     rememberTransformOverride(selected);
+    syncArrowFromSelection(selected);
     markDirty();
     syncInspector();
     endEdit();
@@ -816,6 +861,8 @@ for (const id of ["material-color", "material-metalness", "material-roughness"])
       const color = new THREE.Color(event.target.value);
       sceneSpec.color = color.getHex();
       selected.children.find((child) => child.isArrowHelper)?.setColor(color);
+      const end = selected.children.find((child) => child.userData?.scene?.type === "arrowEnd");
+      if (end?.material?.color) end.material.color.copy(color);
       markDirty();
       return;
     }
@@ -993,17 +1040,22 @@ document.querySelector("#file-input").addEventListener("change", async (event) =
 function serializeObject(object) {
   const spec = { ...(object.userData.scene ?? { type: object.isGroup ? "group" : "box" }) };
   if (spec.lookAtCamera !== true) delete spec.lookAtCamera;
+  if (spec.type === "arrow") syncArrowVisual(object);
   spec.name = object.name || spec.name || "Object";
   spec.position = object.position.toArray().map(round);
   spec.rotation = [object.rotation.x, object.rotation.y, object.rotation.z].map(round);
   spec.scale = object.scale.toArray().map(round);
   if (!object.visible) spec.visible = false;
   const material = primaryMaterial(object);
-  if (material?.color && !["text", "arrow", "asset", "group", "camera"].includes(spec.type)) {
+  if (material?.color && !["text", "arrow", "arrowEnd", "asset", "group", "camera"].includes(spec.type)) {
     spec.color = material.color.getHex();
     if (material.metalness != null) spec.metalness = round(material.metalness);
     if (material.roughness != null) spec.roughness = round(material.roughness);
     if (material.opacity < 1) spec.opacity = round(material.opacity);
+  }
+  if (spec.type === "arrowEnd") {
+    delete spec.color;
+    delete spec.end;
   }
   const materialOverrides = collectMaterialOverrides(object);
   if (materialOverrides.length) spec.materialOverrides = materialOverrides;
@@ -1130,6 +1182,7 @@ renderer.setAnimationLoop(() => {
   content.traverse((object) => {
     const helper = object.userData?.cameraHelper;
     if (helper) helper.visible = object.visible;
+    if (object.userData?.scene?.type === "arrow") syncArrowVisual(object);
   });
   renderer.render(scene, camera);
 });

@@ -177,9 +177,15 @@ function makeText(item) {
   return label;
 }
 
+function arrowEndPosition(item) {
+  const child = (item.children || []).find((entry) => entry.type === "arrowEnd" || entry.name === "End" || entry.name === "Arrow End");
+  if (child?.position) return new THREE.Vector3(...child.position);
+  return new THREE.Vector3(...(item.end || [0, 0.4, 0]));
+}
+
 function makeArrow(item) {
   const group = new THREE.Group();
-  const end = new THREE.Vector3(...(item.end || [0, 0.4, 0]));
+  const end = arrowEndPosition(item);
   const length = Math.max(end.length(), 0.001);
   const helper = new THREE.ArrowHelper(end.clone().normalize(), new THREE.Vector3(), length, item.color ?? 0x1686ff, Math.min(0.1, length * 0.25), Math.min(0.055, length * 0.12));
   group.add(helper);
@@ -243,6 +249,7 @@ function applyTransform(object, item) {
 
 export function createSceneObject(item, options = {}) {
   const type = item.type || "box";
+  if (type === "arrowEnd") return null;
   let object;
   if (type === "group" || type === "camera") object = new THREE.Group();
   else if (type === "text") object = makeText(item);
@@ -256,6 +263,11 @@ export function createSceneObject(item, options = {}) {
   if (!object.userData.scene) rememberSpec(object, item);
   object.name = item.name || type;
   applyTransform(object, item);
-  if (type !== "asset") for (const child of item.children || []) object.add(createSceneObject(child, options));
+  if (type !== "asset" && type !== "arrow") {
+    for (const child of item.children || []) {
+      const childObject = createSceneObject(child, options);
+      if (childObject) object.add(childObject);
+    }
+  }
   return object;
 }
