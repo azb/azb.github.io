@@ -43,6 +43,7 @@ function createAircraft() {
   return plane;
 }
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
+const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, elevator: null, rudder: null, neutral: new Map() };
 const fighterModelUrl = new URL("../assets/FighterPlaneWithControls.glb", import.meta.url).href;
 modelLabel.textContent = "Fighter model: loading GLB…";
 new GLTFLoader().load(fighterModelUrl, (gltf) => {
@@ -50,8 +51,11 @@ new GLTFLoader().load(fighterModelUrl, (gltf) => {
   const bounds = new THREE.Box3().setFromObject(model);
   const size = bounds.getSize(new THREE.Vector3());
   model.scale.setScalar(3.8 / Math.max(size.x, size.y, size.z, .001));
-  model.rotation.y = Math.PI;
-  model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+  model.traverse((node) => {
+    if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+    const key = ({ LeftAileron: "leftAileron", RightAileron: "rightAileron", Elevator: "elevator", Rudder: "rudder", Cylinder: "propeller" })[node.name];
+    if (key) { animatedParts[key] = node; animatedParts.neutral.set(node, node.quaternion.clone()); }
+  });
   planeRoot.remove(aircraft);
   aircraft = model;
   planeRoot.add(aircraft);
@@ -130,10 +134,22 @@ function controls() {
   controllerLabel.textContent = controllerReadout.length ? `Sticks ${controllerReadout.join(" · ")}` : "Sticks: waiting for XR controllers";
   for (const key of ["pitch", "roll", "yaw", "throttle"]) value[key] = clamp(value[key], -1, 1); return value;
 }
+function deflect(part, degrees, axis) {
+  if (!part) return;
+  part.quaternion.copy(animatedParts.neutral.get(part)).multiply(new THREE.Quaternion().setFromAxisAngle(axis, THREE.MathUtils.degToRad(degrees)));
+}
+function animateAircraft(input, seconds) {
+  // These pivots and axes match the control objects in the Lens Studio fighter scene.
+  deflect(animatedParts.leftAileron, input.roll * 24, new THREE.Vector3(1, 0, 0));
+  deflect(animatedParts.rightAileron, -input.roll * 24, new THREE.Vector3(1, 0, 0));
+  deflect(animatedParts.elevator, -input.pitch * 22, new THREE.Vector3(1, 0, 0));
+  deflect(animatedParts.rudder, input.yaw * 26, new THREE.Vector3(0, 1, 0));
+  if (animatedParts.propeller) animatedParts.propeller.rotateZ(seconds * (12 + flight.throttle * 95));
+}
 function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
 addEventListener("resize", resize); resize(); let previous = performance.now();
-renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); flight.step(input, dt); planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); if (input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; renderer.render(scene, camera); });
+renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); flight.step(input, dt); animateAircraft(input, dt); planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); if (!renderer.xr.isPresenting) camera.lookAt(planeRoot.position); if (input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; renderer.render(scene, camera); });
 resetButton.addEventListener("click", () => flight.reset());
 async function configureVR() {
   if (!navigator.xr) { vrButton.textContent = "WebXR unavailable"; vrButton.disabled = true; return; }
