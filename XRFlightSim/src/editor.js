@@ -52,12 +52,19 @@ canvas.addEventListener("wheel", (event) => {
   orbit.update();
 }, { passive: false });
 const transform = new TransformControls(camera, canvas);
-transform.addEventListener("dragging-changed", (event) => {
-  orbit.enabled = !event.value;
-  if (event.value) beginEdit();
-  else endEdit();
+transform.addEventListener("mouseDown", () => {
+  orbit.enabled = false;
+  beginEdit();
 });
-transform.addEventListener("objectChange", () => { dirty = true; syncInspector(); });
+transform.addEventListener("mouseUp", () => {
+  orbit.enabled = true;
+  endEdit();
+});
+transform.addEventListener("objectChange", () => {
+  rememberTransformOverride(selected);
+  dirty = true;
+  syncInspector();
+});
 scene.add(transform.getHelper());
 const content = new THREE.Group();
 content.name = "Scene content";
@@ -311,6 +318,55 @@ function rememberSubmeshMaterials(mesh) {
   mesh.userData.materialOverride = materialOverrideValues(material);
 }
 
+function rememberTransformOverride(object) {
+  if (!object || object.userData?.scene) return;
+  object.userData.transformOverride = true;
+}
+
+function applyTransformOverrides(root, overrides) {
+  if (!root || !overrides?.length) return;
+  for (const override of overrides) {
+    let node = root;
+    for (const index of override.path || []) node = node?.children?.[index];
+    if ((!node || node === root) && override.name) {
+      root.traverse((child) => {
+        if ((!node || node === root) && child !== root && child.name === override.name) node = child;
+      });
+    }
+    if (!node || node === root) continue;
+    if (override.position) node.position.fromArray(override.position);
+    if (override.rotation) node.rotation.set(override.rotation[0] || 0, override.rotation[1] || 0, override.rotation[2] || 0);
+    if (override.scale) node.scale.fromArray(override.scale);
+    node.userData.transformOverride = true;
+  }
+}
+
+function collectTransformOverrides(object) {
+  const overrides = [];
+  const walk = (node) => {
+    for (const child of node.children) {
+      if (child.userData?.skipList) continue;
+      if (child.userData?.scene) continue;
+      if (child.userData.transformOverride) {
+        const path = indexPathFrom(object, child);
+        if (path) {
+          const entry = {
+            path,
+            position: child.position.toArray().map(round),
+            rotation: [child.rotation.x, child.rotation.y, child.rotation.z].map(round),
+            scale: child.scale.toArray().map(round),
+          };
+          if (child.name) entry.name = child.name;
+          overrides.push(entry);
+        }
+      }
+      walk(child);
+    }
+  };
+  walk(object);
+  return overrides;
+}
+
 function applyMaterialOverrides(root, overrides) {
   if (!root || !overrides?.length) return;
   for (const override of overrides) {
@@ -400,6 +456,7 @@ function makeAsset(item) {
   const wrapper = new THREE.Group();
   const sceneSpec = { type: "asset", url: item.url, wingspan: item.wingspan ?? null };
   if (item.materialOverrides?.length) sceneSpec.materialOverrides = item.materialOverrides;
+  if (item.transformOverrides?.length) sceneSpec.transformOverrides = item.transformOverrides;
   wrapper.userData.scene = sceneSpec;
   if (!item.url) return wrapper;
   const useFighterMaterials = /FighterPlane/i.test(`${item.name || ""} ${item.url || ""}`);
@@ -413,6 +470,7 @@ function makeAsset(item) {
     wrapper.add(model);
     ensureReadableMeshNames(model);
     applyMaterialOverrides(wrapper, sceneSpec.materialOverrides);
+    applyTransformOverrides(wrapper, sceneSpec.transformOverrides);
     rebuildList();
     if (pendingSelectionPath) selectByPath(pendingSelectionPath);
   }, undefined, (error) => {
@@ -649,6 +707,7 @@ document.querySelectorAll("[data-transform]").forEach((input) => {
     let value = Number(input.value);
     if (group === "rotation") value = THREE.MathUtils.degToRad(value);
     selected[group][axis] = value;
+    rememberTransformOverride(selected);
     markDirty();
     syncInspector();
     endEdit();
@@ -856,6 +915,9 @@ function serializeObject(object) {
   const materialOverrides = collectMaterialOverrides(object);
   if (materialOverrides.length) spec.materialOverrides = materialOverrides;
   else if (!(spec.type === "asset" && object.children.length === 0 && spec.materialOverrides?.length)) delete spec.materialOverrides;
+  const transformOverrides = collectTransformOverrides(object);
+  if (transformOverrides.length) spec.transformOverrides = transformOverrides;
+  else if (!(spec.type === "asset" && object.children.length === 0 && spec.transformOverrides?.length)) delete spec.transformOverrides;
   const children = [...object.children].filter((child) => child.userData?.scene).map(serializeObject);
   if (children.length) spec.children = children;
   return spec;
