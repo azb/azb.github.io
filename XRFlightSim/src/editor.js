@@ -277,10 +277,16 @@ function makeArrowEnd(position, color) {
   return end;
 }
 
+function arrowHelperOf(group) {
+  return group?.userData?.arrowHelper
+    || group?.children.find((child) => child.type === "ArrowHelper" || child.isArrowHelper)
+    || null;
+}
+
 function syncArrowVisual(group) {
   if (group?.userData?.scene?.type !== "arrow") return;
   const end = group.children.find((child) => child.userData?.scene?.type === "arrowEnd");
-  const helper = group.children.find((child) => child.isArrowHelper);
+  const helper = arrowHelperOf(group);
   if (!end || !helper) return;
   const direction = end.position.clone();
   const length = Math.max(direction.length(), 0.001);
@@ -290,9 +296,10 @@ function syncArrowVisual(group) {
 }
 
 function syncArrowFromSelection(object) {
-  if (!object) return;
-  if (object.userData?.scene?.type === "arrow") syncArrowVisual(object);
-  else if (object.userData?.scene?.type === "arrowEnd" && object.parent) syncArrowVisual(object.parent);
+  const target = object || transform.object;
+  if (!target) return;
+  if (target.userData?.scene?.type === "arrow") syncArrowVisual(target);
+  else if (target.userData?.scene?.type === "arrowEnd" && target.parent) syncArrowVisual(target.parent);
 }
 
 function makeArrow(item) {
@@ -306,6 +313,7 @@ function makeArrow(item) {
   helper.cone.userData.skipList = true;
   helper.line.userData.selectTarget = group;
   helper.cone.userData.selectTarget = group;
+  group.userData.arrowHelper = helper;
   group.add(helper);
   group.add(makeArrowEnd(end, color));
   group.userData.scene = { type: "arrow", color, end: end.toArray() };
@@ -860,7 +868,7 @@ for (const id of ["material-color", "material-metalness", "material-roughness"])
     if (sceneSpec?.type === "arrow" && id === "material-color") {
       const color = new THREE.Color(event.target.value);
       sceneSpec.color = color.getHex();
-      selected.children.find((child) => child.isArrowHelper)?.setColor(color);
+      arrowHelperOf(selected)?.setColor(color);
       const end = selected.children.find((child) => child.userData?.scene?.type === "arrowEnd");
       if (end?.material?.color) end.material.color.copy(color);
       markDirty();
