@@ -4,7 +4,7 @@ import { TransformControls } from "https://cdn.jsdelivr.net/npm/three@0.180.0/ex
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 
 const STORAGE_KEY = "xrflightsim-scene";
-const FLIGHT_SCENE_URL = "./scenes/flight-sim-scene.json?v=0.1.12";
+const FLIGHT_SCENE_URL = "./scenes/flight-sim-scene.json";
 const canvas = document.querySelector("#scene");
 const list = document.querySelector("#object-list");
 const hierarchySearch = document.querySelector("#hierarchy-search");
@@ -1056,17 +1056,17 @@ function loadSceneData(data) {
   throw new Error("Unrecognized scene file");
 }
 
-async function loadSceneUrl(url) {
-  const response = await fetch(url, { cache: "no-cache" });
-  if (!response.ok) throw new Error(`Could not fetch ${url}`);
+async function loadFlightSceneFile() {
+  const response = await fetch(`${FLIGHT_SCENE_URL}?t=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Could not fetch ${FLIGHT_SCENE_URL}`);
   loadSceneData(await response.json());
 }
 
 document.querySelector("#load-flight-scene").onclick = async () => {
   if (!confirmReplace()) return;
   try {
-    await loadSceneUrl(FLIGHT_SCENE_URL);
-    setStatus("Flight scene");
+    await loadFlightSceneFile();
+    setStatus("Loaded the flight scene file");
   } catch (error) {
     console.error(error);
     setStatus("Could not load the flight scene");
@@ -1105,6 +1105,13 @@ document.querySelector("#save-scene").onclick = () => {
 };
 
 async function boot() {
+  try {
+    await loadFlightSceneFile();
+    setStatus("Loaded the flight scene file");
+    return;
+  } catch (error) {
+    console.warn(error);
+  }
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     try {
@@ -1115,13 +1122,7 @@ async function boot() {
       console.warn("Stored scene could not be restored", error);
     }
   }
-  try {
-    await loadSceneUrl(FLIGHT_SCENE_URL);
-    setStatus("Flight scene");
-  } catch (error) {
-    console.warn(error);
-    setStatus("No scene loaded");
-  }
+  setStatus("No scene loaded");
 }
 
 boot();
