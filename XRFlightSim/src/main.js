@@ -144,7 +144,7 @@ function animateAircraft(input, seconds) {
   deflect(animatedParts.rightAileron, input.roll * 24, new THREE.Vector3(1, 0, 0));
   deflect(animatedParts.elevator, input.pitch * 22, new THREE.Vector3(1, 0, 0));
   deflect(animatedParts.rudder, input.yaw * 26, new THREE.Vector3(0, 1, 0));
-  if (animatedParts.propeller) animatedParts.propeller.rotateZ(seconds * (4 + flight.throttle * 38));
+  if (animatedParts.propeller) animatedParts.propeller.rotateY(-seconds * (4 + flight.throttle * 38));
 }
 function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
