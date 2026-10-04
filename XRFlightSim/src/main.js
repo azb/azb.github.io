@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.6";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.7";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -17,6 +17,7 @@ const lensWingspan = 2.84433;
 const worldSpeedScale = .05;
 let engineContext = null;
 let engineGain = null;
+let enginePanner = null;
 let engineSource = null;
 let engineBuffer = null;
 let engineLoad = null;
@@ -208,7 +209,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.6`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.7`);
     let fighterFromScene = false;
     const environment = [];
     let nextControls = null;
@@ -330,6 +331,9 @@ const maxPlaneSpeed = 100 * worldSpeedScale;
 const listenerPosition = new THREE.Vector3();
 const sourcePosition = new THREE.Vector3();
 const toListener = new THREE.Vector3();
+const listenerQuaternion = new THREE.Quaternion();
+const listenerForward = new THREE.Vector3();
+const listenerUp = new THREE.Vector3();
 function engineListenerObject() {
   if (renderer.xr.isPresenting) {
     const xrCamera = renderer.xr.getCamera();
@@ -343,6 +347,50 @@ function engineListenerObject() {
     if (nested) return nested;
   }
   return camera;
+}
+function setAudioVector(node, xName, yName, zName, x, y, z, time) {
+  const xParam = node[xName];
+  const yParam = node[yName];
+  const zParam = node[zName];
+  if (xParam?.setValueAtTime && yParam?.setValueAtTime && zParam?.setValueAtTime) {
+    xParam.setValueAtTime(x, time);
+    yParam.setValueAtTime(y, time);
+    zParam.setValueAtTime(z, time);
+    return true;
+  }
+  return false;
+}
+function updateSpatialEngineAudio(time) {
+  if (!engineContext || !enginePanner || !planeRoot) return;
+  const listenerObject = engineListenerObject();
+  if (!listenerObject) return;
+  planeRoot.getWorldPosition(sourcePosition);
+  listenerObject.getWorldPosition(listenerPosition);
+  listenerObject.getWorldQuaternion(listenerQuaternion);
+  listenerForward.set(0, 0, -1).applyQuaternion(listenerQuaternion);
+  listenerUp.set(0, 1, 0).applyQuaternion(listenerQuaternion);
+  if (!setAudioVector(enginePanner, "positionX", "positionY", "positionZ", sourcePosition.x, sourcePosition.y, sourcePosition.z, time)
+    && enginePanner.setPosition) {
+    enginePanner.setPosition(sourcePosition.x, sourcePosition.y, sourcePosition.z);
+  }
+  const audioListener = engineContext.listener;
+  if (!setAudioVector(audioListener, "positionX", "positionY", "positionZ", listenerPosition.x, listenerPosition.y, listenerPosition.z, time)
+    && audioListener.setPosition) {
+    audioListener.setPosition(listenerPosition.x, listenerPosition.y, listenerPosition.z);
+  }
+  if (audioListener.forwardX?.setValueAtTime) {
+    audioListener.forwardX.setValueAtTime(listenerForward.x, time);
+    audioListener.forwardY.setValueAtTime(listenerForward.y, time);
+    audioListener.forwardZ.setValueAtTime(listenerForward.z, time);
+    audioListener.upX.setValueAtTime(listenerUp.x, time);
+    audioListener.upY.setValueAtTime(listenerUp.y, time);
+    audioListener.upZ.setValueAtTime(listenerUp.z, time);
+  } else if (audioListener.setOrientation) {
+    audioListener.setOrientation(
+      listenerForward.x, listenerForward.y, listenerForward.z,
+      listenerUp.x, listenerUp.y, listenerUp.z
+    );
+  }
 }
 function dopplerPitchScale() {
   // Lens GameControllerMovement.getDopplerPitchScale: airplane velocity dotted with
@@ -365,13 +413,28 @@ function enginePlaybackRate() {
   const throttlePitch = lerp(minEnginePitch, maxEnginePitch, speedRatio);
   return clamp(throttlePitch * dopplerPitchScale(), .25, 3);
 }
+function createEnginePanner() {
+  const panner = engineContext.createPanner();
+  panner.panningModel = "HRTF";
+  panner.distanceModel = "inverse";
+  // Flight-sim distances: keep idle audible nearby, roll off gently over tens of meters.
+  panner.refDistance = 12;
+  panner.maxDistance = 400;
+  panner.rolloffFactor = .55;
+  panner.coneInnerAngle = 360;
+  panner.coneOuterAngle = 360;
+  panner.coneOuterGain = 0;
+  return panner;
+}
 async function startEngineSound() {
   try {
     if (!engineContext) {
       engineContext = new AudioContext();
       engineGain = engineContext.createGain();
       engineGain.gain.value = .28;
-      engineGain.connect(engineContext.destination);
+      enginePanner = createEnginePanner();
+      engineGain.connect(enginePanner);
+      enginePanner.connect(engineContext.destination);
     }
     // Resume immediately while this call still originates from a controller/button action.
     // Waiting for the fetch first can cause headset browsers to reject audio playback.
@@ -389,6 +452,7 @@ async function startEngineSound() {
       engineSource.connect(engineGain);
       engineSource.start();
     }
+    updateSpatialEngineAudio(engineContext.currentTime);
   } catch (error) { console.warn("Engine audio could not start", error); }
 }
 function pauseEngineSound() {
@@ -399,6 +463,7 @@ function updateEngineSound() {
   const time = engineContext.currentTime;
   engineSource.playbackRate.setTargetAtTime(enginePlaybackRate(), time, .125);
   engineGain.gain.setTargetAtTime(lerp(.28, 1, flight.throttle), time, .04);
+  updateSpatialEngineAudio(time);
 }
 function playBalloonPop() {
   const pop = new Audio(balloonPopUrl);
