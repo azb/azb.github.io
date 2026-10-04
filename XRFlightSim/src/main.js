@@ -145,6 +145,12 @@ const bulletSpawnLocal = [
   p.y * lensPlayerScale * 0.01,
   -p.z * lensPlayerScale * 0.01,
 ));
+// Lens GameControllerMovement: Unit Sphere setWorldScale(3,3,12) cm, speed 800 + planeVelocity, lifetime 3, cooldown 0.15.
+const bulletMuzzleSpeed = 800 * worldSpeedScale;
+const bulletLifetimeSec = 3;
+const fireCooldownMs = 150;
+const bulletGeom = new THREE.SphereGeometry(0.5, 8, 8);
+const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
 const fireHapticIntensity = 20 / 255;
 const fireHapticDurationMs = 10;
 function setSimulationPaused(paused) {
@@ -512,10 +518,12 @@ function fire() {
   const local = bulletSpawnLocal[nextBulletSpawnIndex % bulletSpawnLocal.length];
   nextBulletSpawnIndex += 1;
   const offset = local.clone().applyQuaternion(flight.rotation);
-  // Mesh was authored at .09 for the large fighter; ÷ (2.84433/0.500226) ≈ 5.686 to match Spectacles scale.
-  const shot = new THREE.Mesh(new THREE.SphereGeometry(.09 * (lensWingspan / 2.84433), 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 }));
+  const shot = new THREE.Mesh(bulletGeom, bulletMat);
+  // Lens Unit Sphere diameter 1 × world scale (3,3,12) cm → meters.
+  shot.scale.set(0.03, 0.03, 0.12);
   shot.position.copy(flight.position).add(offset);
-  shot.userData.velocity = flight.forward().multiplyScalar(95);
+  shot.quaternion.copy(flight.rotation);
+  shot.userData.velocity = flight.forward().multiplyScalar(bulletMuzzleSpeed).add(flight.velocity);
   shot.userData.age = 0;
   scene.add(shot);
   bullets.push(shot);
@@ -536,7 +544,7 @@ function applyDesktopCamera() {
   desktopCameraRig.getWorldQuaternion(camera.quaternion);
 }
 addEventListener("resize", resize); resize(); let previous = performance.now();
-renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (controlsVisible && input.fire && !controlsDismissWasPressed) { controlsVisible = false; controlsPanel.visible = false; statusLabel.textContent = "Controls confirmed · third-person RC flight"; } controlsDismissWasPressed = input.fire; if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); if (!controlsVisible && input.fire && time - lastFire > 160) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > 2.5) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); applyDesktopCamera(); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; if (!simulationPaused) updateEngineSound(); renderer.render(scene, camera); });
+renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (controlsVisible && input.fire && !controlsDismissWasPressed) { controlsVisible = false; controlsPanel.visible = false; statusLabel.textContent = "Controls confirmed · third-person RC flight"; } controlsDismissWasPressed = input.fire; if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); if (!controlsVisible && input.fire && time - lastFire > fireCooldownMs) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > bulletLifetimeSec) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); applyDesktopCamera(); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; if (!simulationPaused) updateEngineSound(); renderer.render(scene, camera); });
 resetButton.addEventListener("click", () => flight.reset());
 const xrOptionalFeatures = ["local-floor", "bounded-floor", "hand-tracking"];
 function probeSessionSupport(mode, timeoutMs) {
