@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>XRFlightSim — WebXR Demo</title>
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"}}</script>
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+    <section id="hud"><p id="speed">Speed 30</p><p id="throttle">Throttle 0%</p><p id="status">Desktop preview · controller or keyboard</p></section>
+    <section id="overlay"><h1>XRFlightSim</h1><p>WebXR flight-controls prototype.</p><button id="enter-vr">Checking VR support…</button><button id="reset">Reset flight</button></section>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
