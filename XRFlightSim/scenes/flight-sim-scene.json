@@ -458,9 +458,9 @@
         },
         {
           "type": "asset",
-          "url": "./assets/controllers/meta-quest-touch-left.glb",
+          "url": "./assets/controllers/meta-quest-touch-pro-left.glb",
           "wingspan": 0.37,
-          "name": "Left Quest Controller",
+          "name": "Left Quest Pro Controller",
           "position": [
             -0.6025,
             -0.1034,
@@ -479,9 +479,9 @@
         },
         {
           "type": "asset",
-          "url": "./assets/controllers/meta-quest-touch-right.glb",
+          "url": "./assets/controllers/meta-quest-touch-pro-right.glb",
           "wingspan": 0.37,
-          "name": "Right Quest Controller",
+          "name": "Right Quest Pro Controller",
           "position": [
             0.55,
             -0.1316,
