@@ -227,10 +227,10 @@ const bulletSpawnLocal = [
   new THREE.Vector3(-38.559101, -9.386186, 36.82412),
   new THREE.Vector3(38.559086, -9.386186, 36.82412),
 ].map(lensLocalToThree);
-// Lens LeftWingTip / RightWingTip under Player (Scene.scene).
+// Lens LeftWingTip / RightWingTip under Player (Scene.scene); +0.02 m local Z = aft (THREE -forward).
 const wingTipLocal = [
-  lensLocalToThree(new THREE.Vector3(81.310097, -7.972565, 24.621162)),
-  lensLocalToThree(new THREE.Vector3(-81.310097, -7.972565, 24.621147)),
+  lensLocalToThree(new THREE.Vector3(81.310097, -7.972565, 24.621162)).add(new THREE.Vector3(0, 0, 0.02)),
+  lensLocalToThree(new THREE.Vector3(-81.310097, -7.972565, 24.621147)).add(new THREE.Vector3(0, 0, 0.02)),
 ];
 // Lens WingtipVortexFX defaults / scene overrides.
 const vortexMinAirspeedRatio = 0.45;
