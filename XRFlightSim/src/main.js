@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.9";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.10";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -130,7 +130,19 @@ class FlightModel {
     if (speed > .01) this.position.addScaledVector(this.velocity, dt);
   }
 }
-const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true; let controlsDismissWasPressed = false;
+const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true; let controlsDismissWasPressed = false;
+// Lens BulletSpawnPoint1/2 under Player (scale 0.296423). Scene units are cm → meters; flip Z for THREE -forward.
+const lensPlayerScale = 0.296423;
+const bulletSpawnLocal = [
+  new THREE.Vector3(-38.559101, -9.386186, 36.82412),
+  new THREE.Vector3(38.559086, -9.386186, 36.82412),
+].map((p) => new THREE.Vector3(
+  p.x * lensPlayerScale * 0.01,
+  p.y * lensPlayerScale * 0.01,
+  -p.z * lensPlayerScale * 0.01,
+));
+const fireHapticIntensity = 20 / 255;
+const fireHapticDurationMs = 10;
 function setSimulationPaused(paused) {
   simulationPaused = paused;
   pausePanel.visible = paused;
@@ -210,7 +222,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.9`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.10`);
     let fighterFromScene = false;
     const environment = [];
     let nextControls = null;
@@ -471,7 +483,39 @@ function playBalloonPop() {
   pop.volume = .45;
   pop.play().catch(() => {});
 }
-function fire() { const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 })); shot.position.copy(flight.position).add(flight.forward().multiplyScalar(2)); shot.userData.velocity = flight.forward().multiplyScalar(95); shot.userData.age = 0; scene.add(shot); bullets.push(shot); }
+function vibrateFireController() {
+  try {
+    const sources = renderer.xr.getSession()?.inputSources ?? [];
+    const source = sources.find((item) => item.handedness === "right" && item.gamepad)
+      ?? sources.find((item) => item.gamepad);
+    const gamepad = source?.gamepad;
+    if (!gamepad) return;
+    const actuator = gamepad.hapticActuators?.[0];
+    if (actuator?.pulse) {
+      Promise.resolve(actuator.pulse(fireHapticIntensity, fireHapticDurationMs)).catch(() => {});
+      return;
+    }
+    if (gamepad.vibrationActuator?.playEffect) {
+      Promise.resolve(gamepad.vibrationActuator.playEffect("dual-rumble", {
+        duration: fireHapticDurationMs,
+        strongMagnitude: fireHapticIntensity,
+        weakMagnitude: fireHapticIntensity,
+      })).catch(() => {});
+    }
+  } catch (_) { /* haptics unavailable on desktop / unsupported pads */ }
+}
+function fire() {
+  const local = bulletSpawnLocal[nextBulletSpawnIndex % bulletSpawnLocal.length];
+  nextBulletSpawnIndex += 1;
+  const offset = local.clone().applyQuaternion(flight.rotation);
+  const shot = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8 }));
+  shot.position.copy(flight.position).add(offset);
+  shot.userData.velocity = flight.forward().multiplyScalar(95);
+  shot.userData.age = 0;
+  scene.add(shot);
+  bullets.push(shot);
+  vibrateFireController();
+}
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
 function applyDesktopCamera() {
   // Authored rig rotation is the desktop aim. lookAt(plane) would discard it.
