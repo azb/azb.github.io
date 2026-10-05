@@ -3,14 +3,14 @@
   "version": 1,
   "view": {
     "position": [
-      -0.3004,
-      2.0436,
-      -0.3847
+      -0.0572,
+      1.8419,
+      -0.3185
     ],
     "target": [
-      0.1614,
-      1.3639,
-      -1.1975
+      0.0792,
+      1.3621,
+      -1.2654
     ]
   },
   "objects": [
@@ -389,7 +389,7 @@
           ],
           "name": "Increase Throttle Label",
           "position": [
-            -0.0817,
+            -0.0053,
             -0.2448,
             0.2628
           ],
@@ -634,6 +634,20 @@
             1.5,
             1.5,
             1.5
+          ],
+          "materialOverrides": [
+            {
+              "path": [
+                0,
+                0,
+                0
+              ],
+              "color": 16777215,
+              "metalness": 0,
+              "roughness": 0.8211,
+              "material": "controller",
+              "name": "left_controller_faceplate"
+            }
           ]
         },
         {
