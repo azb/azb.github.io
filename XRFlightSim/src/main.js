@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.28";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.29";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -459,7 +459,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.28`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.29`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -529,48 +529,73 @@ function activeStick(gamepad) {
   return axisPairs.map(([x, y]) => [gamepad.axes[x] ?? 0, gamepad.axes[y] ?? 0])
     .reduce((best, pair) => pair[0] ** 2 + pair[1] ** 2 > best[0] ** 2 + best[1] ** 2 ? pair : best, [0, 0]);
 }
-function gamepadForSource(source, connectedPads) {
-  if (source.gamepad) return source.gamepad;
-  const hand = source.handedness;
-  return connectedPads.find((pad) => pad && pad.id.toLowerCase().includes(hand)) ?? null;
+function isXrStandardGamepad(gamepad) {
+  return Boolean(gamepad && gamepad.mapping === "xr-standard");
+}
+function isBrowserGamepad(gamepad) {
+  // DualSense / Xbox / etc. use the browser Gamepad API ("standard").
+  // XR controllers use "xr-standard" and must not mute Bluetooth pads on AVP.
+  return Boolean(gamepad && gamepad.mapping === "standard" && gamepad.axes.length >= 4);
+}
+function gamepadLabel(gamepad) {
+  const id = (gamepad?.id || "Gamepad").replace(/\s+/g, " ").trim();
+  if (/dualsense|dualshock|playstation|wireless controller/i.test(id)) return "PlayStation";
+  if (/xbox|xinput/i.test(id)) return "Xbox";
+  return id.slice(0, 28);
+}
+function applyBrowserGamepad(value, pad) {
+  value.yaw = stick(pad.axes[0] || 0);
+  value.roll = stick(pad.axes[2] || 0);
+  value.pitch = -stick(pad.axes[3] || 0);
+  value.throttle = (pad.buttons[5]?.value || 0) - (pad.buttons[4]?.value || 0);
+  value.fire = Boolean(pad.buttons[7]?.pressed || pad.buttons[0]?.pressed);
+  // Options / Start-style buttons when present.
+  value.pause ||= Boolean(pad.buttons[9]?.pressed || pad.buttons[8]?.pressed);
 }
 function controls() {
   const value = { pitch: 0, roll: 0, yaw: 0, throttle: 0, fire: false, pause: false };
   const xrSources = renderer.xr.getSession()?.inputSources ?? [];
   const connectedPads = [...navigator.getGamepads()].filter(Boolean);
-  let hasXRControllers = false;
+  // Prefer DualSense/Xbox whenever present. On Vision Pro, Safari may also expose the
+  // pad (or empty hand sources) through XR inputSources; the old hasXRControllers gate
+  // then skipped the standard pad and made input intermittent.
+  const browserPad = connectedPads.find(isBrowserGamepad) || null;
   const controllerReadout = [];
-  for (const source of xrSources) {
-    const gamepad = gamepadForSource(source, connectedPads);
-    if (!gamepad) continue;
-    hasXRControllers = true;
-    const [rawX, rawY] = activeStick(gamepad);
-    const x = stick(rawX);
-    const y = stick(rawY);
-    const indexTrigger = gamepad.buttons[0]?.value ?? 0;
-    const grip = gamepad.buttons[1]?.value ?? 0;
-    controllerReadout.push(`${source.handedness[0].toUpperCase()}: ${x.toFixed(2)}, ${y.toFixed(2)}`);
-    if (source.handedness === "left") {
-      value.yaw += x;
-      value.throttle -= grip;
-      value.fire ||= indexTrigger > .55;
-      // Meta's Quest Touch profile exposes Menu at button 6. Some older profiles omit
-      // empty button entries, so button 5 is retained as a compatibility fallback.
-      const menu = gamepad.buttons[6] ?? gamepad.buttons[5];
-      value.pause ||= Boolean(menu?.pressed);
-    }
-    if (source.handedness === "right") {
-      value.roll += x;
-      value.pitch -= y;
-      value.throttle += grip;
-      value.fire ||= indexTrigger > .55;
+  if (browserPad) {
+    applyBrowserGamepad(value, browserPad);
+    controllerReadout.push(`${gamepadLabel(browserPad)} pad`);
+  } else {
+    for (const source of xrSources) {
+      const gamepad = source.gamepad;
+      if (!isXrStandardGamepad(gamepad)) continue;
+      const [rawX, rawY] = activeStick(gamepad);
+      const x = stick(rawX);
+      const y = stick(rawY);
+      const indexTrigger = gamepad.buttons[0]?.value ?? 0;
+      const grip = gamepad.buttons[1]?.value ?? 0;
+      const handKey = source.handedness?.[0]?.toUpperCase?.() || "?";
+      controllerReadout.push(`${handKey}: ${x.toFixed(2)}, ${y.toFixed(2)}`);
+      if (source.handedness === "left") {
+        value.yaw += x;
+        value.throttle -= grip;
+        value.fire ||= indexTrigger > .55;
+        // Meta's Quest Touch profile exposes Menu at button 6. Some older profiles omit
+        // empty button entries, so button 5 is retained as a compatibility fallback.
+        const menu = gamepad.buttons[6] ?? gamepad.buttons[5];
+        value.pause ||= Boolean(menu?.pressed);
+      }
+      if (source.handedness === "right") {
+        value.roll += x;
+        value.pitch -= y;
+        value.throttle += grip;
+        value.fire ||= indexTrigger > .55;
+      }
     }
   }
-  // Ignore XR controllers here: their axes are already read through XR input sources.
-  const pad = !hasXRControllers ? connectedPads.filter((item) => item.mapping === "standard" && item.axes.length >= 4).find(Boolean) : null;
-  if (pad) { value.yaw = stick(pad.axes[0] || 0); value.roll = stick(pad.axes[2] || 0); value.pitch = -stick(pad.axes[3] || 0); value.throttle = (pad.buttons[5]?.value || 0) - (pad.buttons[4]?.value || 0); value.fire = Boolean(pad.buttons[7]?.pressed || pad.buttons[0]?.pressed); }
   value.pitch += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0); value.roll += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0); value.yaw += (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0); value.throttle += (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0); value.fire ||= keys.has("Space");
-  controllerLabel.textContent = controllerReadout.length ? `Sticks ${controllerReadout.join(" · ")}` : "Sticks: waiting for XR controllers";
+  controllerLabel.textContent = controllerReadout.length
+    ? `Sticks ${controllerReadout.join(" · ")}`
+    : "Sticks: waiting for controller";
   for (const key of ["pitch", "roll", "yaw", "throttle"]) value[key] = clamp(value[key], -1, 1); return value;
 }
 function deflect(part, degrees, axis) {
