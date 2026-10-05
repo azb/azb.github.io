@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.33";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.34";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -468,7 +468,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.33`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.34`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -777,7 +777,7 @@ const impactPrevWorld = new THREE.Vector3();
 const impactCurrWorld = new THREE.Vector3();
 const impactDirection = new THREE.Vector3();
 const impactParticles = [];
-const impactParticleGeom = new THREE.SphereGeometry(0.03, 6, 6);
+const impactParticleGeom = new THREE.SphereGeometry(0.0075, 6, 6);
 const impactParticleMat = new THREE.MeshBasicMaterial({
   color: 0xffb347,
   transparent: true,
@@ -797,10 +797,10 @@ function spawnBulletImpact(worldPoint) {
         Math.random() * 1.4 + 0.15,
         Math.random() * 2 - 1,
       ).normalize();
-      spark.userData.velocity = dir.multiplyScalar(1.2 + Math.random() * 2.4);
+      spark.userData.velocity = dir.multiplyScalar(0.3 + Math.random() * 0.6);
       spark.userData.age = 0;
       spark.userData.lifetime = 0.28 + Math.random() * 0.28;
-      spark.scale.setScalar(0.55 + Math.random() * 0.9);
+      spark.scale.setScalar(0.14 + Math.random() * 0.22);
       playSpace.add(spark);
       impactParticles.push(spark);
     }
@@ -818,10 +818,10 @@ function updateImpactParticles(dt) {
       impactParticles.splice(i, 1);
       continue;
     }
-    spark.userData.velocity.y -= 6.5 * dt;
+    spark.userData.velocity.y -= 1.6 * dt;
     spark.position.addScaledVector(spark.userData.velocity, dt);
     const life = 1 - spark.userData.age / spark.userData.lifetime;
-    spark.scale.setScalar(Math.max(0.05, life * 0.85));
+    spark.scale.setScalar(Math.max(0.012, life * 0.21));
   }
 }
 
