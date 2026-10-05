@@ -3,14 +3,14 @@
   "version": 1,
   "view": {
     "position": [
-      0.0435,
-      1.8561,
-      -0.0806
+      -0.0552,
+      1.8997,
+      -0.1295
     ],
     "target": [
-      0.0012,
-      1.3398,
-      -1.4412
+      -0.1126,
+      1.3641,
+      -1.3653
     ]
   },
   "objects": [
@@ -149,6 +149,10 @@
         {
           "type": "text",
           "text": "CONTROLS",
+          "size": [
+            1.68,
+            0.3
+          ],
           "name": "Controls Title",
           "position": [
             0,
@@ -164,15 +168,15 @@
             1,
             1,
             1
-          ],
-          "size": [
-            1.68,
-            0.3
           ]
         },
         {
           "type": "text",
           "text": "DECREASE THROTTLE",
+          "size": [
+            1.4,
+            0.25
+          ],
           "name": "Decrease Throttle Label",
           "position": [
             -0.0746,
@@ -185,28 +189,24 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
-          ],
-          "size": [
-            1.4,
-            0.25
+            0.8,
+            0.8,
+            0.8
           ]
         },
         {
           "type": "arrow",
           "color": 1476351,
           "end": [
-            -0.1511,
-            0.3985,
-            0.0989
+            -0.2561,
+            0.3373,
+            0.0693
           ],
           "name": "Decrease Throttle Arrow",
           "position": [
-            -0.7572,
-            -0.5886,
-            0.2969
+            -0.637,
+            -0.5185,
+            0.2701
           ],
           "rotation": [
             0,
@@ -223,9 +223,9 @@
               "type": "arrowEnd",
               "name": "End",
               "position": [
-                -0.1511,
-                0.3985,
-                0.0989
+                -0.2561,
+                0.3373,
+                0.0693
               ],
               "rotation": [
                 0,
@@ -243,11 +243,15 @@
         {
           "type": "text",
           "text": "STEER LEFT / RIGHT",
+          "size": [
+            1.4,
+            0.25
+          ],
           "name": "Steer Label",
           "position": [
-            -1.8973,
-            0.69,
-            0.1165
+            -1.8561,
+            0.5434,
+            0.5786
           ],
           "rotation": [
             0,
@@ -255,13 +259,9 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
-          ],
-          "size": [
-            1.4,
-            0.25
+            0.8,
+            0.8,
+            0.8
           ]
         },
         {
@@ -312,10 +312,14 @@
         },
         {
           "type": "text",
-          "text": "MENU: PAUSE / RESUME",
+          "text": "PAUSE / RESUME",
+          "size": [
+            1.2,
+            0.25
+          ],
           "name": "Pause Label",
           "position": [
-            -2.2163,
+            -1.9967,
             -0.1278,
             0.642
           ],
@@ -325,13 +329,9 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
-          ],
-          "size": [
-            1.4,
-            0.25
+            0.8,
+            0.8,
+            0.8
           ]
         },
         {
@@ -383,6 +383,10 @@
         {
           "type": "text",
           "text": "INCREASE THROTTLE",
+          "size": [
+            1.4,
+            0.25
+          ],
           "name": "Increase Throttle Label",
           "position": [
             -0.0817,
@@ -395,28 +399,24 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
-          ],
-          "size": [
-            1.4,
-            0.25
+            0.8,
+            0.8,
+            0.8
           ]
         },
         {
           "type": "arrow",
           "color": 1476351,
           "end": [
-            0.3191,
-            0.0275,
-            0.0008
+            0.4132,
+            0.1065,
+            0.039
           ],
           "name": "Increase Throttle Arrow",
           "position": [
-            0.5999,
-            -0.1963,
-            0.2857
+            0.4824,
+            -0.2627,
+            0.2716
           ],
           "rotation": [
             0,
@@ -433,9 +433,9 @@
               "type": "arrowEnd",
               "name": "End",
               "position": [
-                0.3191,
-                0.0275,
-                0.0008
+                0.4132,
+                0.1065,
+                0.039
               ],
               "rotation": [
                 0,
@@ -453,11 +453,15 @@
         {
           "type": "text",
           "text": "FIRE",
+          "size": [
+            0.8,
+            0.25
+          ],
           "name": "Fire Label",
           "position": [
             1.6677,
-            0.6029,
-            0.0395
+            0.6051,
+            0.0953
           ],
           "rotation": [
             0,
@@ -465,13 +469,9 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
-          ],
-          "size": [
-            1.4,
-            0.25
+            0.8,
+            0.8,
+            0.8
           ]
         },
         {
@@ -523,11 +523,15 @@
         {
           "type": "text",
           "text": "ROLL / PITCH",
+          "size": [
+            1,
+            0.25
+          ],
           "name": "Roll Pitch Label",
           "position": [
-            2.2383,
-            -0.0162,
-            0.3711
+            1.9135,
+            -0.049,
+            0.3552
           ],
           "rotation": [
             0,
@@ -535,13 +539,9 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
-          ],
-          "size": [
-            1.4,
-            0.25
+            0.8,
+            0.8,
+            0.8
           ]
         },
         {
@@ -593,6 +593,10 @@
         {
           "type": "text",
           "text": "OK · PRESS RIGHT TRIGGER",
+          "size": [
+            1.232,
+            0.22
+          ],
           "name": "OK Label",
           "position": [
             0,
@@ -609,10 +613,7 @@
             1,
             1
           ],
-          "size": [
-            1.232,
-            0.22
-          ]
+          "visible": false
         },
         {
           "type": "asset",
@@ -707,6 +708,10 @@
         {
           "type": "text",
           "text": "SIMULATION PAUSED",
+          "size": [
+            1.68,
+            0.3
+          ],
           "name": "Pause Title",
           "position": [
             0,
@@ -722,15 +727,15 @@
             1,
             1,
             1
-          ],
-          "size": [
-            1.68,
-            0.3
           ]
         },
         {
           "type": "text",
           "text": "Press the left controller Menu button to resume",
+          "size": [
+            1.9,
+            0.22
+          ],
           "name": "Pause Hint",
           "position": [
             0,
@@ -746,10 +751,6 @@
             1,
             1,
             1
-          ],
-          "size": [
-            1.9,
-            0.22
           ]
         }
       ]
