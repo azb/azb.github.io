@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.32";
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.33";
+
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -463,7 +468,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.32`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.33`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -820,66 +825,44 @@ function updateImpactParticles(dt) {
   }
 }
 
-const impactSphere = new THREE.Sphere();
-const impactHitPoint = new THREE.Vector3();
-const preciseMeshColliders = [];
-const coarseMeshColliders = [];
-const MAX_PRECISE_TRIANGLES = 8000;
+const bulletColliders = [];
+/** Ignore hits until the shot has traveled this far (m) so muzzle/spawn doesn't self-hit. */
+const bulletMuzzleIgnoreM = 0.4;
 
-function meshTriangleCount(mesh) {
+function disposeMeshGeometry(geometry) {
+  if (!geometry) return;
+  geometry.disposeBoundsTree?.();
+  geometry.dispose();
+}
+
+function ensureBoundsTree(mesh) {
   const geometry = mesh?.geometry;
-  if (!geometry) return 0;
-  if (geometry.index) return Math.floor(geometry.index.count / 3);
-  const positions = geometry.attributes?.position;
-  return positions ? Math.floor(positions.count / 3) : 0;
+  if (!geometry || geometry.boundsTree) return;
+  try {
+    geometry.computeBoundsTree();
+  } catch (error) {
+    console.warn("[WebXR] BVH build failed", error);
+  }
 }
 
 function collectBulletColliders() {
-  preciseMeshColliders.length = 0;
-  coarseMeshColliders.length = 0;
+  bulletColliders.length = 0;
   for (const entry of environmentMeshes.values()) {
     if (!entry.collider || !entry.mesh?.visible) continue;
-    if (meshTriangleCount(entry.collider) > MAX_PRECISE_TRIANGLES) coarseMeshColliders.push(entry.collider);
-    else preciseMeshColliders.push(entry.collider);
+    ensureBoundsTree(entry.collider);
+    bulletColliders.push(entry.collider);
   }
   roomContent.traverse((node) => {
-    if (!node.isMesh) return;
-    if (meshTriangleCount(node) > MAX_PRECISE_TRIANGLES) coarseMeshColliders.push(node);
-    else preciseMeshColliders.push(node);
+    if (!node.isMesh || !node.visible) return;
+    ensureBoundsTree(node);
+    bulletColliders.push(node);
   });
-}
-
-/** Cheap segment vs world-space bounding-sphere test for dense room meshes. */
-function segmentHitsBoundingSphere(prev, curr, mesh) {
-  const geometry = mesh.geometry;
-  if (!geometry) return null;
-  if (!geometry.boundingSphere) geometry.computeBoundingSphere();
-  impactSphere.copy(geometry.boundingSphere).applyMatrix4(mesh.matrixWorld);
-  impactSphere.radius = Math.max(impactSphere.radius, 0.05);
-  impactDirection.subVectors(curr, prev);
-  const segLen = impactDirection.length();
-  if (segLen < 1e-6) {
-    if (prev.distanceToSquared(impactSphere.center) <= impactSphere.radius ** 2) {
-      return impactHitPoint.copy(prev);
-    }
-    return null;
-  }
-  impactDirection.multiplyScalar(1 / segLen);
-  // Closest point on segment to sphere center.
-  const t = THREE.MathUtils.clamp(
-    impactDirection.dot(impactSphere.center.clone().sub(prev)),
-    0,
-    segLen,
-  );
-  impactHitPoint.copy(prev).addScaledVector(impactDirection, t);
-  if (impactHitPoint.distanceToSquared(impactSphere.center) > impactSphere.radius ** 2) return null;
-  return impactHitPoint.clone();
 }
 
 function bulletHitsEnvironment(shot, nextLocalPosition) {
   try {
     collectBulletColliders();
-    if (!preciseMeshColliders.length && !coarseMeshColliders.length) return null;
+    if (!bulletColliders.length) return null;
     playSpace.localToWorld(impactPrevWorld.copy(shot.position));
     playSpace.localToWorld(impactCurrWorld.copy(nextLocalPosition));
     impactDirection.subVectors(impactCurrWorld, impactPrevWorld);
@@ -889,17 +872,12 @@ function bulletHitsEnvironment(shot, nextLocalPosition) {
     environmentMeshRoot.updateMatrixWorld(true);
     roomContent.updateMatrixWorld(true);
 
-    if (preciseMeshColliders.length) {
-      impactRaycaster.set(impactPrevWorld, impactDirection);
-      impactRaycaster.far = distance + 0.02;
-      const hits = impactRaycaster.intersectObjects(preciseMeshColliders, false);
-      if (hits[0]) return hits[0];
-    }
-
-    // Dense Quest room meshes: triangle raycasts freeze the browser; use spheres.
-    for (const mesh of coarseMeshColliders) {
-      const point = segmentHitsBoundingSphere(impactPrevWorld, impactCurrWorld, mesh);
-      if (point) return { point, object: mesh, distance: impactPrevWorld.distanceTo(point) };
+    impactRaycaster.set(impactPrevWorld, impactDirection);
+    impactRaycaster.far = distance + 0.02;
+    const hits = impactRaycaster.intersectObjects(bulletColliders, false);
+    const traveled = shot.userData.traveled ?? 0;
+    for (const hit of hits) {
+      if (traveled + hit.distance >= bulletMuzzleIgnoreM) return hit;
     }
     return null;
   } catch (error) {
@@ -940,6 +918,7 @@ function fire() {
   shot.quaternion.copy(flight.rotation);
   shot.userData.velocity = flight.forward().multiplyScalar(bulletMuzzleSpeed).add(flight.velocity);
   shot.userData.age = 0;
+  shot.userData.traveled = 0;
   shot.userData.prevPosition = shot.position.clone();
   playSpace.add(shot);
   bullets.push(shot);
@@ -976,6 +955,7 @@ renderer.setAnimationLoop((time, frame) => {
     for (let i = bullets.length - 1; i >= 0; i -= 1) {
       const shot = bullets[i];
       const nextPosition = shot.position.clone().addScaledVector(shot.userData.velocity, dt);
+      const stepDistance = shot.position.distanceTo(nextPosition);
       const hit = bulletHitsEnvironment(shot, nextPosition);
       if (hit) {
         spawnBulletImpact(hit.point);
@@ -985,8 +965,9 @@ renderer.setAnimationLoop((time, frame) => {
       }
       if (shot.userData.prevPosition) shot.userData.prevPosition.copy(shot.position);
       shot.position.copy(nextPosition);
+      shot.userData.traveled = (shot.userData.traveled ?? 0) + stepDistance;
       shot.userData.age += dt;
-      if (shot.userData.age > bulletLifeSec) {
+      if (shot.userData.age > bulletLifetimeSec) {
         playSpace.remove(shot);
         bullets.splice(i, 1);
       }
@@ -1090,6 +1071,11 @@ function createEnvironmentMeshGeometry(vertices, indices) {
   if (indices) geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
+  try {
+    geometry.computeBoundsTree();
+  } catch (error) {
+    console.warn("[WebXR] env mesh BVH failed", error);
+  }
   return geometry;
 }
 
@@ -1097,8 +1083,7 @@ function clearEnvironmentMeshes() {
   for (const entry of environmentMeshes.values()) {
     environmentMeshRoot.remove(entry.mesh);
     environmentMeshRoot.remove(entry.collider);
-    entry.mesh.geometry?.dispose();
-    entry.collider.geometry?.dispose();
+    disposeMeshGeometry(entry.mesh.geometry);
   }
   environmentMeshes.clear();
   environmentMeshRoot.visible = false;
@@ -1116,8 +1101,7 @@ function updateEnvironmentMeshes(frame) {
     if (!frame.detectedMeshes.has(xrMesh)) {
       environmentMeshRoot.remove(entry.mesh);
       environmentMeshRoot.remove(entry.collider);
-      entry.mesh.geometry?.dispose();
-      entry.collider.geometry?.dispose();
+      disposeMeshGeometry(entry.mesh.geometry);
       environmentMeshes.delete(xrMesh);
     }
   }
@@ -1141,7 +1125,7 @@ function updateEnvironmentMeshes(frame) {
     } else if (entry.lastChangedTime < xrMesh.lastChangedTime) {
       entry.lastChangedTime = xrMesh.lastChangedTime;
       const geometry = createEnvironmentMeshGeometry(xrMesh.vertices, xrMesh.indices);
-      entry.mesh.geometry.dispose();
+      disposeMeshGeometry(entry.mesh.geometry);
       entry.mesh.geometry = geometry;
       entry.collider.geometry = geometry;
     }
