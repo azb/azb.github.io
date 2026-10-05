@@ -22,6 +22,15 @@ const lookAtInput = document.querySelector("#text-look-at-camera");
 const visibleField = document.querySelector("#visible-field");
 const visibleInput = document.querySelector("#object-visible");
 const colorInput = document.querySelector("#material-color");
+const materialSlotSelect = document.querySelector("#material-slot");
+const materialHint = document.querySelector("#material-hint");
+const materialEdit = document.querySelector("#material-edit");
+
+/** @type {{ id: string, name: string, color: number, metalness: number, roughness: number }[]} */
+let materialLibrary = [];
+const libraryMaterialInstances = new Map();
+let materialIdCounter = 1;
+let materialSlotBusy = false;
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -395,20 +404,164 @@ function applyFighterMaterials(model) {
   });
 }
 
-function materialOverrideValues(material) {
-  const override = {};
-  if (material?.color) override.color = material.color.getHex();
-  if (material?.metalness != null) override.metalness = round(material.metalness);
-  if (material?.roughness != null) override.roughness = round(material.roughness);
-  if (material?.name) override.material = material.name;
-  return override;
+function clearMaterialLibrary() {
+  for (const material of libraryMaterialInstances.values()) material.dispose?.();
+  libraryMaterialInstances.clear();
+  materialLibrary = [];
+  materialIdCounter = 1;
+}
+
+function serializeMaterialLibrary() {
+  return materialLibrary.map((entry) => {
+    const material = libraryMaterialInstances.get(entry.id);
+    return {
+      id: entry.id,
+      name: entry.name,
+      color: material?.color ? material.color.getHex() : entry.color,
+      metalness: round(material?.metalness ?? entry.metalness ?? 0.2),
+      roughness: round(material?.roughness ?? entry.roughness ?? 0.55),
+    };
+  });
+}
+
+function ensureLibraryMaterial(entry) {
+  let material = libraryMaterialInstances.get(entry.id);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({
+      color: entry.color ?? 0xffffff,
+      metalness: entry.metalness ?? 0.2,
+      roughness: entry.roughness ?? 0.55,
+      name: entry.name || entry.id,
+    });
+    libraryMaterialInstances.set(entry.id, material);
+  } else {
+    if (entry.color != null) material.color.setHex(entry.color);
+    if (entry.metalness != null) material.metalness = entry.metalness;
+    if (entry.roughness != null) material.roughness = entry.roughness;
+    material.name = entry.name || entry.id;
+    material.needsUpdate = true;
+  }
+  return material;
+}
+
+function loadMaterialLibrary(entries) {
+  clearMaterialLibrary();
+  let maxId = 0;
+  for (const entry of entries || []) {
+    if (!entry?.id) continue;
+    const record = {
+      id: String(entry.id),
+      name: entry.name || String(entry.id),
+      color: entry.color ?? 0xffffff,
+      metalness: entry.metalness ?? 0.2,
+      roughness: entry.roughness ?? 0.55,
+    };
+    materialLibrary.push(record);
+    ensureLibraryMaterial(record);
+    const numeric = Number(String(record.id).replace(/\D/g, ""));
+    if (Number.isFinite(numeric)) maxId = Math.max(maxId, numeric);
+  }
+  materialIdCounter = maxId + 1;
+}
+
+function createLibraryMaterial(seed = {}) {
+  const id = `mat_${materialIdCounter}`;
+  materialIdCounter += 1;
+  const entry = {
+    id,
+    name: seed.name || `Material ${materialLibrary.length + 1}`,
+    color: seed.color ?? 0xffffff,
+    metalness: seed.metalness ?? 0.2,
+    roughness: seed.roughness ?? 0.55,
+  };
+  materialLibrary.push(entry);
+  ensureLibraryMaterial(entry);
+  return entry;
+}
+
+function stashOriginalMaterials(mesh) {
+  if (!mesh?.isMesh || mesh.userData.originalMaterials) return;
+  mesh.userData.originalMaterials = [].concat(mesh.material).map((material) => material);
+}
+
+function meshMaterialSlot(mesh) {
+  return mesh?.userData?.materialSlot || { mode: "original" };
+}
+
+function assignLibraryMaterialToMesh(mesh, libraryId) {
+  stashOriginalMaterials(mesh);
+  const entry = materialLibrary.find((item) => item.id === libraryId);
+  if (!entry) return;
+  const material = ensureLibraryMaterial(entry);
+  mesh.material = Array.isArray(mesh.material) ? mesh.material.map(() => material) : material;
+  mesh.userData.materialSlot = { mode: "library", id: libraryId };
+  mesh.userData.materialOverride = {
+    slot: "library",
+    libraryId,
+    color: material.color.getHex(),
+    metalness: round(material.metalness),
+    roughness: round(material.roughness),
+  };
+}
+
+function restoreOriginalMaterial(mesh) {
+  stashOriginalMaterials(mesh);
+  const originals = mesh.userData.originalMaterials;
+  if (!originals?.length) return;
+  mesh.material = originals.length === 1 ? originals[0] : [...originals];
+  mesh.userData.materialSlot = { mode: "original" };
+  delete mesh.userData.materialOverride;
 }
 
 function rememberSubmeshMaterials(mesh) {
-  if (!mesh?.isMesh || mesh.userData?.scene) return;
-  const material = standardMaterials(mesh)[0];
-  if (!material) return;
-  mesh.userData.materialOverride = materialOverrideValues(material);
+  if (!mesh?.isMesh) return;
+  const slot = meshMaterialSlot(mesh);
+  if (slot.mode === "library" && slot.id) {
+    const material = libraryMaterialInstances.get(slot.id) || primaryMaterial(mesh);
+    mesh.userData.materialOverride = {
+      slot: "library",
+      libraryId: slot.id,
+      color: material?.color?.getHex?.() ?? 0xffffff,
+      metalness: round(material?.metalness ?? 0.2),
+      roughness: round(material?.roughness ?? 0.55),
+    };
+    return;
+  }
+  if (mesh.userData?.scene) return;
+  delete mesh.userData.materialOverride;
+}
+
+function populateMaterialSlotSelect(mesh) {
+  if (!materialSlotSelect) return;
+  materialSlotBusy = true;
+  materialSlotSelect.innerHTML = "";
+  const original = document.createElement("option");
+  original.value = "__original__";
+  original.textContent = "Original material";
+  materialSlotSelect.append(original);
+  for (const entry of materialLibrary) {
+    const option = document.createElement("option");
+    option.value = entry.id;
+    option.textContent = entry.name;
+    materialSlotSelect.append(option);
+  }
+  const create = document.createElement("option");
+  create.value = "__new__";
+  create.textContent = "Create new material…";
+  materialSlotSelect.append(create);
+  const slot = meshMaterialSlot(mesh);
+  materialSlotSelect.value = slot.mode === "library" && slot.id && libraryMaterialInstances.has(slot.id)
+    ? slot.id
+    : "__original__";
+  materialSlotBusy = false;
+}
+
+function setMaterialEditEnabled(enabled) {
+  if (materialEdit) materialEdit.hidden = !enabled;
+  if (materialHint) materialHint.hidden = enabled;
+  for (const input of [colorInput, document.querySelector("#material-metalness"), document.querySelector("#material-roughness")]) {
+    if (input) input.disabled = !enabled;
+  }
 }
 
 function rememberTransformOverride(object) {
@@ -471,6 +624,10 @@ function applyMaterialOverrides(root, overrides) {
       });
     }
     if (!node?.isMesh) continue;
+    if (override.libraryId || override.slot === "library") {
+      assignLibraryMaterialToMesh(node, override.libraryId);
+      continue;
+    }
     const materials = standardMaterials(node);
     for (const material of materials.length ? materials : [].concat(node.material || [])) applyMaterialOverride(material, override);
     const stored = {};
@@ -479,6 +636,7 @@ function applyMaterialOverrides(root, overrides) {
     if (override.roughness != null) stored.roughness = override.roughness;
     if (override.material) stored.material = override.material;
     node.userData.materialOverride = stored;
+    node.userData.materialSlot = { mode: "original" };
   }
 }
 
@@ -656,6 +814,9 @@ function makeObject(item) {
   if (!object.userData.scene) rememberSpec(object, source);
   object.name = source.name || type;
   applyTransform(object, source);
+  if (object.isMesh && source.materialSlot?.mode === "library" && source.materialSlot.id) {
+    assignLibraryMaterialToMesh(object, source.materialSlot.id);
+  }
   if (type !== "asset" && type !== "arrow") {
     for (const child of source.children || []) {
       if (child.type === "arrowEnd") continue;
@@ -672,6 +833,13 @@ function applyView(view) {
   orbit.update();
 }
 
+function isLibraryMaterial(material) {
+  for (const libraryMaterial of libraryMaterialInstances.values()) {
+    if (libraryMaterial === material) return true;
+  }
+  return false;
+}
+
 function disposeObject(object) {
   object.traverse((node) => {
     const helper = node.userData?.cameraHelper;
@@ -683,6 +851,7 @@ function disposeObject(object) {
     node.geometry?.dispose();
     const materials = node.material ? [].concat(node.material) : [];
     for (const material of materials) {
+      if (isLibraryMaterial(material)) continue;
       material.map?.dispose();
       material.dispose?.();
     }
@@ -871,15 +1040,25 @@ function syncInspector() {
   });
   const sceneSpec = selected.userData?.scene;
   const material = primaryMaterial(selected);
-  const showStandard = Boolean(material?.isMeshStandardMaterial);
+  const showStandard = Boolean(selected.isMesh && material?.isMeshStandardMaterial);
   const showArrowColor = sceneSpec?.type === "arrow";
   materialSection.hidden = !(showStandard || showArrowColor);
   materialSliders.hidden = !showStandard;
+  const slotLabel = materialSlotSelect?.closest("label");
+  if (slotLabel) slotLabel.hidden = !showStandard;
   if (showStandard) {
-    colorInput.value = `#${material.color.getHexString()}`;
-    document.querySelector("#material-metalness").value = material.metalness ?? 0;
-    document.querySelector("#material-roughness").value = material.roughness ?? 0.5;
+    populateMaterialSlotSelect(selected);
+    const usingLibrary = meshMaterialSlot(selected).mode === "library";
+    setMaterialEditEnabled(usingLibrary);
+    if (usingLibrary && material?.color) {
+      colorInput.value = `#${material.color.getHexString()}`;
+      document.querySelector("#material-metalness").value = material.metalness ?? 0;
+      document.querySelector("#material-roughness").value = material.roughness ?? 0.5;
+    }
   } else if (showArrowColor) {
+    if (materialHint) materialHint.hidden = true;
+    if (materialEdit) materialEdit.hidden = false;
+    colorInput.disabled = false;
     colorInput.value = `#${new THREE.Color(sceneSpec.color ?? 0x1686ff).getHexString()}`;
   }
   const showSize = sceneSpec?.type === "plane" || sceneSpec?.type === "text";
@@ -935,6 +1114,24 @@ document.querySelectorAll("[data-transform]").forEach((input) => {
   });
 });
 
+materialSlotSelect?.addEventListener("change", () => {
+  if (materialSlotBusy || !selected?.isMesh) return;
+  beginEdit();
+  const value = materialSlotSelect.value;
+  if (value === "__original__") restoreOriginalMaterial(selected);
+  else if (value === "__new__") {
+    const entry = createLibraryMaterial({
+      name: selected.name ? `${selected.name} Material` : undefined,
+    });
+    assignLibraryMaterialToMesh(selected, entry.id);
+  } else {
+    assignLibraryMaterialToMesh(selected, value);
+  }
+  markDirty();
+  syncInspector();
+  endEdit();
+});
+
 for (const id of ["material-color", "material-metalness", "material-roughness"]) {
   const input = document.querySelector(`#${id}`);
   input.addEventListener("pointerdown", beginEdit);
@@ -954,12 +1151,18 @@ for (const id of ["material-color", "material-metalness", "material-roughness"])
       markDirty();
       return;
     }
-    const materials = standardMaterials(selected);
-    if (!materials.length) return;
-    for (const material of materials) {
-      if (id === "material-color") material.color.set(event.target.value);
-      else material[id.replace("material-", "")] = Number(event.target.value);
-      material.needsUpdate = true;
+    const slot = meshMaterialSlot(selected);
+    if (slot.mode !== "library" || !slot.id) return;
+    const material = libraryMaterialInstances.get(slot.id) || primaryMaterial(selected);
+    if (!material) return;
+    if (id === "material-color") material.color.set(event.target.value);
+    else material[id.replace("material-", "")] = Number(event.target.value);
+    material.needsUpdate = true;
+    const entry = materialLibrary.find((item) => item.id === slot.id);
+    if (entry) {
+      entry.color = material.color.getHex();
+      entry.metalness = material.metalness;
+      entry.roughness = material.roughness;
     }
     rememberSubmeshMaterials(selected);
     markDirty();
@@ -1141,16 +1344,26 @@ function serializeObject(object) {
   spec.rotation = [object.rotation.x, object.rotation.y, object.rotation.z].map(round);
   spec.scale = object.scale.toArray().map(round);
   if (!object.visible) spec.visible = false;
-  const material = primaryMaterial(object);
-  if (material?.color && !["text", "arrow", "arrowEnd", "asset", "group", "camera"].includes(spec.type)) {
-    spec.color = material.color.getHex();
-    if (material.metalness != null) spec.metalness = round(material.metalness);
-    if (material.roughness != null) spec.roughness = round(material.roughness);
-    if (material.opacity < 1) spec.opacity = round(material.opacity);
+  const slot = object.isMesh ? meshMaterialSlot(object) : null;
+  if (object.isMesh && slot?.mode === "library" && slot.id) {
+    spec.materialSlot = { mode: "library", id: slot.id };
+    delete spec.color;
+    delete spec.metalness;
+    delete spec.roughness;
+  } else {
+    delete spec.materialSlot;
+    const material = primaryMaterial(object);
+    if (material?.color && !["text", "arrow", "arrowEnd", "asset", "group", "camera"].includes(spec.type)) {
+      spec.color = material.color.getHex();
+      if (material.metalness != null) spec.metalness = round(material.metalness);
+      if (material.roughness != null) spec.roughness = round(material.roughness);
+      if (material.opacity < 1) spec.opacity = round(material.opacity);
+    }
   }
   if (spec.type === "arrowEnd") {
     delete spec.color;
     delete spec.end;
+    delete spec.materialSlot;
   }
   const materialOverrides = collectMaterialOverrides(object);
   if (materialOverrides.length) spec.materialOverrides = materialOverrides;
@@ -1164,7 +1377,7 @@ function serializeObject(object) {
 }
 
 function currentScene() {
-  return {
+  const sceneData = {
     format: "XRFlightSimScene",
     version: 1,
     view: {
@@ -1173,6 +1386,9 @@ function currentScene() {
     },
     objects: [...content.children].filter((child) => child.userData?.scene).map(serializeObject),
   };
+  const materials = serializeMaterialLibrary();
+  if (materials.length) sceneData.materials = materials;
+  return sceneData;
 }
 
 function confirmReplace() {
@@ -1182,6 +1398,7 @@ function confirmReplace() {
 function loadSceneData(data) {
   if (data?.format === "XRFlightSimScene" && Array.isArray(data.objects)) {
     clearContent();
+    loadMaterialLibrary(data.materials || []);
     for (const item of data.objects) content.add(makeObject(item));
     applyView(data.view);
     dirty = false;
@@ -1191,6 +1408,7 @@ function loadSceneData(data) {
   }
   if (data?.object || data?.metadata) {
     clearContent();
+    clearMaterialLibrary();
     const loaded = new THREE.ObjectLoader().parse(data);
     const nodes = loaded.children?.length ? [...loaded.children] : [loaded];
     for (const node of nodes) content.add(node);

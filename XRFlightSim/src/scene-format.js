@@ -83,6 +83,29 @@ function standardMaterials(object) {
   return [].concat(object.material).filter((material) => material?.isMeshStandardMaterial);
 }
 
+/** @type {Map<string, THREE.MeshStandardMaterial>} */
+const libraryMaterialInstances = new Map();
+
+export function setSceneMaterialLibrary(entries) {
+  for (const material of libraryMaterialInstances.values()) material.dispose?.();
+  libraryMaterialInstances.clear();
+  for (const entry of entries || []) {
+    if (!entry?.id) continue;
+    libraryMaterialInstances.set(String(entry.id), new THREE.MeshStandardMaterial({
+      color: entry.color ?? 0xffffff,
+      metalness: entry.metalness ?? 0.2,
+      roughness: entry.roughness ?? 0.55,
+      name: entry.name || String(entry.id),
+    }));
+  }
+}
+
+function assignLibraryMaterialToMesh(mesh, libraryId) {
+  const material = libraryMaterialInstances.get(String(libraryId));
+  if (!mesh?.isMesh || !material) return;
+  mesh.material = Array.isArray(mesh.material) ? mesh.material.map(() => material) : material;
+}
+
 function applyMaterialOverride(material, override) {
   if (!material || !override) return;
   if (override.color != null && material.color) material.color.setHex(override.color);
@@ -102,6 +125,10 @@ function applyMaterialOverrides(root, overrides) {
       });
     }
     if (!node?.isMesh) continue;
+    if (override.libraryId || override.slot === "library") {
+      assignLibraryMaterialToMesh(node, override.libraryId);
+      continue;
+    }
     const materials = standardMaterials(node);
     for (const material of materials.length ? materials : [].concat(node.material || [])) applyMaterialOverride(material, override);
   }
@@ -302,6 +329,9 @@ export function createSceneObject(item, options = {}) {
   if (!object.userData.scene) rememberSpec(object, source);
   object.name = source.name || type;
   applyTransform(object, source);
+  if (object.isMesh && source.materialSlot?.mode === "library" && source.materialSlot.id) {
+    assignLibraryMaterialToMesh(object, source.materialSlot.id);
+  }
   if (type !== "asset" && type !== "arrow") {
     for (const child of source.children || []) {
       const childObject = createSceneObject(child, options);

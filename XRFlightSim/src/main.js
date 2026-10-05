@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole } from "./scene-format.js?v=0.4.26";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.27";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -459,7 +459,8 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.26`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.27`);
+    setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
     const room = [];
