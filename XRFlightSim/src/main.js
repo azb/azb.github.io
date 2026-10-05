@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.30";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.31";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -463,7 +463,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.30`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.31`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -760,6 +760,91 @@ function playBalloonPop() {
   pop.volume = .45;
   pop.play().catch(() => {});
 }
+function playImpactSound() {
+  const pop = new Audio(balloonPopUrl);
+  pop.volume = .28;
+  pop.playbackRate = 1.35;
+  pop.play().catch(() => {});
+}
+
+const impactRaycaster = new THREE.Raycaster();
+const impactPrevWorld = new THREE.Vector3();
+const impactCurrWorld = new THREE.Vector3();
+const impactDirection = new THREE.Vector3();
+const impactParticles = [];
+const impactParticleGeom = new THREE.SphereGeometry(0.03, 6, 6);
+const impactParticleMat = new THREE.MeshBasicMaterial({
+  color: 0xffb347,
+  transparent: true,
+  opacity: 0.95,
+  depthWrite: false,
+});
+
+function spawnBulletImpact(worldPoint) {
+  playImpactSound();
+  const localPoint = playSpace.worldToLocal(worldPoint.clone());
+  for (let i = 0; i < 14; i += 1) {
+    const spark = new THREE.Mesh(impactParticleGeom, impactParticleMat.clone());
+    spark.position.copy(localPoint);
+    const dir = new THREE.Vector3(
+      Math.random() * 2 - 1,
+      Math.random() * 1.4 + 0.15,
+      Math.random() * 2 - 1,
+    ).normalize();
+    spark.userData.velocity = dir.multiplyScalar(1.2 + Math.random() * 2.4);
+    spark.userData.age = 0;
+    spark.userData.lifetime = 0.28 + Math.random() * 0.28;
+    spark.scale.setScalar(0.55 + Math.random() * 0.9);
+    playSpace.add(spark);
+    impactParticles.push(spark);
+  }
+}
+
+function updateImpactParticles(dt) {
+  for (let i = impactParticles.length - 1; i >= 0; i -= 1) {
+    const spark = impactParticles[i];
+    spark.userData.age += dt;
+    if (spark.userData.age >= spark.userData.lifetime) {
+      playSpace.remove(spark);
+      spark.material?.dispose?.();
+      impactParticles.splice(i, 1);
+      continue;
+    }
+    spark.userData.velocity.y -= 6.5 * dt;
+    spark.position.addScaledVector(spark.userData.velocity, dt);
+    const life = 1 - spark.userData.age / spark.userData.lifetime;
+    spark.scale.setScalar(Math.max(0.05, life * 0.85));
+    if (spark.material?.opacity != null) spark.material.opacity = 0.2 + life * 0.75;
+  }
+}
+
+function environmentColliderMeshes() {
+  const meshes = [];
+  for (const entry of environmentMeshes.values()) {
+    if (entry.collider?.visible !== false && entry.mesh?.visible) meshes.push(entry.collider);
+  }
+  roomContent.traverse((node) => {
+    if (node.isMesh) meshes.push(node);
+  });
+  return meshes;
+}
+
+function bulletHitsEnvironment(shot, nextLocalPosition) {
+  const colliders = environmentColliderMeshes();
+  if (!colliders.length) return null;
+  playSpace.localToWorld(impactPrevWorld.copy(shot.position));
+  playSpace.localToWorld(impactCurrWorld.copy(nextLocalPosition));
+  impactDirection.subVectors(impactCurrWorld, impactPrevWorld);
+  const distance = impactDirection.length();
+  if (distance < 1e-5) return null;
+  impactDirection.multiplyScalar(1 / distance);
+  environmentMeshRoot.updateMatrixWorld(true);
+  roomContent.updateMatrixWorld(true);
+  impactRaycaster.set(impactPrevWorld, impactDirection);
+  impactRaycaster.far = distance + 0.02;
+  const hits = impactRaycaster.intersectObjects(colliders, false);
+  return hits[0] || null;
+}
 function vibrateFireController() {
   try {
     const browserPad = [...navigator.getGamepads()].find(isBrowserGamepad);
@@ -793,6 +878,7 @@ function fire() {
   shot.quaternion.copy(flight.rotation);
   shot.userData.velocity = flight.forward().multiplyScalar(bulletMuzzleSpeed).add(flight.velocity);
   shot.userData.age = 0;
+  shot.userData.prevPosition = shot.position.clone();
   playSpace.add(shot);
   bullets.push(shot);
   vibrateFireController();
@@ -827,13 +913,23 @@ renderer.setAnimationLoop((time, frame) => {
     }
     for (let i = bullets.length - 1; i >= 0; i -= 1) {
       const shot = bullets[i];
-      shot.position.addScaledVector(shot.userData.velocity, dt);
+      const nextPosition = shot.position.clone().addScaledVector(shot.userData.velocity, dt);
+      const hit = bulletHitsEnvironment(shot, nextPosition);
+      if (hit) {
+        spawnBulletImpact(hit.point);
+        playSpace.remove(shot);
+        bullets.splice(i, 1);
+        continue;
+      }
+      if (shot.userData.prevPosition) shot.userData.prevPosition.copy(shot.position);
+      shot.position.copy(nextPosition);
       shot.userData.age += dt;
-      if (shot.userData.age > bulletLifetimeSec) {
+      if (shot.userData.age > bulletLifeSec) {
         playSpace.remove(shot);
         bullets.splice(i, 1);
       }
     }
+    updateImpactParticles(dt);
   }
   planeRoot.position.copy(flight.position);
   planeRoot.quaternion.copy(flight.rotation);
@@ -918,20 +1014,29 @@ const environmentMeshWireMaterial = new THREE.MeshBasicMaterial({
   opacity: 0.85,
   depthWrite: false,
 });
-/** @type {Map<XRMesh, { mesh: THREE.Mesh, lastChangedTime: number }>} */
+/** Invisible solid mesh used for bullet collision against the room mesh. */
+const environmentMeshColliderMaterial = new THREE.MeshBasicMaterial({
+  visible: false,
+  side: THREE.DoubleSide,
+});
+/** @type {Map<XRMesh, { mesh: THREE.Mesh, collider: THREE.Mesh, lastChangedTime: number }>} */
 const environmentMeshes = new Map();
 
 function createEnvironmentMeshGeometry(vertices, indices) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
   if (indices) geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
   return geometry;
 }
 
 function clearEnvironmentMeshes() {
   for (const entry of environmentMeshes.values()) {
     environmentMeshRoot.remove(entry.mesh);
+    environmentMeshRoot.remove(entry.collider);
     entry.mesh.geometry?.dispose();
+    entry.collider.geometry?.dispose();
   }
   environmentMeshes.clear();
   environmentMeshRoot.visible = false;
@@ -948,7 +1053,9 @@ function updateEnvironmentMeshes(frame) {
   for (const [xrMesh, entry] of [...environmentMeshes]) {
     if (!frame.detectedMeshes.has(xrMesh)) {
       environmentMeshRoot.remove(entry.mesh);
+      environmentMeshRoot.remove(entry.collider);
       entry.mesh.geometry?.dispose();
+      entry.collider.geometry?.dispose();
       environmentMeshes.delete(xrMesh);
     }
   }
@@ -961,22 +1068,31 @@ function updateEnvironmentMeshes(frame) {
       mesh.matrixAutoUpdate = false;
       mesh.frustumCulled = false;
       mesh.renderOrder = 1;
+      const collider = new THREE.Mesh(geometry, environmentMeshColliderMaterial);
+      collider.matrixAutoUpdate = false;
+      collider.frustumCulled = false;
+      collider.visible = true;
       environmentMeshRoot.add(mesh);
-      entry = { mesh, lastChangedTime: xrMesh.lastChangedTime };
+      environmentMeshRoot.add(collider);
+      entry = { mesh, collider, lastChangedTime: xrMesh.lastChangedTime };
       environmentMeshes.set(xrMesh, entry);
     } else if (entry.lastChangedTime < xrMesh.lastChangedTime) {
       entry.lastChangedTime = xrMesh.lastChangedTime;
       const geometry = createEnvironmentMeshGeometry(xrMesh.vertices, xrMesh.indices);
       entry.mesh.geometry.dispose();
       entry.mesh.geometry = geometry;
+      entry.collider.geometry = geometry;
     }
 
     const pose = frame.getPose(xrMesh.meshSpace, referenceSpace);
     if (pose) {
       entry.mesh.visible = true;
       entry.mesh.matrix.fromArray(pose.transform.matrix);
+      entry.collider.visible = true;
+      entry.collider.matrix.fromArray(pose.transform.matrix);
     } else {
       entry.mesh.visible = false;
+      entry.collider.visible = false;
     }
   });
 
