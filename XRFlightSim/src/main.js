@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.35";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.36";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -60,6 +60,47 @@ const roomContent = new THREE.Group();
 playSpace.add(roomContent);
 const planeRoot = new THREE.Group();
 playSpace.add(planeRoot);
+
+// Lens OffScreenPlaneArrow — camera-edge chevron when the plane leaves the FOV.
+// Lens units are ~cm (depth 70); WebXR uses meters.
+const OFFSCREEN_ARROW_DEPTH = 0.7;
+const OFFSCREEN_ARROW_EDGE_INSET = 0.16;
+const OFFSCREEN_ARROW_VISIBLE_INSET = 0.08;
+const OFFSCREEN_ARROW_LENGTH = 0.032;
+const OFFSCREEN_ARROW_THICKNESS = 0.0042;
+const OFFSCREEN_LOOK_Z = -1;
+const offScreenPlaneLocal = new THREE.Vector3();
+const offScreenArrowLocalPos = new THREE.Vector3();
+const offScreenArrowPointQuat = new THREE.Quaternion();
+const offScreenArrowEuler = new THREE.Euler();
+let offScreenArrowShowing = false;
+
+function createOffScreenPlaneArrow() {
+  const root = new THREE.Group();
+  root.name = "Off Screen Plane Arrow";
+  root.visible = false;
+  const material = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(1, 0.9, 0.15),
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  const spread = THREE.MathUtils.degToRad(28);
+  for (const angle of [spread, -spread]) {
+    const stroke = new THREE.Mesh(geometry, material);
+    stroke.renderOrder = 25;
+    stroke.frustumCulled = false;
+    stroke.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), angle);
+    offScreenArrowLocalPos.set(0, -OFFSCREEN_ARROW_LENGTH * 0.5, 0).applyQuaternion(stroke.quaternion);
+    stroke.position.copy(offScreenArrowLocalPos);
+    stroke.scale.set(OFFSCREEN_ARROW_THICKNESS, OFFSCREEN_ARROW_LENGTH, 1);
+    root.add(stroke);
+  }
+  scene.add(root);
+  return root;
+}
+const offScreenPlaneArrow = createOffScreenPlaneArrow();
 scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 3.2));
 const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 10); scene.add(sun);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
@@ -468,7 +509,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.35`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.36`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -642,6 +683,76 @@ function engineListenerObject() {
     if (nested) return nested;
   }
   return camera;
+}
+function updateOffScreenPlaneArrow() {
+  const viewCam = engineListenerObject();
+  if (!viewCam || !planeRoot) {
+    offScreenPlaneArrow.visible = false;
+    return;
+  }
+
+  viewCam.updateMatrixWorld(true);
+  planeRoot.getWorldPosition(offScreenPlaneLocal);
+  viewCam.worldToLocal(offScreenPlaneLocal);
+
+  const inFront = offScreenPlaneLocal.z * OFFSCREEN_LOOK_Z > 0.01;
+  let dirX = offScreenPlaneLocal.x;
+  let dirY = offScreenPlaneLocal.y;
+  const dirLength = Math.hypot(dirX, dirY);
+  if (dirLength < 0.001) {
+    dirX = 0;
+    dirY = -1;
+  } else {
+    dirX /= dirLength;
+    dirY /= dirLength;
+  }
+
+  const halfExtentsCam = viewCam.isArrayCamera ? viewCam.cameras?.[0] : viewCam;
+  let halfHeight;
+  let halfWidth;
+  const proj = halfExtentsCam?.projectionMatrix?.elements;
+  if (proj && Math.abs(proj[5]) > 1e-6 && Math.abs(proj[0]) > 1e-6) {
+    halfHeight = OFFSCREEN_ARROW_DEPTH / proj[5];
+    halfWidth = OFFSCREEN_ARROW_DEPTH / proj[0];
+  } else {
+    halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * OFFSCREEN_ARROW_DEPTH;
+    halfWidth = halfHeight * Math.max(camera.aspect, 0.01);
+  }
+  const inset = offScreenArrowShowing
+    ? OFFSCREEN_ARROW_VISIBLE_INSET
+    : OFFSCREEN_ARROW_VISIBLE_INSET + 0.04;
+  const planeDepth = Math.max(offScreenPlaneLocal.z * OFFSCREEN_LOOK_Z, 0.01);
+  const depthScale = planeDepth / OFFSCREEN_ARROW_DEPTH;
+  const inView = inFront
+    && Math.abs(offScreenPlaneLocal.x) < halfWidth * (1 - inset) * depthScale
+    && Math.abs(offScreenPlaneLocal.y) < halfHeight * (1 - inset) * depthScale;
+
+  if (inView) {
+    offScreenPlaneArrow.visible = false;
+    offScreenArrowShowing = false;
+    return;
+  }
+
+  offScreenArrowShowing = true;
+  offScreenPlaneArrow.visible = true;
+
+  const maxX = halfWidth * (1 - OFFSCREEN_ARROW_EDGE_INSET);
+  const maxY = halfHeight * (1 - OFFSCREEN_ARROW_EDGE_INSET);
+  const hitX = Math.abs(dirX) > 0.001 ? maxX / Math.abs(dirX) : Number.POSITIVE_INFINITY;
+  const hitY = Math.abs(dirY) > 0.001 ? maxY / Math.abs(dirY) : Number.POSITIVE_INFINITY;
+  const edgeScale = Math.min(hitX, hitY);
+
+  offScreenArrowLocalPos.set(
+    dirX * edgeScale,
+    dirY * edgeScale,
+    OFFSCREEN_LOOK_Z * OFFSCREEN_ARROW_DEPTH,
+  );
+  offScreenArrowEuler.set(0, 0, -Math.atan2(dirX, dirY));
+  offScreenArrowPointQuat.setFromEuler(offScreenArrowEuler);
+
+  offScreenArrowLocalPos.applyMatrix4(viewCam.matrixWorld);
+  offScreenPlaneArrow.position.copy(offScreenArrowLocalPos);
+  offScreenPlaneArrow.quaternion.copy(viewCam.quaternion).multiply(offScreenArrowPointQuat);
 }
 function setAudioVector(node, xName, yName, zName, x, y, z, time) {
   const xParam = node[xName];
@@ -979,6 +1090,7 @@ renderer.setAnimationLoop((time, frame) => {
   planeRoot.quaternion.copy(flight.rotation);
   updateWingVortex(dt);
   applyDesktopCamera();
+  updateOffScreenPlaneArrow();
   updateEnvironmentMeshes(frame);
   calibratePlaySpaceHeight(frame);
   speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`;
