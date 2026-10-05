@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.27";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.28";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -459,7 +459,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.27`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.28`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -782,9 +782,118 @@ function applyDesktopCamera() {
   desktopCameraRig.getWorldQuaternion(camera.quaternion);
 }
 addEventListener("resize", resize); resize(); let previous = performance.now();
-renderer.setAnimationLoop((time) => { const dt = (time - previous) / 1000; previous = time; const input = controls(); if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused); pauseButtonWasPressed = input.pause; if (!simulationPaused) { flight.step(input, dt); animateAircraft(input, dt); if (input.fire && time - lastFire > fireCooldownMs) { fire(); lastFire = time; } for (let i = bullets.length - 1; i >= 0; i -= 1) { const shot = bullets[i]; shot.position.addScaledVector(shot.userData.velocity, dt); shot.userData.age += dt; if (shot.userData.age > bulletLifetimeSec) { scene.remove(shot); bullets.splice(i, 1); } } } planeRoot.position.copy(flight.position); planeRoot.quaternion.copy(flight.rotation); updateWingVortex(dt); applyDesktopCamera(); speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`; throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`; if (!simulationPaused) updateEngineSound(); renderer.render(scene, camera); });
+renderer.setAnimationLoop((time, frame) => {
+  const dt = (time - previous) / 1000;
+  previous = time;
+  const input = controls();
+  if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused);
+  pauseButtonWasPressed = input.pause;
+  if (!simulationPaused) {
+    flight.step(input, dt);
+    animateAircraft(input, dt);
+    if (input.fire && time - lastFire > fireCooldownMs) {
+      fire();
+      lastFire = time;
+    }
+    for (let i = bullets.length - 1; i >= 0; i -= 1) {
+      const shot = bullets[i];
+      shot.position.addScaledVector(shot.userData.velocity, dt);
+      shot.userData.age += dt;
+      if (shot.userData.age > bulletLifetimeSec) {
+        scene.remove(shot);
+        bullets.splice(i, 1);
+      }
+    }
+  }
+  planeRoot.position.copy(flight.position);
+  planeRoot.quaternion.copy(flight.rotation);
+  updateWingVortex(dt);
+  applyDesktopCamera();
+  updateEnvironmentMeshes(frame);
+  speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`;
+  throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`;
+  if (!simulationPaused) updateEngineSound();
+  renderer.render(scene, camera);
+});
 resetButton.addEventListener("click", () => flight.reset());
-const xrOptionalFeatures = ["local-floor", "bounded-floor", "hand-tracking"];
+const xrOptionalFeatures = ["local-floor", "bounded-floor", "hand-tracking", "mesh-detection"];
+
+/** Wireframe overlay for WebXR environment meshes (Quest Space Setup). */
+const environmentMeshRoot = new THREE.Group();
+environmentMeshRoot.name = "Environment Mesh Grid";
+environmentMeshRoot.visible = false;
+scene.add(environmentMeshRoot);
+const environmentMeshWireMaterial = new THREE.MeshBasicMaterial({
+  color: 0x7fd4ff,
+  wireframe: true,
+  transparent: true,
+  opacity: 0.85,
+  depthWrite: false,
+});
+/** @type {Map<XRMesh, { mesh: THREE.Mesh, lastChangedTime: number }>} */
+const environmentMeshes = new Map();
+
+function createEnvironmentMeshGeometry(vertices, indices) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+  if (indices) geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  return geometry;
+}
+
+function clearEnvironmentMeshes() {
+  for (const entry of environmentMeshes.values()) {
+    environmentMeshRoot.remove(entry.mesh);
+    entry.mesh.geometry?.dispose();
+  }
+  environmentMeshes.clear();
+  environmentMeshRoot.visible = false;
+}
+
+function updateEnvironmentMeshes(frame) {
+  if (!frame?.detectedMeshes) {
+    environmentMeshRoot.visible = false;
+    return;
+  }
+  const referenceSpace = renderer.xr.getReferenceSpace();
+  if (!referenceSpace) return;
+
+  for (const [xrMesh, entry] of [...environmentMeshes]) {
+    if (!frame.detectedMeshes.has(xrMesh)) {
+      environmentMeshRoot.remove(entry.mesh);
+      entry.mesh.geometry?.dispose();
+      environmentMeshes.delete(xrMesh);
+    }
+  }
+
+  frame.detectedMeshes.forEach((xrMesh) => {
+    let entry = environmentMeshes.get(xrMesh);
+    if (!entry) {
+      const geometry = createEnvironmentMeshGeometry(xrMesh.vertices, xrMesh.indices);
+      const mesh = new THREE.Mesh(geometry, environmentMeshWireMaterial);
+      mesh.matrixAutoUpdate = false;
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 1;
+      environmentMeshRoot.add(mesh);
+      entry = { mesh, lastChangedTime: xrMesh.lastChangedTime };
+      environmentMeshes.set(xrMesh, entry);
+    } else if (entry.lastChangedTime < xrMesh.lastChangedTime) {
+      entry.lastChangedTime = xrMesh.lastChangedTime;
+      const geometry = createEnvironmentMeshGeometry(xrMesh.vertices, xrMesh.indices);
+      entry.mesh.geometry.dispose();
+      entry.mesh.geometry = geometry;
+    }
+
+    const pose = frame.getPose(xrMesh.meshSpace, referenceSpace);
+    if (pose) {
+      entry.mesh.visible = true;
+      entry.mesh.matrix.fromArray(pose.transform.matrix);
+    } else {
+      entry.mesh.visible = false;
+    }
+  });
+
+  environmentMeshRoot.visible = environmentMeshes.size > 0;
+}
 // AVP Safari often omits "Vision" from UA; Macintosh + 5 touch points is the usual heuristic.
 // Also match explicit visionOS / AppleVision tokens when present.
 function isLikelyAppleVision() {
@@ -906,6 +1015,7 @@ async function configureVR() {
       vrButton.textContent = "XR active";
       session.addEventListener("end", () => {
         pauseEngineSound();
+        clearEnvironmentMeshes();
         restoreDesktopPresentation();
         vrButton.disabled = false;
         vrButton.textContent = labelFor();
