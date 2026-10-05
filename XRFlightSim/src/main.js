@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.29";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.30";
 
 const canvas = document.querySelector("#scene");
 const speedLabel = document.querySelector("#speed");
@@ -44,13 +44,17 @@ scene.background = null;
 scene.fog = new THREE.Fog(0x8ac5ee, 70, 350);
 const camera = new THREE.PerspectiveCamera(70, 1, .05, 600);
 camera.position.set(0, 2.1, 4.8);
+// World content that should follow Quest/AVP floor calibration (not real-world meshes).
+const playSpace = new THREE.Group();
+playSpace.name = "Play Space";
+scene.add(playSpace);
 const virtualEnvironment = new THREE.Group();
-scene.add(virtualEnvironment);
+playSpace.add(virtualEnvironment);
 // Room props (landing strip) stay visible in passthrough; ground/grid hide with virtualEnvironment.
 const roomContent = new THREE.Group();
-scene.add(roomContent);
+playSpace.add(roomContent);
 const planeRoot = new THREE.Group();
-scene.add(planeRoot);
+playSpace.add(planeRoot);
 scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 3.2));
 const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 10); scene.add(sun);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
@@ -140,7 +144,7 @@ function createControlsPanel() {
   panel.add(worldText("OK · PRESS RIGHT TRIGGER", new THREE.Vector3(0, -.9, .13), .22));
   return panel;
 }
-let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.55, -2.8); scene.add(controlsPanel);
+let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.55, -2.8); playSpace.add(controlsPanel);
 async function loadInstructionControllerModels(session) {
   for (const hand of ["left", "right"]) loadLocalInstructionController(hand, instructionControllerSlots[hand]);
   try {
@@ -172,7 +176,7 @@ let pausePanel = createWorldPanel([
   { text: "SIMULATION PAUSED", x: 768, y: 290, size: 72, color: "#a9dbff", align: "center" },
   { text: "Press the left controller Menu button to resume", x: 768, y: 425, size: 39, align: "center" },
 ], 2.9, 1.05);
-pausePanel.position.set(0, 1.6, -2.55); pausePanel.visible = false; scene.add(pausePanel);
+pausePanel.position.set(0, 1.6, -2.55); pausePanel.visible = false; playSpace.add(pausePanel);
 
 function createAircraft() {
   const plane = new THREE.Group();
@@ -262,7 +266,7 @@ const vortexMesh = new THREE.InstancedMesh(vortexGeom, vortexMat, vortexPoolSize
 vortexMesh.frustumCulled = false;
 vortexMesh.count = vortexPoolSize;
 vortexMesh.renderOrder = 3;
-scene.add(vortexMesh);
+playSpace.add(vortexMesh);
 const vortexDummy = new THREE.Object3D();
 const vortexForward = new THREE.Vector3();
 const vortexUp = new THREE.Vector3();
@@ -436,7 +440,7 @@ function loadFallbackFighter() {
 function replacePanel(next, role) {
   if (!next) return;
   const previous = role === "controls" ? controlsPanel : pausePanel;
-  scene.remove(previous);
+  playSpace.remove(previous);
   if (role === "controls") {
     controlsPanel = next;
     controlsPanel.visible = controlsVisible;
@@ -444,7 +448,7 @@ function replacePanel(next, role) {
     pausePanel = next;
     pausePanel.visible = simulationPaused;
   }
-  scene.add(next);
+  playSpace.add(next);
 }
 function clearGroup(group) {
   while (group.children.length) group.remove(group.children[0]);
@@ -459,7 +463,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.29`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.30`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -789,7 +793,7 @@ function fire() {
   shot.quaternion.copy(flight.rotation);
   shot.userData.velocity = flight.forward().multiplyScalar(bulletMuzzleSpeed).add(flight.velocity);
   shot.userData.age = 0;
-  scene.add(shot);
+  playSpace.add(shot);
   bullets.push(shot);
   vibrateFireController();
 }
@@ -826,7 +830,7 @@ renderer.setAnimationLoop((time, frame) => {
       shot.position.addScaledVector(shot.userData.velocity, dt);
       shot.userData.age += dt;
       if (shot.userData.age > bulletLifetimeSec) {
-        scene.remove(shot);
+        playSpace.remove(shot);
         bullets.splice(i, 1);
       }
     }
@@ -836,6 +840,7 @@ renderer.setAnimationLoop((time, frame) => {
   updateWingVortex(dt);
   applyDesktopCamera();
   updateEnvironmentMeshes(frame);
+  calibratePlaySpaceHeight(frame);
   speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`;
   throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`;
   if (!simulationPaused) updateEngineSound();
@@ -843,6 +848,63 @@ renderer.setAnimationLoop((time, frame) => {
 });
 resetButton.addEventListener("click", () => flight.reset());
 const xrOptionalFeatures = ["local-floor", "bounded-floor", "hand-tracking", "mesh-detection"];
+
+/** Scene Y of the controls panel / strip — authored for Quest local-floor standing. */
+const playSpaceAnchorY = 1.48;
+let playSpaceHeightReady = false;
+let playSpaceEyeSamples = [];
+
+function resetPlaySpaceHeight() {
+  playSpace.position.y = 0;
+  playSpaceHeightReady = false;
+  playSpaceEyeSamples = [];
+}
+
+async function ensureXrReferenceSpace(session) {
+  // Three.js requests local-floor by default; on some AVP paths it can end up with
+  // local (y≈0 at the head). Force local-floor, or emulate floor from local.
+  try {
+    const floor = await session.requestReferenceSpace("local-floor");
+    renderer.xr.setReferenceSpace(floor);
+    console.info("[WebXR] reference space: local-floor");
+    return "local-floor";
+  } catch (floorError) {
+    console.warn("[WebXR] local-floor unavailable; emulating from local", floorError);
+    const local = await session.requestReferenceSpace("local");
+    const emulated = local.getOffsetReferenceSpace(new XRRigidTransform({ x: 0, y: -1.55, z: 0 }));
+    renderer.xr.setReferenceSpace(emulated);
+    return "local-emulated-floor";
+  }
+}
+
+function calibratePlaySpaceHeight(frame) {
+  if (playSpaceHeightReady || !renderer.xr.isPresenting || !frame?.getViewerPose) return;
+  const referenceSpace = renderer.xr.getReferenceSpace();
+  if (!referenceSpace) return;
+  let pose = null;
+  try {
+    pose = frame.getViewerPose(referenceSpace);
+  } catch (_) {
+    return;
+  }
+  const eyeY = pose?.transform?.position?.y;
+  if (!Number.isFinite(eyeY)) return;
+  playSpaceEyeSamples.push(eyeY);
+  if (playSpaceEyeSamples.length < 8) return;
+  const samples = playSpaceEyeSamples.slice(-8);
+  const avgEyeY = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+  // Keep the controls panel a little below eye height so AVP seated / odd floors
+  // don't leave the strip and UI floating above the user.
+  const targetPanelY = avgEyeY - 0.1;
+  const shift = targetPanelY - playSpaceAnchorY;
+  if (Math.abs(shift) >= 0.18) {
+    playSpace.position.y = shift;
+    console.info(`[WebXR] play-space height eyeY=${avgEyeY.toFixed(2)} shift=${shift.toFixed(2)}`);
+  } else {
+    playSpace.position.y = 0;
+  }
+  playSpaceHeightReady = true;
+}
 
 /** Wireframe overlay for WebXR environment meshes (Quest Space Setup). */
 const environmentMeshRoot = new THREE.Group();
@@ -1036,12 +1098,15 @@ async function configureVR() {
       if (mode === "immersive-ar") applyPassthroughPresentation();
       else applyOpaqueXrPresentation();
       await renderer.xr.setSession(session);
+      resetPlaySpaceHeight();
+      await ensureXrReferenceSpace(session);
       const blend = session.environmentBlendMode ?? renderer.xr.getEnvironmentBlendMode?.();
       applySessionPresentation(mode, blend);
       vrButton.textContent = "XR active";
       session.addEventListener("end", () => {
         pauseEngineSound();
         clearEnvironmentMeshes();
+        resetPlaySpaceHeight();
         restoreDesktopPresentation();
         vrButton.disabled = false;
         vrButton.textContent = labelFor();
