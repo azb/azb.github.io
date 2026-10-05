@@ -758,10 +758,11 @@ function playBalloonPop() {
 }
 function vibrateFireController() {
   try {
+    const browserPad = [...navigator.getGamepads()].find(isBrowserGamepad);
     const sources = renderer.xr.getSession()?.inputSources ?? [];
-    const source = sources.find((item) => item.handedness === "right" && item.gamepad)
-      ?? sources.find((item) => item.gamepad);
-    const gamepad = source?.gamepad;
+    const xrPad = sources.find((item) => item.handedness === "right" && isXrStandardGamepad(item.gamepad))?.gamepad
+      ?? sources.find((item) => isXrStandardGamepad(item.gamepad))?.gamepad;
+    const gamepad = browserPad || xrPad;
     if (!gamepad) return;
     const actuator = gamepad.hapticActuators?.[0];
     if (actuator?.pulse) {
