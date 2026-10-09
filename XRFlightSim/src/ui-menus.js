@@ -40,63 +40,141 @@ function formatPercent(value) {
 /** World-space scale for procedural menus (authored sizes were ~3× too large). */
 export const UI_MENU_SCALE = 1 / 3;
 
-function makeLabelTexture(text, width = 1024, height = 256, hovered = false) {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  context.clearRect(0, 0, width, height);
-  context.fillStyle = hovered ? "rgba(40, 70, 28, 0.96)" : "rgba(8, 28, 44, 0.92)";
-  context.strokeStyle = hovered ? "#ffe626" : "#7fd4ff";
-  context.lineWidth = hovered ? 14 : 8;
-  context.beginPath();
-  context.roundRect(12, 12, width - 24, height - 24, 28);
-  context.fill();
-  context.stroke();
-  context.fillStyle = hovered ? "#fff6b0" : "#eaf6ff";
+const BUTTON_TEX_W = 1024;
+const BUTTON_TEX_H = 256;
+/** How far outline + text lift off the UI plane on hover (local Z). */
+const BUTTON_POP_Z = 0.045;
+
+function buttonFont(context) {
   context.font = "bold 84px system-ui, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(text, width / 2, height / 2);
+}
+
+function makeCanvasTexture(draw) {
+  const canvas = document.createElement("canvas");
+  canvas.width = BUTTON_TEX_W;
+  canvas.height = BUTTON_TEX_H;
+  const context = canvas.getContext("2d");
+  context.clearRect(0, 0, BUTTON_TEX_W, BUTTON_TEX_H);
+  draw(context, BUTTON_TEX_W, BUTTON_TEX_H);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
-export function createUiButton(label, width = 1.6, height = 0.32) {
-  const texture = makeLabelTexture(label);
+function makeButtonBgTexture(hovered = false) {
+  return makeCanvasTexture((context, width, height) => {
+    context.fillStyle = hovered ? "rgba(40, 70, 28, 0.96)" : "rgba(8, 28, 44, 0.92)";
+    context.beginPath();
+    context.roundRect(12, 12, width - 24, height - 24, 28);
+    context.fill();
+  });
+}
+
+function makeButtonOutlineTexture(hovered = false) {
+  return makeCanvasTexture((context, width, height) => {
+    context.strokeStyle = hovered ? "#ffe626" : "#7fd4ff";
+    context.lineWidth = hovered ? 14 : 8;
+    context.beginPath();
+    context.roundRect(12, 12, width - 24, height - 24, 28);
+    context.stroke();
+  });
+}
+
+function makeButtonTextTexture(text, hovered = false) {
+  return makeCanvasTexture((context, width, height) => {
+    buttonFont(context);
+    context.fillStyle = hovered ? "#fff6b0" : "#eaf6ff";
+    context.fillText(text, width / 2, height / 2);
+  });
+}
+
+/** Darkened, soft, transparent copy of the label for the on-plane drop shadow. */
+function makeButtonTextShadowTexture(text) {
+  return makeCanvasTexture((context, width, height) => {
+    buttonFont(context);
+    context.save();
+    context.filter = "blur(10px)";
+    context.fillStyle = "rgba(0, 0, 0, 0.55)";
+    context.fillText(text, width / 2, height / 2 + 4);
+    context.restore();
+    // Second softer pass for a more diffuse contact shadow.
+    context.save();
+    context.filter = "blur(18px)";
+    context.fillStyle = "rgba(0, 0, 0, 0.28)";
+    context.fillText(text, width / 2, height / 2 + 6);
+    context.restore();
+  });
+}
+
+function makeUiLayer(map, width, height, renderOrder) {
   const material = new THREE.MeshBasicMaterial({
-    map: texture,
+    map,
     transparent: true,
     depthTest: false,
     depthWrite: false,
     side: THREE.DoubleSide,
   });
-  const button = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
-  button.renderOrder = 8;
-  button.userData.uiButton = {
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+  mesh.renderOrder = renderOrder;
+  return mesh;
+}
+
+function swapLayerMap(mesh, nextMap) {
+  mesh.material.map?.dispose();
+  mesh.material.map = nextMap;
+  mesh.material.needsUpdate = true;
+}
+
+export function createUiButton(label, width = 1.6, height = 0.32) {
+  const root = new THREE.Group();
+  root.name = label;
+
+  const bg = makeUiLayer(makeButtonBgTexture(false), width, height, 8);
+  bg.position.z = 0;
+  root.add(bg);
+
+  const textShadow = makeUiLayer(makeButtonTextShadowTexture(label), width, height, 9);
+  textShadow.position.z = 0.002;
+  textShadow.visible = false;
+  root.add(textShadow);
+
+  const outline = makeUiLayer(makeButtonOutlineTexture(false), width, height, 10);
+  outline.position.z = 0.004;
+  root.add(outline);
+
+  const text = makeUiLayer(makeButtonTextTexture(label, false), width, height, 11);
+  text.position.z = 0.006;
+  root.add(text);
+
+  root.userData.uiButton = {
     label,
     hovered: false,
+    layers: { bg, outline, text, textShadow },
     setLabel(next) {
       this.label = next;
-      const map = makeLabelTexture(next, 1024, 256, this.hovered);
-      material.map?.dispose();
-      material.map = map;
-      material.needsUpdate = true;
+      swapLayerMap(bg, makeButtonBgTexture(this.hovered));
+      swapLayerMap(outline, makeButtonOutlineTexture(this.hovered));
+      swapLayerMap(text, makeButtonTextTexture(next, this.hovered));
+      swapLayerMap(textShadow, makeButtonTextShadowTexture(next));
     },
     setHovered(next) {
       const on = Boolean(next);
       if (this.hovered === on) return;
       this.hovered = on;
-      const map = makeLabelTexture(this.label, 1024, 256, on);
-      material.map?.dispose();
-      material.map = map;
-      material.needsUpdate = true;
-      button.scale.setScalar(on ? 1.06 : 1);
+      swapLayerMap(bg, makeButtonBgTexture(on));
+      swapLayerMap(outline, makeButtonOutlineTexture(on));
+      swapLayerMap(text, makeButtonTextTexture(this.label, on));
+      // Background stays on the UI plane; outline + text pop out in Z.
+      outline.position.z = on ? BUTTON_POP_Z : 0.004;
+      text.position.z = on ? BUTTON_POP_Z + 0.002 : 0.006;
+      // Contact shadow of the raised text stays flat on the plane.
+      textShadow.visible = on;
     },
     onClick: null,
   };
-  return button;
+  return root;
 }
 
 /** Clear / apply hover highlight across visible UI panels. */
