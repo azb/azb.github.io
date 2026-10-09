@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.52";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.52";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.53";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.53";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -267,7 +267,7 @@ function showUiMode(mode) {
     } else {
       startEngineSound();
       statusLabel.textContent = renderer.xr.isPresenting
-        ? "Flying · left X pauses (Quest Menu is system-only)"
+        ? "Flying · press left X to pause"
         : "Desktop preview · controller or keyboard";
     }
   }
@@ -863,7 +863,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.52`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.53`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -934,10 +934,6 @@ function activeStick(gamepad) {
   return axisPairs.map(([x, y]) => [gamepad.axes[x] ?? 0, gamepad.axes[y] ?? 0])
     .reduce((best, pair) => pair[0] ** 2 + pair[1] ** 2 > best[0] ** 2 + best[1] ** 2 ? pair : best, [0, 0]);
 }
-function isXrButtonDown(button) {
-  if (!button) return false;
-  return Boolean(button.pressed) || (button.value ?? 0) > 0.5;
-}
 function isXrStandardGamepad(gamepad) {
   return Boolean(gamepad && gamepad.mapping === "xr-standard");
 }
@@ -988,13 +984,9 @@ function controls() {
         value.yaw += x;
         value.throttle -= grip;
         value.fire ||= indexTrigger > .55;
-        // Quest's hamburger Menu button is OS-reserved and usually not in the WebXR
-        // gamepad (xr-standard: 0 trigger, 1 grip, 3 stick, 4 X, 5 Y). Use left X for
-        // pause/resume; also accept buttons[6+] if a runtime ever exposes Menu.
-        value.pause ||= isXrButtonDown(gamepad.buttons[4]);
-        for (let i = 6; i < gamepad.buttons.length; i += 1) {
-          value.pause ||= isXrButtonDown(gamepad.buttons[i]);
-        }
+        // Pause on left X only (digital .pressed). Do not scan buttons[6+] — on Quest
+        // that is the thumbrest and it fires while using the trigger/grip.
+        value.pause ||= Boolean(gamepad.buttons[4]?.pressed);
       }
       if (source.handedness === "right") {
         value.roll += x;
