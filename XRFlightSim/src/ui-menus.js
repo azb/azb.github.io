@@ -215,6 +215,16 @@ export function setUiButtonHovers(panels, hoveredButton) {
   }
 }
 
+/** Clickable menu buttons top-to-bottom for gamepad focus navigation. */
+export function listClickableUiButtons(panel) {
+  const buttons = [];
+  panel?.traverse((obj) => {
+    if (obj.userData?.uiButton?.onClick) buttons.push(obj);
+  });
+  buttons.sort((a, b) => b.position.y - a.position.y);
+  return buttons;
+}
+
 function createMenuPanel(title, width, height) {
   const root = new THREE.Group();
   root.name = title;

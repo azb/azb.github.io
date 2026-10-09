@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.66";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.66";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.67";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.67";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -343,6 +343,8 @@ function pollControlsOkShortcut() {
     controlsOkButtonWasPressed = false;
     return;
   }
+  // Bluetooth pad uses Cross/A via pollGamepadMenuNavigation instead.
+  if (findBrowserGamepad(renderer.xr.getSession()?.inputSources ?? [])) return;
   let aDown = false;
   const session = renderer.xr.getSession();
   if (session) {
@@ -356,6 +358,132 @@ function pollControlsOkShortcut() {
     controlsOkButton.userData.uiButton.onClick?.();
   }
   controlsOkButtonWasPressed = aDown;
+}
+
+/** Gamepad D-pad / left-stick focus + A confirm for menu screens. */
+let gamepadMenuFocusIndex = 0;
+let gamepadMenuFocusMode = "";
+/** @type {THREE.Object3D | null} */
+let gamepadMenuFocusedButton = null;
+/** @type {THREE.Object3D | null} */
+let gamepadMenuPressedButton = null;
+let gamepadMenuConfirmHeld = false;
+let gamepadMenuBackHeld = false;
+let gamepadMenuNavDir = 0;
+let gamepadMenuNavNextMs = 0;
+
+function activeMenuRoot() {
+  if (uiMode === "pause") return pausePanel;
+  if (uiMode === "settings") return settingsPanel;
+  if (uiMode === "controls") return controlsPanel;
+  return null;
+}
+
+function clearGamepadMenuNav() {
+  if (gamepadMenuPressedButton?.userData?.uiButton) {
+    gamepadMenuPressedButton.userData.uiButton.setPressed(false);
+  }
+  gamepadMenuPressedButton = null;
+  gamepadMenuFocusedButton = null;
+  gamepadMenuConfirmHeld = false;
+  gamepadMenuBackHeld = false;
+  gamepadMenuNavDir = 0;
+}
+
+function pollGamepadMenuNavigation() {
+  if (uiMode === "game") {
+    if (gamepadMenuFocusedButton || gamepadMenuPressedButton) clearGamepadMenuNav();
+    gamepadMenuFocusMode = "";
+    return;
+  }
+  const xrSources = renderer.xr.getSession()?.inputSources ?? [];
+  const pad = findBrowserGamepad(xrSources);
+  if (!pad) {
+    if (gamepadMenuFocusedButton || gamepadMenuPressedButton) {
+      clearGamepadMenuNav();
+      if (!renderer.xr.isPresenting) setUiButtonHovers(draggableUiPanels(), null);
+    }
+    return;
+  }
+
+  const panel = activeMenuRoot();
+  if (!panel?.visible) {
+    clearGamepadMenuNav();
+    return;
+  }
+  const buttons = listClickableUiButtons(panel);
+  if (!buttons.length) {
+    clearGamepadMenuNav();
+    return;
+  }
+
+  if (gamepadMenuFocusMode !== uiMode) {
+    gamepadMenuFocusMode = uiMode;
+    gamepadMenuFocusIndex = 0;
+    if (gamepadMenuPressedButton?.userData?.uiButton) {
+      gamepadMenuPressedButton.userData.uiButton.setPressed(false);
+    }
+    gamepadMenuPressedButton = null;
+    gamepadMenuConfirmHeld = false;
+  }
+  gamepadMenuFocusIndex = Math.max(0, Math.min(buttons.length - 1, gamepadMenuFocusIndex));
+
+  const stickY = pad.axes[1] ?? 0;
+  const dpadUp = Boolean(pad.buttons[12]?.pressed);
+  const dpadDown = Boolean(pad.buttons[13]?.pressed);
+  let nav = 0;
+  if (dpadUp || stickY < -0.55) nav = -1;
+  else if (dpadDown || stickY > 0.55) nav = 1;
+
+  const now = performance.now();
+  if (nav === 0) {
+    gamepadMenuNavDir = 0;
+  } else if (nav !== gamepadMenuNavDir) {
+    gamepadMenuFocusIndex = Math.max(0, Math.min(buttons.length - 1, gamepadMenuFocusIndex + nav));
+    gamepadMenuNavDir = nav;
+    gamepadMenuNavNextMs = now + 320;
+  } else if (now >= gamepadMenuNavNextMs) {
+    gamepadMenuFocusIndex = Math.max(0, Math.min(buttons.length - 1, gamepadMenuFocusIndex + nav));
+    gamepadMenuNavNextMs = now + 140;
+  }
+
+  const focused = buttons[gamepadMenuFocusIndex];
+  gamepadMenuFocusedButton = focused;
+
+  // A / Cross — press on down, click on release (same as ray UX).
+  const confirm = Boolean(pad.buttons[0]?.pressed);
+  if (confirm && !gamepadMenuConfirmHeld) {
+    gamepadMenuPressedButton = focused;
+    focused.userData.uiButton.setPressed(true);
+  }
+  if (!confirm && gamepadMenuConfirmHeld) {
+    const pressed = gamepadMenuPressedButton;
+    if (pressed?.userData?.uiButton) pressed.userData.uiButton.setPressed(false);
+    if (pressed && pressed === focused) pressed.userData.uiButton.onClick?.();
+    gamepadMenuPressedButton = null;
+  }
+  gamepadMenuConfirmHeld = confirm;
+  if (gamepadMenuConfirmHeld && gamepadMenuPressedButton?.userData?.uiButton) {
+    gamepadMenuPressedButton.userData.uiButton.setPressed(
+      gamepadMenuPressedButton === focused,
+    );
+  }
+
+  // B / Circle — back from settings (or controls opened from pause).
+  const back = Boolean(pad.buttons[1]?.pressed);
+  if (back && !gamepadMenuBackHeld) {
+    if (uiMode === "settings") {
+      showUiMode("pause");
+    } else if (uiMode === "controls" && returnToPauseAfterControls) {
+      returnToPauseAfterControls = false;
+      showUiMode("pause");
+    }
+  }
+  gamepadMenuBackHeld = back;
+
+  if (!renderer.xr.isPresenting) {
+    setUiButtonHovers(draggableUiPanels(), focused);
+  }
 }
 function attachControlsOkButton(panel) {
   if (!panel || controlsOkButton.parent === panel) return;
@@ -547,7 +675,7 @@ const handSteer = {
   roll: 0,
   /** Absolute 0–1 throttle from pinch distance (null when inactive). */
   throttle: null,
-  /** World-space aim direction from pinch origin → tip (null near origin). */
+  /** World-space aim direction from pinch origin ? tip (null near origin). */
   aimDirection: null,
   aimWorld: new THREE.Vector3(),
 };
@@ -696,7 +824,7 @@ function updateHandSteerAxes() {
     handSteer.aimDirection = null;
     return;
   }
-  // Flight direction = pinch pull vector (origin → tip) in world space.
+  // Flight direction = pinch pull vector (origin ? tip) in world space.
   handSteer.aimWorld.copy(handJoystickDelta).multiplyScalar(1 / distance);
   handSteer.aimDirection = handSteer.aimWorld;
 }
@@ -861,7 +989,8 @@ function updateUiPanelInteraction() {
   if (!presenting) {
     uiDrag = null;
     uiAwaitingHandAnchor = false;
-    setUiButtonHovers(draggableUiPanels(), null);
+    // Gamepad focus owns hover on desktop; don't wipe it here.
+    if (!gamepadMenuFocusedButton) setUiButtonHovers(draggableUiPanels(), null);
     for (const entry of uiControllerEntries) {
       entry.laser.visible = false;
       entry.triggerWasDown = false;
@@ -966,7 +1095,16 @@ function updateUiPanelInteraction() {
     // Clicks/drags are handled on selectstart/selectend (release-to-click).
     entry.triggerWasDown = isControllerTriggerDown(entry);
   }
-  setUiButtonHovers(panels, hoveredButton);
+  // Keep gamepad focus in sync when a ray is pointing at a button.
+  if (hoveredButton) {
+    const buttons = listClickableUiButtons(activeMenuRoot());
+    const idx = buttons.indexOf(hoveredButton);
+    if (idx >= 0) {
+      gamepadMenuFocusIndex = idx;
+      gamepadMenuFocusedButton = hoveredButton;
+    }
+  }
+  setUiButtonHovers(panels, hoveredButton || gamepadMenuFocusedButton);
   uiPointerBlocksFire = hovered || Boolean(uiDrag) || uiMode !== "game";
 }
 
@@ -1001,12 +1139,12 @@ class FlightModel {
     }
     // Match Lens Scene.scene GameControllerMovement: minSpeed 0, maxSpeed 500,
     // turnSpeed 240, pitch/roll/yaw 70. Keep WebXR translation at 0..100 * scale
-    // (Lens cm-ish 500 ≈ same feel after worldSpeedScale), but use the Lens
+    // (Lens cm-ish 500 ˜ same feel after worldSpeedScale), but use the Lens
     // authority curve: referenceSpeed = maxSpeed * 0.25 when minSpeed is 0.
     const speed = lerp(0, 100, this.throttle);
     let handAiming = false;
     if (input.aimDirection && input.aimDirection.lengthSq() > 1e-8) {
-      // Hand joystick: nose + velocity follow the pull (origin → tip) immediately.
+      // Hand joystick: nose + velocity follow the pull (origin ? tip) immediately.
       // Local forward is -Z; build a right-handed level basis for that.
       handAimForward.copy(input.aimDirection).normalize();
       handAimRight.crossVectors(handAimForward, handWorldUp);
@@ -1043,7 +1181,7 @@ class FlightModel {
   }
 }
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = true; let pauseButtonWasPressed = false; let controlsVisible = true;
-// Lens BulletSpawnPoint1/2 under Player (scale 0.296423). Scene units are cm → meters; flip Z for THREE -forward.
+// Lens BulletSpawnPoint1/2 under Player (scale 0.296423). Scene units are cm ? meters; flip Z for THREE -forward.
 const lensPlayerScale = 0.296423;
 const lensLocalToThree = (p) => new THREE.Vector3(
   p.x * lensPlayerScale * 0.01,
@@ -1063,7 +1201,7 @@ const wingTipLocal = [
 const vortexMinAirspeedRatio = 0.45;
 const vortexMaxSpawnsPerSecond = 28;
 const vortexWispLifetime = 0.65;
-// Lens wispLength/width are cm world scale → meters.
+// Lens wispLength/width are cm world scale ? meters.
 const vortexWispLength = 5 * 0.01;
 const vortexWispWidth = 0.35 * 0.01;
 const vortexPoolSize = Math.max(Math.ceil(vortexMaxSpawnsPerSecond * vortexWispLifetime * 2), 36);
@@ -1116,7 +1254,7 @@ for (let i = 0; i < vortexPoolSize; i += 1) {
 vortexMesh.instanceMatrix.needsUpdate = true;
 
 function airspeedIntensity() {
-  // Lens getCurrentAirspeedRatio with minSpeed 0, maxSpeed 500 → ref = 125.
+  // Lens getCurrentAirspeedRatio with minSpeed 0, maxSpeed 500 ? ref = 125.
   const controlAirspeed = lerp(0, 500, flight.throttle);
   return clamp(controlAirspeed / Math.max(500 * 0.25, 1), 0, 1);
 }
@@ -1281,7 +1419,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.66`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.67`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1832,7 +1970,7 @@ function fire() {
   nextBulletSpawnIndex += 1;
   const offset = local.clone().applyQuaternion(flight.rotation);
   const shot = new THREE.Mesh(bulletGeom, bulletMat);
-  // Lens Unit Sphere diameter 1 × world scale (3,3,12) cm → meters.
+  // Lens Unit Sphere diameter 1 × world scale (3,3,12) cm ? meters.
   shot.scale.set(0.03, 0.03, 0.12);
   shot.position.copy(flight.position).add(offset);
   shot.quaternion.copy(flight.rotation);
@@ -1862,6 +2000,7 @@ addEventListener("resize", resize); resize(); let previous = performance.now();
 renderer.setAnimationLoop((time, frame) => {
   const dt = (time - previous) / 1000;
   previous = time;
+  pollGamepadMenuNavigation();
   updateUiPanelInteraction();
   pollControlsOkShortcut();
   const input = controls();
@@ -1927,7 +2066,7 @@ function resetPlaySpaceHeight() {
 
 async function ensureXrReferenceSpace(session) {
   // Three.js requests local-floor by default; on some AVP paths it can end up with
-  // local (y≈0 at the head). Force local-floor, or emulate floor from local.
+  // local (y˜0 at the head). Force local-floor, or emulate floor from local.
   try {
     const floor = await session.requestReferenceSpace("local-floor");
     renderer.xr.setReferenceSpace(floor);
