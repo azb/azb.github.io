@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.45";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.46";
+import { createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings } from "./ui-menus.js?v=0.4.46";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -218,11 +219,103 @@ async function loadInstructionControllerModels(session) {
     }
   } catch (error) { console.warn("Controller profile lookup failed; using guide fallback", error); }
 }
-let pausePanel = createWorldPanel([
-  { text: "SIMULATION PAUSED", x: 768, y: 290, size: 72, color: "#a9dbff", align: "center" },
-  { text: "Press the left controller Menu button to resume", x: 768, y: 425, size: 39, align: "center" },
-], 2.9, 1.05);
-pausePanel.position.set(0, 1.6, -2.55); pausePanel.visible = false; playSpace.add(pausePanel);
+const gameSettings = loadSettings();
+let returnToPauseAfterControls = false;
+/** @type {"controls" | "game" | "pause" | "settings"} */
+let uiMode = "controls";
+
+function applyGameSettings() {
+  saveSettings(gameSettings);
+  if (engineGain && engineContext && typeof flight !== "undefined") {
+    const time = engineContext.currentTime;
+    const base = simulationPaused ? 0 : lerp(0.28, 1, flight.throttle);
+    engineGain.gain.setTargetAtTime(
+      base * gameSettings.engineVolume * gameSettings.masterVolume,
+      time,
+      0.04,
+    );
+  }
+}
+
+function dismissControlsToGame() {
+  returnToPauseAfterControls = false;
+  showUiMode("game");
+}
+
+function showUiMode(mode) {
+  uiMode = mode;
+  const showControls = mode === "controls";
+  const showPause = mode === "pause";
+  const showSettings = mode === "settings";
+  controlsVisible = showControls;
+  if (controlsPanel) controlsPanel.visible = showControls;
+  if (controlsOkButton) controlsOkButton.visible = showControls;
+  if (pausePanel) pausePanel.visible = showPause;
+  if (settingsPanel) settingsPanel.visible = showSettings;
+  const shouldPause = mode !== "game";
+  if (shouldPause !== simulationPaused) {
+    simulationPaused = shouldPause;
+    if (shouldPause) {
+      pauseEngineSound();
+      statusLabel.textContent = mode === "settings"
+        ? "Settings"
+        : mode === "controls"
+          ? "Controls"
+          : "Simulation paused";
+    } else {
+      startEngineSound();
+      statusLabel.textContent = renderer.xr.isPresenting
+        ? "Third-person RC flight"
+        : "Desktop preview · controller or keyboard";
+    }
+  }
+  applyGameSettings();
+}
+
+let pausePanel = createPauseMenu({
+  onResume: () => showUiMode("game"),
+  onControls: () => {
+    returnToPauseAfterControls = true;
+    showUiMode("controls");
+  },
+  onSettings: () => {
+    settingsPanel.userData.refreshSettingsLabels?.();
+    showUiMode("settings");
+  },
+  onRestart: () => {
+    flight.reset();
+    showUiMode("game");
+  },
+});
+pausePanel.position.set(0, 1.55, -2.4);
+pausePanel.visible = false;
+playSpace.add(pausePanel);
+
+const settingsPanel = createSettingsMenu(gameSettings, {
+  onBack: () => showUiMode("pause"),
+  onChange: () => applyGameSettings(),
+});
+settingsPanel.position.set(0, 1.55, -2.4);
+settingsPanel.visible = false;
+playSpace.add(settingsPanel);
+
+const controlsOkButton = createUiButton("OK", 1.35, 0.32);
+controlsOkButton.position.set(0, -1.2, 0.06);
+controlsOkButton.userData.uiButton.onClick = () => {
+  if (returnToPauseAfterControls) {
+    returnToPauseAfterControls = false;
+    showUiMode("pause");
+    return;
+  }
+  dismissControlsToGame();
+};
+function attachControlsOkButton(panel) {
+  if (!panel || controlsOkButton.parent === panel) return;
+  if (controlsOkButton.parent) controlsOkButton.parent.remove(controlsOkButton);
+  panel.add(controlsOkButton);
+  controlsOkButton.visible = panel.visible;
+}
+attachControlsOkButton(controlsPanel);
 
 /** XR distance-drag for floating UI panels (Lens Floating UI / ContainerFrame translation). */
 const uiRaycaster = new THREE.Raycaster();
@@ -274,6 +367,7 @@ const uiControllerEntries = [0, 1].map((index) => {
   });
   controller.addEventListener("selectstart", () => {
     entry.selectHeld = true;
+    if (tryUiButtonClick(controller)) return;
     tryStartUiDrag(controller);
   });
   controller.addEventListener("selectend", () => {
@@ -288,16 +382,32 @@ function draggableUiPanels() {
   const panels = [];
   if (controlsPanel?.visible) panels.push(controlsPanel);
   if (pausePanel?.visible) panels.push(pausePanel);
+  if (settingsPanel?.visible) panels.push(settingsPanel);
   return panels;
 }
 
 function uiRootFromHit(object) {
   let node = object;
   while (node) {
-    if (node === controlsPanel || node === pausePanel) return node;
+    if (node === controlsPanel || node === pausePanel || node === settingsPanel) return node;
     node = node.parent;
   }
   return null;
+}
+
+function tryUiButtonClick(controller) {
+  getControllerAimRay(controller, uiRayOrigin, uiRayDir);
+  uiRaycaster.set(uiRayOrigin, uiRayDir);
+  const panels = draggableUiPanels();
+  if (!panels.length) return false;
+  const hits = uiRaycaster.intersectObjects(panels, true);
+  for (const hit of hits) {
+    const button = findUiButton(hit.object);
+    if (!button) continue;
+    button.userData.uiButton.onClick?.();
+    return true;
+  }
+  return false;
 }
 
 function getControllerAimRay(controller, origin, direction) {
@@ -419,10 +529,16 @@ function updateUiPanelInteraction() {
     }
 
     const down = isControllerTriggerDown(entry);
-    if (down && !entry.triggerWasDown && hit) tryStartUiDrag(entry.controller);
+    if (down && !entry.triggerWasDown) {
+      if (tryUiButtonClick(entry.controller)) {
+        /* button handled */
+      } else if (hit) {
+        tryStartUiDrag(entry.controller);
+      }
+    }
     entry.triggerWasDown = down;
   }
-  uiPointerBlocksFire = hovered || Boolean(uiDrag);
+  uiPointerBlocksFire = hovered || Boolean(uiDrag) || uiMode !== "game";
 }
 
 function createAircraft() {
@@ -466,7 +582,7 @@ class FlightModel {
     if (speed > .01) this.position.addScaledVector(this.velocity, dt);
   }
 }
-const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true;
+const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = true; let pauseButtonWasPressed = false; let controlsVisible = true;
 // Lens BulletSpawnPoint1/2 under Player (scale 0.296423). Scene units are cm → meters; flip Z for THREE -forward.
 const lensPlayerScale = 0.296423;
 const lensLocalToThree = (p) => new THREE.Vector3(
@@ -626,15 +742,11 @@ function updateWingVortex(dt) {
   if (matricesDirty) vortexMesh.instanceMatrix.needsUpdate = true;
 }
 function setSimulationPaused(paused) {
-  simulationPaused = paused;
-  pausePanel.visible = paused;
   if (paused) {
-    pauseEngineSound();
-    statusLabel.textContent = "Simulation paused · left Menu resumes";
-  } else {
-    startEngineSound();
-    statusLabel.textContent = renderer.xr.isPresenting ? "Third-person RC flight" : "Desktop preview · controller or keyboard";
+    if (uiMode === "game") showUiMode("pause");
+    return;
   }
+  showUiMode("game");
 }
 function notePreviewStatus(text) {
   if (renderer.xr.isPresenting || simulationPaused) return;
@@ -686,17 +798,15 @@ function loadFallbackFighter() {
 }
 function replacePanel(next, role) {
   if (!next) return;
-  const previous = role === "controls" ? controlsPanel : pausePanel;
+  // Keep the interactive pause/settings menus; only swap the controls board from the scene.
+  if (role !== "controls") return;
+  const previous = controlsPanel;
   if (uiDrag?.panel === previous) uiDrag = null;
   playSpace.remove(previous);
-  if (role === "controls") {
-    controlsPanel = next;
-    controlsPanel.visible = controlsVisible;
-  } else {
-    pausePanel = next;
-    pausePanel.visible = simulationPaused;
-  }
+  controlsPanel = next;
+  controlsPanel.visible = controlsVisible;
   playSpace.add(next);
+  attachControlsOkButton(controlsPanel);
 }
 function clearGroup(group) {
   while (group.children.length) group.remove(group.children[0]);
@@ -711,7 +821,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.45`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.46`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -774,7 +884,8 @@ function stick(value) {
   const deadzone = .1;
   const magnitude = Math.abs(value);
   if (magnitude <= deadzone) return 0;
-  return Math.sign(value) * (magnitude - deadzone) / (1 - deadzone);
+  const scaled = Math.sign(value) * (magnitude - deadzone) / (1 - deadzone);
+  return scaled * (gameSettings.stickSensitivity ?? 1);
 }
 function activeStick(gamepad) {
   const axisPairs = [[0, 1], [2, 3], [4, 5]];
@@ -1070,17 +1181,21 @@ function updateEngineSound() {
   if (!engineContext || !engineGain || !engineSource) return;
   const time = engineContext.currentTime;
   engineSource.playbackRate.setTargetAtTime(enginePlaybackRate(), time, .125);
-  engineGain.gain.setTargetAtTime(lerp(.28, 1, flight.throttle), time, .04);
+  engineGain.gain.setTargetAtTime(
+    lerp(.28, 1, flight.throttle) * gameSettings.engineVolume * gameSettings.masterVolume,
+    time,
+    .04,
+  );
   updateSpatialEngineAudio(time);
 }
 function playBalloonPop() {
   const pop = new Audio(balloonPopUrl);
-  pop.volume = .45;
+  pop.volume = .45 * gameSettings.masterVolume;
   pop.play().catch(() => {});
 }
 function playImpactSound() {
   const pop = new Audio(balloonPopUrl);
-  pop.volume = .28;
+  pop.volume = .28 * gameSettings.masterVolume;
   pop.playbackRate = 1.35;
   pop.play().catch(() => {});
 }
@@ -1161,8 +1276,16 @@ function ensureBoundsTree(mesh) {
 
 function collectBulletColliders() {
   bulletColliders.length = 0;
+  if (!gameSettings.meshCollision) {
+    roomContent.traverse((node) => {
+      if (!node.isMesh || !node.visible) return;
+      ensureBoundsTree(node);
+      bulletColliders.push(node);
+    });
+    return;
+  }
   for (const entry of environmentMeshes.values()) {
-    if (!entry.collider || !entry.mesh?.visible) continue;
+    if (!entry.collider || !entry.mesh) continue;
     ensureBoundsTree(entry.collider);
     bulletColliders.push(entry.collider);
   }
@@ -1448,9 +1571,9 @@ function updateEnvironmentMeshes(frame) {
 
     const pose = frame.getPose(xrMesh.meshSpace, referenceSpace);
     if (pose) {
-      entry.mesh.visible = true;
+      entry.mesh.visible = Boolean(gameSettings.meshVisual);
       entry.mesh.matrix.fromArray(pose.transform.matrix);
-      entry.collider.visible = true;
+      entry.collider.visible = Boolean(gameSettings.meshCollision);
       entry.collider.matrix.fromArray(pose.transform.matrix);
     } else {
       entry.mesh.visible = false;
@@ -1458,7 +1581,8 @@ function updateEnvironmentMeshes(frame) {
     }
   });
 
-  environmentMeshRoot.visible = environmentMeshes.size > 0;
+  environmentMeshRoot.visible = environmentMeshes.size > 0
+    && (gameSettings.meshVisual || gameSettings.meshCollision);
 }
 // AVP Safari often omits "Vision" from UA; Macintosh + 5 touch points is the usual heuristic.
 // Also match explicit visionOS / AppleVision tokens when present.
