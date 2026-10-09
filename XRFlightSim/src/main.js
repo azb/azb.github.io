@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.67";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.67";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.68";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.68";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -224,7 +224,12 @@ let returnToPauseAfterControls = false;
 /** @type {"controls" | "game" | "pause" | "settings"} */
 let uiMode = "controls";
 
+let bulletCollidersDirty = true;
+function markBulletCollidersDirty() {
+  bulletCollidersDirty = true;
+}
 function applyGameSettings() {
+  markBulletCollidersDirty();
   saveSettings(gameSettings);
   if (engineGain && engineContext && typeof flight !== "undefined") {
     const time = engineContext.currentTime;
@@ -282,6 +287,7 @@ function showUiMode(mode) {
     }
   }
   if (showGame) {
+    setUiButtonHovers(draggableUiPanels(), null);
     gamePanel?.userData.setThrottle?.(flight?.throttle ?? 0);
   }
   // Snap to hand height in front of the player whenever a menu/HUD opens.
@@ -1007,7 +1013,6 @@ function updateUiPanelInteraction() {
   // Flying: hide interaction rays. Pause/resume with the controller menu button.
   if (uiMode === "game") {
     uiDrag = null;
-    setUiButtonHovers(draggableUiPanels(), null);
     for (const entry of uiControllerEntries) {
       entry.laser.visible = false;
       entry.triggerWasDown = isControllerTriggerDown(entry);
@@ -1125,10 +1130,17 @@ const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, 
 const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.23");
 
 const spawnPosition = new THREE.Vector3(0, 1.5, -7);
+const flightForwardScratch = new THREE.Vector3();
+const flightAxisScratch = new THREE.Vector3();
+const flightQuatScratch = new THREE.Quaternion();
+const bulletNextLocal = new THREE.Vector3();
+const bulletFireVelocity = new THREE.Vector3();
 class FlightModel {
   constructor() { this.reset(); }
   reset() { this.position = spawnPosition.clone(); this.rotation = new THREE.Quaternion(); this.throttle = 0; this.velocity = new THREE.Vector3(); }
-  forward() { return new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation).normalize(); }
+  forward(target = flightForwardScratch) {
+    return target.set(0, 0, -1).applyQuaternion(this.rotation).normalize();
+  }
   step(input, seconds) {
     const dt = clamp(seconds, 0, .1);
     if (typeof input.throttleAbsolute === "number") {
@@ -1139,12 +1151,12 @@ class FlightModel {
     }
     // Match Lens Scene.scene GameControllerMovement: minSpeed 0, maxSpeed 500,
     // turnSpeed 240, pitch/roll/yaw 70. Keep WebXR translation at 0..100 * scale
-    // (Lens cm-ish 500 ˜ same feel after worldSpeedScale), but use the Lens
+    // (Lens cm-ish 500 ~ same feel after worldSpeedScale), but use the Lens
     // authority curve: referenceSpeed = maxSpeed * 0.25 when minSpeed is 0.
     const speed = lerp(0, 100, this.throttle);
     let handAiming = false;
     if (input.aimDirection && input.aimDirection.lengthSq() > 1e-8) {
-      // Hand joystick: nose + velocity follow the pull (origin ? tip) immediately.
+      // Hand joystick: nose + velocity follow the pull (origin -> tip) immediately.
       // Local forward is -Z; build a right-handed level basis for that.
       handAimForward.copy(input.aimDirection).normalize();
       handAimRight.crossVectors(handAimForward, handWorldUp);
@@ -1166,9 +1178,15 @@ class FlightModel {
       const authority = clamp(controlAirspeed / referenceSpeed, .5, 1.25);
       const controlScale = 240 / 120;
       const rate = controlScale * authority * dt * Math.PI / 180;
-      this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), input.roll * 70 * rate));
-      this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -input.pitch * 70 * rate));
-      this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 70 * rate)).normalize();
+      this.rotation.multiply(
+        flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(0, 0, -1), input.roll * 70 * rate),
+      );
+      this.rotation.multiply(
+        flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(1, 0, 0), -input.pitch * 70 * rate),
+      );
+      this.rotation.multiply(
+        flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(0, 1, 0), -input.yaw * 70 * rate),
+      ).normalize();
     }
     const worldSpeed = speed * worldSpeedScale;
     // While hand-aiming, move along the pull vector (not a lagging nose heading).
@@ -1419,7 +1437,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.67`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.68`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1582,16 +1600,21 @@ function controls() {
     : "Sticks: waiting for controller";
   for (const key of ["pitch", "roll", "yaw", "throttle"]) value[key] = clamp(value[key], -1, 1); return value;
 }
+const deflectQuatScratch = new THREE.Quaternion();
+const deflectAxisX = new THREE.Vector3(1, 0, 0);
+const deflectAxisY = new THREE.Vector3(0, 1, 0);
 function deflect(part, degrees, axis) {
   if (!part) return;
-  part.quaternion.copy(animatedParts.neutral.get(part)).multiply(new THREE.Quaternion().setFromAxisAngle(axis, THREE.MathUtils.degToRad(degrees)));
+  part.quaternion.copy(animatedParts.neutral.get(part)).multiply(
+    deflectQuatScratch.setFromAxisAngle(axis, THREE.MathUtils.degToRad(degrees)),
+  );
 }
 function animateAircraft(input, seconds) {
   // These pivots and axes match the control objects in the Lens Studio fighter scene.
-  deflect(animatedParts.leftAileron, -input.roll * 25, new THREE.Vector3(1, 0, 0));
-  deflect(animatedParts.rightAileron, input.roll * 25, new THREE.Vector3(1, 0, 0));
-  deflect(animatedParts.elevator, input.pitch * 25, new THREE.Vector3(1, 0, 0));
-  deflect(animatedParts.rudder, input.yaw * 25, new THREE.Vector3(0, 1, 0));
+  deflect(animatedParts.leftAileron, -input.roll * 25, deflectAxisX);
+  deflect(animatedParts.rightAileron, input.roll * 25, deflectAxisX);
+  deflect(animatedParts.elevator, input.pitch * 25, deflectAxisX);
+  deflect(animatedParts.rudder, input.yaw * 25, deflectAxisY);
   if (animatedParts.propeller) animatedParts.propeller.rotateY(-seconds * (4 + flight.throttle * 38));
 }
 const minEnginePitch = .55;
@@ -1896,6 +1919,7 @@ function ensureBoundsTree(mesh) {
 }
 
 function collectBulletColliders() {
+  if (!bulletCollidersDirty) return;
   bulletColliders.length = 0;
   if (!gameSettings.meshCollision) {
     roomContent.traverse((node) => {
@@ -1903,6 +1927,7 @@ function collectBulletColliders() {
       ensureBoundsTree(node);
       bulletColliders.push(node);
     });
+    bulletCollidersDirty = false;
     return;
   }
   for (const entry of environmentMeshes.values()) {
@@ -1915,6 +1940,7 @@ function collectBulletColliders() {
     ensureBoundsTree(node);
     bulletColliders.push(node);
   });
+  bulletCollidersDirty = false;
 }
 
 function bulletHitsEnvironment(shot, nextLocalPosition) {
@@ -1927,8 +1953,6 @@ function bulletHitsEnvironment(shot, nextLocalPosition) {
     const distance = impactDirection.length();
     if (distance < 1e-5) return null;
     impactDirection.multiplyScalar(1 / distance);
-    environmentMeshRoot.updateMatrixWorld(true);
-    roomContent.updateMatrixWorld(true);
 
     impactRaycaster.set(impactPrevWorld, impactDirection);
     impactRaycaster.far = distance + 0.02;
@@ -1970,11 +1994,16 @@ function fire() {
   nextBulletSpawnIndex += 1;
   const offset = local.clone().applyQuaternion(flight.rotation);
   const shot = new THREE.Mesh(bulletGeom, bulletMat);
-  // Lens Unit Sphere diameter 1 × world scale (3,3,12) cm ? meters.
+  // Lens Unit Sphere diameter 1 x world scale (3,3,12) cm -> meters.
   shot.scale.set(0.03, 0.03, 0.12);
   shot.position.copy(flight.position).add(offset);
   shot.quaternion.copy(flight.rotation);
-  shot.userData.velocity = flight.forward().multiplyScalar(bulletMuzzleSpeed).add(flight.velocity);
+  // Own vector — do not alias the shared forward scratch.
+  shot.userData.velocity = bulletFireVelocity
+    .copy(flight.forward())
+    .multiplyScalar(bulletMuzzleSpeed)
+    .add(flight.velocity)
+    .clone();
   shot.userData.age = 0;
   shot.userData.traveled = 0;
   shot.userData.prevPosition = shot.position.clone();
@@ -2013,11 +2042,16 @@ renderer.setAnimationLoop((time, frame) => {
       fire();
       lastFire = time;
     }
+    if (bullets.length) {
+      collectBulletColliders();
+      environmentMeshRoot.updateMatrixWorld(true);
+      roomContent.updateMatrixWorld(true);
+    }
     for (let i = bullets.length - 1; i >= 0; i -= 1) {
       const shot = bullets[i];
-      const nextPosition = shot.position.clone().addScaledVector(shot.userData.velocity, dt);
-      const stepDistance = shot.position.distanceTo(nextPosition);
-      const hit = bulletHitsEnvironment(shot, nextPosition);
+      bulletNextLocal.copy(shot.position).addScaledVector(shot.userData.velocity, dt);
+      const stepDistance = shot.position.distanceTo(bulletNextLocal);
+      const hit = bulletHitsEnvironment(shot, bulletNextLocal);
       if (hit) {
         spawnBulletImpact(hit.point);
         playSpace.remove(shot);
@@ -2025,7 +2059,7 @@ renderer.setAnimationLoop((time, frame) => {
         continue;
       }
       if (shot.userData.prevPosition) shot.userData.prevPosition.copy(shot.position);
-      shot.position.copy(nextPosition);
+      shot.position.copy(bulletNextLocal);
       shot.userData.traveled = (shot.userData.traveled ?? 0) + stepDistance;
       shot.userData.age += dt;
       if (shot.userData.age > bulletLifetimeSec) {
@@ -2168,6 +2202,7 @@ function updateEnvironmentMeshes(frame) {
       environmentMeshRoot.remove(entry.collider);
       disposeMeshGeometry(entry.mesh.geometry);
       environmentMeshes.delete(xrMesh);
+      markBulletCollidersDirty();
     }
   }
 
@@ -2187,12 +2222,14 @@ function updateEnvironmentMeshes(frame) {
       environmentMeshRoot.add(collider);
       entry = { mesh, collider, lastChangedTime: xrMesh.lastChangedTime };
       environmentMeshes.set(xrMesh, entry);
+      markBulletCollidersDirty();
     } else if (entry.lastChangedTime < xrMesh.lastChangedTime) {
       entry.lastChangedTime = xrMesh.lastChangedTime;
       const geometry = createEnvironmentMeshGeometry(xrMesh.vertices, xrMesh.indices);
       disposeMeshGeometry(entry.mesh.geometry);
       entry.mesh.geometry = geometry;
       entry.collider.geometry = geometry;
+      markBulletCollidersDirty();
     }
 
     const pose = frame.getPose(xrMesh.meshSpace, referenceSpace);

@@ -180,6 +180,7 @@ export function createUiButton(label, width = 1.6, height = 0.32) {
       }
     },
     setLabel(next) {
+      if (this.label === next) return;
       this.label = next;
       swapLayerMap(textShadow, makeButtonTextShadowTexture(next));
       // Force tint textures to rebuild for the new string.
@@ -327,10 +328,15 @@ export function createGamePanel({ onMenu }) {
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);
 
+  root.userData._throttlePercent = -1;
   root.userData.setThrottle = (throttle) => {
     const clamped = Math.max(0, Math.min(1, throttle));
     const percent = Math.round(clamped * 100);
-    throttleReadout.userData.uiButton.setLabel(`Throttle: ${percent}%`);
+    // Canvas text (esp. blurred shadow) is expensive — only rebuild on % change.
+    if (root.userData._throttlePercent !== percent) {
+      root.userData._throttlePercent = percent;
+      throttleReadout.userData.uiButton.setLabel(`Throttle: ${percent}%`);
+    }
     const fillWidth = Math.max(barWidth * clamped, 0.001);
     barFill.scale.x = fillWidth;
     barFill.position.x = -barWidth * 0.5 + fillWidth * 0.5;
