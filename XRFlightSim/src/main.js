@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.65";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.65";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.66";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.66";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1281,7 +1281,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.65`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.66`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1356,15 +1356,20 @@ function isXrStandardGamepad(gamepad) {
   return Boolean(gamepad && gamepad.mapping === "xr-standard");
 }
 function isBrowserGamepad(gamepad) {
-  // DualSense / Xbox / etc. use the browser Gamepad API ("standard").
-  // XR controllers use "xr-standard" and must not mute Bluetooth pads on AVP.
-  return Boolean(gamepad && gamepad.mapping === "standard" && gamepad.axes.length >= 4);
+  if (!gamepad || gamepad.axes.length < 4) return false;
+  // XR controllers must never be treated as a Bluetooth pad.
+  if (gamepad.mapping === "xr-standard") return false;
+  const id = gamepad.id || "";
+  if (/oculus|meta quest|\bhand\b|openxr/i.test(id)) return false;
+  // DualSense / Xbox / etc. Safari on visionOS often leaves mapping "" instead of
+  // "standard", which previously made Bluetooth pads invisible.
+  return gamepad.mapping === "standard" || gamepad.mapping === "" || gamepad.mapping == null;
 }
 function gamepadLabel(gamepad) {
   const id = (gamepad?.id || "Gamepad").replace(/\s+/g, " ").trim();
   if (/dualsense|dualshock|playstation|wireless controller/i.test(id)) return "PlayStation";
   if (/xbox|xinput/i.test(id)) return "Xbox";
-  return id.slice(0, 28);
+  return id.slice(0, 28) || "Gamepad";
 }
 function applyBrowserGamepad(value, pad) {
   value.yaw = stick(pad.axes[0] || 0);
@@ -1375,14 +1380,29 @@ function applyBrowserGamepad(value, pad) {
   // Options / Start-style buttons when present.
   value.pause ||= Boolean(pad.buttons[9]?.pressed || pad.buttons[8]?.pressed);
 }
+/** Prefer a real Bluetooth pad from navigator or XR inputSources (AVP). */
+function findBrowserGamepad(xrSources) {
+  const candidates = [];
+  for (const pad of navigator.getGamepads()) {
+    if (pad && isBrowserGamepad(pad)) candidates.push(pad);
+  }
+  for (const source of xrSources) {
+    if (source.hand) continue;
+    if (source.gamepad && isBrowserGamepad(source.gamepad)) {
+      candidates.push(source.gamepad);
+    }
+  }
+  if (!candidates.length) return null;
+  // Most recently updated pad wins (Safari keeps stale slots around).
+  candidates.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  return candidates[0];
+}
 function controls() {
   const value = { pitch: 0, roll: 0, yaw: 0, throttle: 0, fire: false, pause: false };
   const xrSources = renderer.xr.getSession()?.inputSources ?? [];
-  const connectedPads = [...navigator.getGamepads()].filter(Boolean);
-  // Prefer DualSense/Xbox whenever present. On Vision Pro, Safari may also expose the
-  // pad (or empty hand sources) through XR inputSources; the old hasXRControllers gate
-  // then skipped the standard pad and made input intermittent.
-  const browserPad = connectedPads.find(isBrowserGamepad) || null;
+  // Prefer DualSense/Xbox whenever present. On Vision Pro, Safari may expose the
+  // pad via getGamepads() and/or XR inputSources with a blank mapping.
+  const browserPad = findBrowserGamepad(xrSources);
   const controllerReadout = [];
   if (browserPad) {
     applyBrowserGamepad(value, browserPad);
@@ -1415,8 +1435,9 @@ function controls() {
         value.fire ||= indexTrigger > .55;
       }
     }
+    // Hands must not override an active Bluetooth pad (common AVP regression).
+    applyHandControls(value, controllerReadout);
   }
-  applyHandControls(value, controllerReadout);
   value.pitch += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0); value.roll += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0); value.yaw += (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0); value.throttle += (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0); value.fire ||= keys.has("Space");
   controllerLabel.textContent = controllerReadout.length
     ? `Sticks ${controllerReadout.join(" · ")}`
@@ -1786,8 +1807,8 @@ function bulletHitsEnvironment(shot, nextLocalPosition) {
 }
 function vibrateFireController() {
   try {
-    const browserPad = [...navigator.getGamepads()].find(isBrowserGamepad);
     const sources = renderer.xr.getSession()?.inputSources ?? [];
+    const browserPad = findBrowserGamepad(sources);
     const xrPad = sources.find((item) => item.handedness === "right" && isXrStandardGamepad(item.gamepad))?.gamepad
       ?? sources.find((item) => isXrStandardGamepad(item.gamepad))?.gamepad;
     const gamepad = browserPad || xrPad;
