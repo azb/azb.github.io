@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.56";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.56";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.57";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.57";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -353,6 +353,10 @@ const uiParentQuat = new THREE.Quaternion();
 const uiFaceQuat = new THREE.Quaternion();
 const uiFaceLocalZ = new THREE.Vector3(0, 0, 1);
 const uiFaceTowardPlayer = new THREE.Vector3();
+const uiFaceRight = new THREE.Vector3();
+const uiFaceUp = new THREE.Vector3();
+const uiFaceMatrix = new THREE.Matrix4();
+const uiWorldUp = new THREE.Vector3(0, 1, 0);
 /** @type {{ controller: THREE.Object3D, panel: THREE.Object3D, distance: number, offsetWorld: THREE.Vector3 } | null} */
 let uiDrag = null;
 let uiPointerBlocksFire = false;
@@ -378,14 +382,22 @@ function placeMenusInFrontOfPlayer() {
     UI_HAND_HEIGHT_MAX,
   );
 
-  // Tilt up: aim local +Z at the headset so the panel faces the player.
+  // Pitch toward the headset but keep world-up so the panel stays level (no roll).
   uiFaceTowardPlayer.subVectors(uiPanelWorld, uiHitPoint);
   if (uiFaceTowardPlayer.lengthSq() < 1e-8) {
     uiFaceTowardPlayer.copy(uiRayDir).multiplyScalar(-1);
   } else {
     uiFaceTowardPlayer.normalize();
   }
-  uiFaceQuat.setFromUnitVectors(uiFaceLocalZ, uiFaceTowardPlayer);
+  uiFaceRight.crossVectors(uiWorldUp, uiFaceTowardPlayer);
+  if (uiFaceRight.lengthSq() < 1e-8) {
+    uiFaceRight.set(1, 0, 0);
+  } else {
+    uiFaceRight.normalize();
+  }
+  uiFaceUp.crossVectors(uiFaceTowardPlayer, uiFaceRight).normalize();
+  uiFaceMatrix.makeBasis(uiFaceRight, uiFaceUp, uiFaceTowardPlayer);
+  uiFaceQuat.setFromRotationMatrix(uiFaceMatrix);
   if (playSpace.parent) {
     playSpace.getWorldQuaternion(uiParentQuat).invert();
     uiFaceQuat.premultiply(uiParentQuat);
@@ -918,7 +930,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.56`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.57`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
