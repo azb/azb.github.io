@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.70";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.70";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.71";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.71";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -671,12 +671,19 @@ const uiControllerEntries = [0, 1].map((index) => {
     entry.selectHeld = true;
     // In-flight: no UI rays/clicks — use the controller menu button to pause.
     if (uiMode === "game") return;
+    // Bluetooth pad owns menus — ignore hand/controller ray clicks.
+    if (findBrowserGamepad(renderer.xr.getSession()?.inputSources ?? [])) return;
     // Press on down; click action runs on selectend if still aimed at the button.
     if (tryUiButtonPress(controller, entry)) return;
     tryStartUiDrag(controller);
   });
   controller.addEventListener("selectend", () => {
     entry.selectHeld = false;
+    if (findBrowserGamepad(renderer.xr.getSession()?.inputSources ?? [])) {
+      clearUiButtonPress(entry);
+      if (uiDrag?.controller === controller) uiDrag = null;
+      return;
+    }
     tryUiButtonRelease(controller, entry);
     if (uiDrag?.controller === controller) uiDrag = null;
   });
@@ -1031,6 +1038,22 @@ function updateUiPanelInteraction() {
       entry.laser.visible = false;
       entry.triggerWasDown = isControllerTriggerDown(entry);
     }
+    return;
+  }
+
+  // Gamepad menu nav — hide hand/controller pointer rays.
+  const usingBrowserPad = Boolean(
+    findBrowserGamepad(renderer.xr.getSession()?.inputSources ?? []),
+  );
+  if (usingBrowserPad) {
+    uiDrag = null;
+    for (const entry of uiControllerEntries) {
+      entry.laser.visible = false;
+      entry.triggerWasDown = false;
+      if (entry.pressedButton) clearUiButtonPress(entry);
+    }
+    setUiButtonHovers(draggableUiPanels(), gamepadMenuFocusedButton);
+    uiPointerBlocksFire = uiMode !== "game";
     return;
   }
 
@@ -1459,7 +1482,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.70`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.71`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
