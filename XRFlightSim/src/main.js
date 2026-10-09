@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.64";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.64";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.65";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.65";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -188,7 +188,7 @@ function createControlsPanel() {
   callout(panel, "INCREASE THROTTLE", new THREE.Vector3(1.04, .55, .13), R(right.grip));
   callout(panel, "FIRE", new THREE.Vector3(.94, .79, .13), R(right.trigger));
   callout(panel, "ROLL / PITCH", new THREE.Vector3(1.04, -.53, .13), R(right.stick));
-  panel.add(worldText("OK · PRESS RIGHT TRIGGER", new THREE.Vector3(0, -.9, .13), .22));
+  panel.add(worldText("OK · A OR POINT + TRIGGER", new THREE.Vector3(0, -.9, .13), .22));
   return panel;
 }
 let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 0.55, -1.4); playSpace.add(controlsPanel);
@@ -325,7 +325,7 @@ settingsPanel.position.set(0, 0.55, -1.4);
 settingsPanel.visible = false;
 playSpace.add(settingsPanel);
 
-const controlsOkButton = createUiButton("OK", 1.35, 0.32);
+const controlsOkButton = createUiButton("OK · A", 1.35, 0.32);
 controlsOkButton.position.set(0, -1.2, 0.06);
 controlsOkButton.userData.uiButton.onClick = () => {
   if (returnToPauseAfterControls) {
@@ -335,6 +335,28 @@ controlsOkButton.userData.uiButton.onClick = () => {
   }
   dismissControlsToGame();
 };
+let controlsOkButtonWasPressed = false;
+
+/** Right-controller A (xr-standard button 4) confirms the controls screen. */
+function pollControlsOkShortcut() {
+  if (uiMode !== "controls") {
+    controlsOkButtonWasPressed = false;
+    return;
+  }
+  let aDown = false;
+  const session = renderer.xr.getSession();
+  if (session) {
+    for (const source of session.inputSources) {
+      if (source.hand || source.handedness !== "right") continue;
+      const button = source.gamepad?.buttons?.[4];
+      aDown ||= Boolean(button?.pressed) || (button?.value ?? 0) > 0.5;
+    }
+  }
+  if (aDown && !controlsOkButtonWasPressed) {
+    controlsOkButton.userData.uiButton.onClick?.();
+  }
+  controlsOkButtonWasPressed = aDown;
+}
 function attachControlsOkButton(panel) {
   if (!panel || controlsOkButton.parent === panel) return;
   if (controlsOkButton.parent) controlsOkButton.parent.remove(controlsOkButton);
@@ -1259,7 +1281,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.64`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.65`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1820,6 +1842,7 @@ renderer.setAnimationLoop((time, frame) => {
   const dt = (time - previous) / 1000;
   previous = time;
   updateUiPanelInteraction();
+  pollControlsOkShortcut();
   const input = controls();
   if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused);
   pauseButtonWasPressed = input.pause;
