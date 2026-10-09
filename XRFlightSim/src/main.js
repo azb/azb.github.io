@@ -1,8 +1,9 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.72";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.72";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.0";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.0";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.0";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -16,6 +17,12 @@ const controllerLabel = document.querySelector("#controllers");
 const modelLabel = document.querySelector("#model");
 const vrButton = document.querySelector("#enter-vr");
 const resetButton = document.querySelector("#reset");
+const mpHostButton = document.querySelector("#mp-host");
+const mpJoinButton = document.querySelector("#mp-join");
+const mpLeaveButton = document.querySelector("#mp-leave");
+const mpCodeInput = document.querySelector("#mp-code");
+const mpStatusLabel = document.querySelector("#mp-status");
+const mpHudLabel = document.querySelector("#mp-hud");
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
 const assetUrl = (path) => new URL(`../assets/${path}`, import.meta.url).href;
@@ -269,12 +276,14 @@ function showUiMode(mode) {
   const showGame = mode === "game";
   const showPause = mode === "pause";
   const showSettings = mode === "settings";
+  const showMultiplayer = mode === "multiplayer";
   controlsVisible = showControls;
   if (controlsPanel) controlsPanel.visible = showControls;
   if (controlsOkButton) controlsOkButton.visible = showControls;
   if (gamePanel) gamePanel.visible = showGame;
   if (pausePanel) pausePanel.visible = showPause;
   if (settingsPanel) settingsPanel.visible = showSettings;
+  if (multiplayerPanel) multiplayerPanel.visible = showMultiplayer;
   const shouldPause = mode !== "game";
   if (shouldPause !== simulationPaused) {
     simulationPaused = shouldPause;
@@ -284,7 +293,9 @@ function showUiMode(mode) {
         ? "Settings"
         : mode === "controls"
           ? "Controls"
-          : "Simulation paused";
+          : mode === "multiplayer"
+            ? "Multiplayer"
+            : "Simulation paused";
     } else {
       startEngineSound();
       statusLabel.textContent = renderer.xr.isPresenting
@@ -296,8 +307,9 @@ function showUiMode(mode) {
     setUiButtonHovers(draggableUiPanels(), null);
     gamePanel?.userData.setThrottle?.(flight?.throttle ?? 0);
   }
+  if (showMultiplayer) refreshMultiplayerUi();
   // Snap to hand height in front of the player whenever a menu/HUD opens.
-  if (mode === "controls" || mode === "pause" || mode === "settings" || mode === "game") {
+  if (mode === "controls" || mode === "pause" || mode === "settings" || mode === "game" || mode === "multiplayer") {
     placeMenusInFrontOfPlayer();
   }
   applyGameSettings();
@@ -313,6 +325,7 @@ let pausePanel = createPauseMenu({
     settingsPanel.userData.refreshSettingsLabels?.();
     showUiMode("settings");
   },
+  onMultiplayer: () => showUiMode("multiplayer"),
   onRestart: () => {
     flight.reset();
     showUiMode("game");
@@ -347,6 +360,16 @@ const settingsPanel = createSettingsMenu(gameSettings, {
 settingsPanel.position.set(0, 0.55, -1.4);
 settingsPanel.visible = false;
 playSpace.add(settingsPanel);
+
+const multiplayerPanel = createMultiplayerMenu({
+  onHost: () => hostMultiplayerRoom(),
+  onJoin: () => joinMultiplayerRoom(),
+  onLeave: () => leaveMultiplayerRoom(),
+  onBack: () => showUiMode("pause"),
+});
+multiplayerPanel.position.set(0, 0.55, -1.4);
+multiplayerPanel.visible = false;
+playSpace.add(multiplayerPanel);
 
 const controlsOkButton = createUiButton("OK · A", 1.35, 0.32);
 controlsOkButton.position.set(0, -1.2, 0.06);
@@ -398,6 +421,7 @@ let gamepadMenuNavNextMs = 0;
 function activeMenuRoot() {
   if (uiMode === "pause") return pausePanel;
   if (uiMode === "settings") return settingsPanel;
+  if (uiMode === "multiplayer") return multiplayerPanel;
   if (uiMode === "controls") return controlsPanel;
   return null;
 }
@@ -638,7 +662,7 @@ function placeMenusInFrontOfPlayer() {
   uiTempWorld.copy(uiHitPoint);
   playSpace.worldToLocal(uiTempWorld);
 
-  for (const panel of [controlsPanel, pausePanel, settingsPanel, gamePanel]) {
+  for (const panel of [controlsPanel, pausePanel, settingsPanel, multiplayerPanel, gamePanel]) {
     if (!panel) continue;
     panel.position.copy(uiTempWorld);
     panel.quaternion.copy(uiFaceQuat);
@@ -926,6 +950,7 @@ function draggableUiPanels() {
   if (gamePanel?.visible) panels.push(gamePanel);
   if (pausePanel?.visible) panels.push(pausePanel);
   if (settingsPanel?.visible) panels.push(settingsPanel);
+  if (multiplayerPanel?.visible) panels.push(multiplayerPanel);
   return panels;
 }
 
@@ -936,7 +961,8 @@ function uiRootFromHit(object) {
       node === controlsPanel ||
       node === gamePanel ||
       node === pausePanel ||
-      node === settingsPanel
+      node === settingsPanel ||
+      node === multiplayerPanel
     ) {
       return node;
     }
@@ -1188,6 +1214,197 @@ function createAircraft() {
 let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(aircraft);
 const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, elevator: null, rudder: null, neutral: new Map() };
 const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.23");
+
+/** @type {Map<string, { root: THREE.Group, targetPos: THREE.Vector3, targetQuat: THREE.Quaternion }>} */
+const remotePlanes = new Map();
+const PLANE_NET_INTERVAL_MS = 66;
+let lastPlaneNetMs = 0;
+const net = new FlightMultiplayerSession();
+
+function createRemotePlaneMesh() {
+  const mesh = aircraft.clone(true);
+  mesh.traverse((node) => {
+    if (!node.isMesh) return;
+    node.castShadow = false;
+    node.receiveShadow = false;
+    if (node.material) {
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      const next = mats.map((mat) => {
+        const copy = mat.clone();
+        if (copy.color) copy.color.offsetHSL(0.08, 0.15, 0.08);
+        return copy;
+      });
+      node.material = Array.isArray(node.material) ? next : next[0];
+    }
+  });
+  return mesh;
+}
+
+function ensureRemotePlane(playerId) {
+  let entry = remotePlanes.get(playerId);
+  if (entry) return entry;
+  const root = new THREE.Group();
+  root.name = `RemotePlane:${playerId.slice(0, 6)}`;
+  root.add(createRemotePlaneMesh());
+  playSpace.add(root);
+  entry = {
+    root,
+    targetPos: new THREE.Vector3(),
+    targetQuat: new THREE.Quaternion(),
+  };
+  remotePlanes.set(playerId, entry);
+  return entry;
+}
+
+function removeRemotePlane(playerId) {
+  const entry = remotePlanes.get(playerId);
+  if (!entry) return;
+  playSpace.remove(entry.root);
+  remotePlanes.delete(playerId);
+}
+
+function clearRemotePlanes() {
+  for (const id of [...remotePlanes.keys()]) removeRemotePlane(id);
+}
+
+function applyRemotePlanePose(playerId, plane) {
+  if (!playerId || playerId === net.uid) return;
+  const entry = ensureRemotePlane(playerId);
+  entry.targetPos.set(plane.pos.x, plane.pos.y, plane.pos.z);
+  entry.targetQuat.set(plane.rot.x, plane.rot.y, plane.rot.z, plane.rot.w).normalize();
+  if (!entry.root.userData.placed) {
+    entry.root.position.copy(entry.targetPos);
+    entry.root.quaternion.copy(entry.targetQuat);
+    entry.root.userData.placed = true;
+  }
+}
+
+function updateRemotePlanes(dt) {
+  const alpha = 1 - Math.exp(-12 * Math.max(dt, 0));
+  for (const entry of remotePlanes.values()) {
+    entry.root.position.lerp(entry.targetPos, alpha);
+    entry.root.quaternion.slerp(entry.targetQuat, alpha);
+  }
+}
+
+function broadcastLocalPlane(time) {
+  if (!net.active || simulationPaused) return;
+  if (time - lastPlaneNetMs < PLANE_NET_INTERVAL_MS) return;
+  lastPlaneNetMs = time;
+  net.broadcastPlane({
+    position: flight.position,
+    rotation: flight.rotation,
+    throttle: flight.throttle,
+  });
+}
+
+function multiplayerStatusText() {
+  if (!net.active) return "Multiplayer: solo";
+  const links = net.linkCount();
+  const peers = Math.max(0, net.roster.length - 1);
+  return `MP ${net.roomId}${net.isHost ? " (host)" : ""} · ${peers} peer${peers === 1 ? "" : "s"} · ${links} link${links === 1 ? "" : "s"}`;
+}
+
+function refreshMultiplayerUi() {
+  const text = multiplayerStatusText();
+  if (mpStatusLabel) mpStatusLabel.textContent = text;
+  if (mpHudLabel) mpHudLabel.textContent = text;
+  multiplayerPanel?.userData.setStatus?.(text);
+  if (mpLeaveButton) mpLeaveButton.disabled = !net.active;
+  if (mpHostButton) mpHostButton.disabled = net.active;
+  if (mpJoinButton) mpJoinButton.disabled = net.active;
+  if (mpCodeInput && net.roomId) mpCodeInput.value = net.roomId;
+}
+
+async function hostMultiplayerRoom() {
+  try {
+    refreshMultiplayerUi();
+    if (mpStatusLabel) mpStatusLabel.textContent = "Hosting…";
+    const code = await net.createRoom();
+    if (mpCodeInput) mpCodeInput.value = code;
+    try {
+      const url = new URL(location.href);
+      url.searchParams.set("room", code);
+      history.replaceState(null, "", url);
+    } catch { /* ignore */ }
+    refreshMultiplayerUi();
+    statusLabel.textContent = `Hosted room ${code}`;
+  } catch (error) {
+    const msg = firebaseErrorMessage(error);
+    if (mpStatusLabel) mpStatusLabel.textContent = msg;
+    statusLabel.textContent = msg;
+  }
+}
+
+async function joinMultiplayerRoom(rawCode) {
+  const fromInput = mpCodeInput?.value;
+  const fromUrl = new URL(location.href).searchParams.get("room");
+  const code = normalizeRoomCode(rawCode || fromInput || fromUrl || "");
+  if (code.length < 4) {
+    const msg = "Enter a 4-character room code (or use ?room=CODE)";
+    if (mpStatusLabel) mpStatusLabel.textContent = msg;
+    multiplayerPanel?.userData.setStatus?.(msg);
+    return;
+  }
+  try {
+    if (mpStatusLabel) mpStatusLabel.textContent = `Joining ${code}…`;
+    await net.joinRoom(code);
+    if (mpCodeInput) mpCodeInput.value = code;
+    try {
+      const url = new URL(location.href);
+      url.searchParams.set("room", code);
+      history.replaceState(null, "", url);
+    } catch { /* ignore */ }
+    refreshMultiplayerUi();
+    statusLabel.textContent = `Joined room ${code}`;
+  } catch (error) {
+    const msg = firebaseErrorMessage(error);
+    if (mpStatusLabel) mpStatusLabel.textContent = msg;
+    statusLabel.textContent = msg;
+  }
+}
+
+async function leaveMultiplayerRoom() {
+  await net.leave();
+  clearRemotePlanes();
+  try {
+    const url = new URL(location.href);
+    url.searchParams.delete("room");
+    history.replaceState(null, "", url);
+  } catch { /* ignore */ }
+  refreshMultiplayerUi();
+  statusLabel.textContent = "Left multiplayer room";
+}
+
+net.on({
+  playerName: () => "Pilot",
+  presenting: () => renderer.xr.isPresenting,
+  onRoster: () => refreshMultiplayerUi(),
+  onRoom: () => refreshMultiplayerUi(),
+  onLink: () => refreshMultiplayerUi(),
+  onPeerClose: (id) => {
+    removeRemotePlane(id);
+    refreshMultiplayerUi();
+  },
+  onPlane: (from, plane) => applyRemotePlanePose(plane.playerId || from, plane),
+  onLeave: () => {
+    clearRemotePlanes();
+    refreshMultiplayerUi();
+  },
+});
+
+mpHostButton?.addEventListener("click", () => hostMultiplayerRoom());
+mpJoinButton?.addEventListener("click", () => joinMultiplayerRoom());
+mpLeaveButton?.addEventListener("click", () => leaveMultiplayerRoom());
+mpCodeInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") joinMultiplayerRoom();
+});
+const bootRoom = new URL(location.href).searchParams.get("room");
+if (bootRoom) {
+  if (mpCodeInput) mpCodeInput.value = normalizeRoomCode(bootRoom);
+  joinMultiplayerRoom(bootRoom).catch(() => {});
+}
+refreshMultiplayerUi();
 
 const spawnPosition = new THREE.Vector3(0, 1.5, -7);
 const flightForwardScratch = new THREE.Vector3();
@@ -1505,7 +1722,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.72`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.0`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -2179,6 +2396,8 @@ renderer.setAnimationLoop((time, frame) => {
   }
   planeRoot.position.copy(flight.position);
   planeRoot.quaternion.copy(flight.rotation);
+  broadcastLocalPlane(time);
+  updateRemotePlanes(dt);
   updateWingVortex(dt);
   applyDesktopCamera();
   updateOffScreenPlaneArrow();

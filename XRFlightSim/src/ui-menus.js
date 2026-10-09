@@ -263,14 +263,15 @@ function createMenuPanel(title, width, height) {
   return root;
 }
 
-export function createPauseMenu({ onResume, onControls, onSettings, onRestart }) {
+export function createPauseMenu({ onResume, onControls, onSettings, onMultiplayer, onRestart }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Simulation Paused", 2.4 * s, 2.55 * s);
+  const root = createMenuPanel("Simulation Paused", 2.4 * s, 2.85 * s);
   const buttons = [
-    { label: "Resume", y: 0.55 * s, onClick: onResume },
-    { label: "Controls", y: 0.15 * s, onClick: onControls },
-    { label: "Settings", y: -0.25 * s, onClick: onSettings },
-    { label: "Restart", y: -0.65 * s, onClick: onRestart },
+    { label: "Resume", y: 0.75 * s, onClick: onResume },
+    { label: "Controls", y: 0.35 * s, onClick: onControls },
+    { label: "Settings", y: -0.05 * s, onClick: onSettings },
+    { label: "Multiplayer", y: -0.45 * s, onClick: onMultiplayer },
+    { label: "Restart", y: -0.85 * s, onClick: onRestart },
   ];
   for (const spec of buttons) {
     const button = createUiButton(spec.label, 1.7 * s, 0.34 * s);
@@ -278,6 +279,34 @@ export function createPauseMenu({ onResume, onControls, onSettings, onRestart })
     button.userData.uiButton.onClick = spec.onClick;
     root.add(button);
   }
+  return root;
+}
+
+/** In-XR multiplayer lobby: host / join / leave + status label. */
+export function createMultiplayerMenu({ onHost, onJoin, onLeave, onBack }) {
+  const s = UI_MENU_SCALE;
+  const root = createMenuPanel("Multiplayer", 2.6 * s, 2.7 * s);
+  const status = createUiButton("Solo · Host or Join", 2.2 * s, 0.3 * s);
+  status.position.set(0, 0.7 * s, 0.02 * s);
+  status.userData.uiButton.onClick = null;
+  root.add(status);
+
+  const buttons = [
+    { label: "Host Room", y: 0.25 * s, onClick: onHost },
+    { label: "Join (code in URL ?room=)", y: -0.15 * s, onClick: onJoin },
+    { label: "Leave Room", y: -0.55 * s, onClick: onLeave },
+    { label: "Back", y: -0.95 * s, onClick: onBack },
+  ];
+  for (const spec of buttons) {
+    const button = createUiButton(spec.label, 2.2 * s, 0.34 * s);
+    button.position.set(0, spec.y, 0.02 * s);
+    button.userData.uiButton.onClick = spec.onClick;
+    root.add(button);
+  }
+
+  root.userData.setStatus = (text) => {
+    status.userData.uiButton.setLabel(text || "Solo");
+  };
   return root;
 }
 
