@@ -207,7 +207,8 @@ export function createGamePanel({ onMenu }) {
   barFill.renderOrder = 8;
   root.add(barFill);
 
-  const menu = createUiButton("Menu", 1.35 * s, 0.32 * s);
+  // Rays are off while flying — label the pause hint (left X), not a click target.
+  const menu = createUiButton("Press X for Menu", 1.85 * s, 0.32 * s);
   menu.position.set(0, -0.48 * s, 0.02 * s);
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);

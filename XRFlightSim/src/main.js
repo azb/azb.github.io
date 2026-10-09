@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.55";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.55";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.56";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.56";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -918,7 +918,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.55`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.56`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
