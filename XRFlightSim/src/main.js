@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.58";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.58";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.59";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.59";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -475,6 +475,8 @@ const handSteer = {
   origin: new THREE.Vector3(),
   pitch: 0,
   roll: 0,
+  /** Absolute 0–1 throttle from pinch distance (null when inactive). */
+  throttle: null,
 };
 let handFirePinching = false;
 
@@ -544,6 +546,7 @@ function onHandPinchStart(hand) {
     handSteer.hand = hand;
     handSteer.pitch = 0;
     handSteer.roll = 0;
+    handSteer.throttle = 0;
     handJoystickVisual.visible = !simulationPaused && uiMode === "game";
     handJoystickOriginMesh.position.copy(handSteer.origin);
     handJoystickTipMesh.position.copy(handSteer.origin);
@@ -559,6 +562,7 @@ function onHandPinchEnd(hand) {
     handSteer.hand = null;
     handSteer.pitch = 0;
     handSteer.roll = 0;
+    handSteer.throttle = null;
     handJoystickVisual.visible = false;
   }
   if (handedness === "left") {
@@ -588,11 +592,13 @@ function updateHandSteerAxes() {
   if (!handSteer.active || !handSteer.hand) {
     handSteer.pitch = 0;
     handSteer.roll = 0;
+    handSteer.throttle = null;
     return;
   }
   if (!getHandPinchPoint(handSteer.hand, handPinchTip)) {
     handSteer.pitch = 0;
     handSteer.roll = 0;
+    handSteer.throttle = 0;
     return;
   }
 
@@ -606,6 +612,12 @@ function updateHandSteerAxes() {
   // Match right-stick mapping: +roll right, +pitch when pulling up.
   handSteer.roll = stick(clamp(right, -1, 1));
   handSteer.pitch = stick(clamp(up, -1, 1));
+  // Absolute throttle from how far the pinch is from the start point.
+  handSteer.throttle = stick(clamp(
+    handJoystickDelta.length() / HAND_JOYSTICK_RADIUS,
+    0,
+    1,
+  ));
 }
 
 function applyHandControls(value, readout) {
@@ -614,8 +626,11 @@ function applyHandControls(value, readout) {
   if (handSteer.active) {
     value.roll += handSteer.roll;
     value.pitch += handSteer.pitch;
+    if (handSteer.throttle != null) {
+      value.throttleAbsolute = handSteer.throttle;
+    }
     readout.push(
-      `R pinch ${handSteer.roll.toFixed(2)},${handSteer.pitch.toFixed(2)}`,
+      `R pinch ${handSteer.roll.toFixed(2)},${handSteer.pitch.toFixed(2)} thr ${Math.round((handSteer.throttle ?? 0) * 100)}%`,
     );
   }
   if (handFirePinching) {
@@ -852,7 +867,13 @@ class FlightModel {
   reset() { this.position = spawnPosition.clone(); this.rotation = new THREE.Quaternion(); this.throttle = 0; this.velocity = new THREE.Vector3(); }
   forward() { return new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation).normalize(); }
   step(input, seconds) {
-    const dt = clamp(seconds, 0, .1); this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
+    const dt = clamp(seconds, 0, .1);
+    if (typeof input.throttleAbsolute === "number") {
+      // Hand pinch: distance from origin sets throttle directly.
+      this.throttle = clamp(input.throttleAbsolute, 0, 1);
+    } else {
+      this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
+    }
     // Match Lens Scene.scene GameControllerMovement: minSpeed 0, maxSpeed 500,
     // turnSpeed 240, pitch/roll/yaw 70. Keep WebXR translation at 0..100 * scale
     // (Lens cm-ish 500 ≈ same feel after worldSpeedScale), but use the Lens
@@ -1110,7 +1131,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.58`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.59`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
