@@ -138,6 +138,66 @@ export function createPauseMenu({ onResume, onControls, onSettings, onRestart })
   return root;
 }
 
+/** In-flight HUD matching Lens Game Panel: throttle readout + Menu → pause. */
+export function createGamePanel({ onMenu }) {
+  const root = createMenuPanel("Flight", 2.1, 1.35);
+  root.name = "Game Panel";
+
+  const throttleReadout = createUiButton("Throttle: 0%", 1.7, 0.34);
+  throttleReadout.position.set(0, 0.12, 0.02);
+  // Label only — findUiButton requires onClick, so leave it null.
+  throttleReadout.userData.uiButton.onClick = null;
+  root.add(throttleReadout);
+
+  const barWidth = 1.55;
+  const barHeight = 0.12;
+  const barBg = new THREE.Mesh(
+    new THREE.PlaneGeometry(barWidth, barHeight),
+    new THREE.MeshBasicMaterial({
+      color: 0x1a3a52,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  barBg.position.set(0, -0.18, 0.015);
+  barBg.renderOrder = 7;
+  root.add(barBg);
+
+  const barFill = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, barHeight * 0.7),
+    new THREE.MeshBasicMaterial({
+      color: 0x7fd4ff,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  barFill.position.set(0, -0.18, 0.02);
+  barFill.renderOrder = 8;
+  root.add(barFill);
+
+  const menu = createUiButton("Menu", 1.35, 0.32);
+  menu.position.set(0, -0.48, 0.02);
+  menu.userData.uiButton.onClick = onMenu;
+  root.add(menu);
+
+  root.userData.setThrottle = (throttle) => {
+    const clamped = Math.max(0, Math.min(1, throttle));
+    const percent = Math.round(clamped * 100);
+    throttleReadout.userData.uiButton.setLabel(`Throttle: ${percent}%`);
+    const fillWidth = Math.max(barWidth * clamped, 0.001);
+    barFill.scale.x = fillWidth;
+    barFill.position.x = -barWidth * 0.5 + fillWidth * 0.5;
+    barFill.visible = clamped > 0.001;
+  };
+  root.userData.setThrottle(0);
+
+  return root;
+}
+
 export function createSettingsMenu(settings, { onBack, onChange }) {
   const root = createMenuPanel("Settings", 2.6, 2.85);
   root.userData.settingsButtons = {};

@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.46";
-import { createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings } from "./ui-menus.js?v=0.4.46";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.47";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings } from "./ui-menus.js?v=0.4.47";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -245,11 +245,13 @@ function dismissControlsToGame() {
 function showUiMode(mode) {
   uiMode = mode;
   const showControls = mode === "controls";
+  const showGame = mode === "game";
   const showPause = mode === "pause";
   const showSettings = mode === "settings";
   controlsVisible = showControls;
   if (controlsPanel) controlsPanel.visible = showControls;
   if (controlsOkButton) controlsOkButton.visible = showControls;
+  if (gamePanel) gamePanel.visible = showGame;
   if (pausePanel) pausePanel.visible = showPause;
   if (settingsPanel) settingsPanel.visible = showSettings;
   const shouldPause = mode !== "game";
@@ -268,6 +270,9 @@ function showUiMode(mode) {
         ? "Third-person RC flight"
         : "Desktop preview · controller or keyboard";
     }
+  }
+  if (showGame) {
+    gamePanel?.userData.setThrottle?.(flight?.throttle ?? 0);
   }
   applyGameSettings();
 }
@@ -290,6 +295,13 @@ let pausePanel = createPauseMenu({
 pausePanel.position.set(0, 1.55, -2.4);
 pausePanel.visible = false;
 playSpace.add(pausePanel);
+
+const gamePanel = createGamePanel({
+  onMenu: () => showUiMode("pause"),
+});
+gamePanel.position.set(0, 1.55, -2.4);
+gamePanel.visible = false;
+playSpace.add(gamePanel);
 
 const settingsPanel = createSettingsMenu(gameSettings, {
   onBack: () => showUiMode("pause"),
@@ -381,6 +393,7 @@ const uiControllerEntries = [0, 1].map((index) => {
 function draggableUiPanels() {
   const panels = [];
   if (controlsPanel?.visible) panels.push(controlsPanel);
+  if (gamePanel?.visible) panels.push(gamePanel);
   if (pausePanel?.visible) panels.push(pausePanel);
   if (settingsPanel?.visible) panels.push(settingsPanel);
   return panels;
@@ -389,7 +402,14 @@ function draggableUiPanels() {
 function uiRootFromHit(object) {
   let node = object;
   while (node) {
-    if (node === controlsPanel || node === pausePanel || node === settingsPanel) return node;
+    if (
+      node === controlsPanel ||
+      node === gamePanel ||
+      node === pausePanel ||
+      node === settingsPanel
+    ) {
+      return node;
+    }
     node = node.parent;
   }
   return null;
@@ -821,7 +841,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.46`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.47`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1421,6 +1441,9 @@ renderer.setAnimationLoop((time, frame) => {
   calibratePlaySpaceHeight(frame);
   speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`;
   throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`;
+  if (uiMode === "game") {
+    gamePanel?.userData.setThrottle?.(flight.throttle);
+  }
   if (!simulationPaused) updateEngineSound();
   renderer.render(scene, camera);
 });
