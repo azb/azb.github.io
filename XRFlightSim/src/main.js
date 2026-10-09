@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.71";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.71";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.72";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.72";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -258,7 +258,9 @@ const UI_HEAD_FALLBACK_DROP = 0.45;
 /** Keep panel between these offsets below the headset (no absolute floor clamps). */
 const UI_BELOW_HEAD_MIN = 0.18;
 const UI_BELOW_HEAD_MAX = 0.9;
-/** Re-place once hands/controllers report a pose after XR starts. */
+/** Viewer pose below this (local-floor meters) is treated as not ready yet. */
+const UI_HEAD_READY_MIN_Y = 0.35;
+/** Re-place once hands/controllers report a pose after XR starts / play-space shifts. */
 let uiAwaitingHandAnchor = false;
 
 function showUiMode(mode) {
@@ -536,29 +538,40 @@ const uiWorldUp = new THREE.Vector3(0, 1, 0);
 let uiDrag = null;
 let uiPointerBlocksFire = false;
 
+/** True when a tracked pose looks usable (not stuck at the origin). */
+function isPlausibleTrackedPose(worldPos, headY) {
+  if (!Number.isFinite(worldPos.y)) return false;
+  if (Math.abs(worldPos.y - headY) > 1.5) return false;
+  // Reject the default zero pose before XR joints/controllers stream.
+  const awayFromOrigin = worldPos.lengthSq() > 0.01;
+  const notCoincidentWithHead = Math.abs(worldPos.y - headY) > 0.04
+    || Math.hypot(worldPos.x - uiPanelWorld.x, worldPos.z - uiPanelWorld.z) > 0.08;
+  return awayFromOrigin && notCoincidentWithHead;
+}
+
 /** Average Y of tracked controllers / hand wrists near the headset. */
 function sampleTrackedHandHeight(headY) {
   let sumY = 0;
   let count = 0;
   for (let i = 0; i < 2; i += 1) {
-    const controller = renderer.xr.getController(i);
-    const source = controller?.userData?.inputSource;
-    if (source) {
-      const grip = renderer.xr.getControllerGrip?.(i) ?? controller;
+    // Prefer grip; fall back to target-ray. Do not require inputSource — Quest
+    // often has a pose a frame or two before the connected event lands.
+    const grip = renderer.xr.getControllerGrip?.(i) ?? renderer.xr.getController(i);
+    if (grip) {
       grip.updateMatrixWorld(true);
       grip.getWorldPosition(uiHitPoint);
-      if (Math.abs(uiHitPoint.y - headY) <= 1.25) {
+      if (isPlausibleTrackedPose(uiHitPoint, headY)) {
         sumY += uiHitPoint.y;
         count += 1;
       }
     }
     const hand = renderer.xr.getHand(i);
-    if (!hand?.userData?.inputSource) continue;
+    if (!hand) continue;
     const wrist = hand.joints?.wrist ?? hand.joints?.["index-finger-metacarpal"];
     if (!wrist) continue;
     wrist.updateMatrixWorld?.(true);
     wrist.getWorldPosition(uiHitPoint);
-    if (Math.abs(uiHitPoint.y - headY) <= 1.25) {
+    if (isPlausibleTrackedPose(uiHitPoint, headY)) {
       sumY += uiHitPoint.y;
       count += 1;
     }
@@ -581,12 +594,20 @@ function placeMenusInFrontOfPlayer() {
   else uiRayDir.normalize();
 
   const headY = uiPanelWorld.y;
+  // Wait for a real viewer pose — placing against the pre-XR origin puts menus underground.
+  if (renderer.xr.isPresenting && headY < UI_HEAD_READY_MIN_Y) {
+    uiAwaitingHandAnchor = true;
+    return;
+  }
+
   const trackedHandY = sampleTrackedHandHeight(headY);
   // Prefer real hand/controller height so Quest / Vision Pro match; never use
   // absolute floor clamps (AVP local space often puts those under the floor).
   let panelY = trackedHandY != null ? trackedHandY : headY - UI_HEAD_FALLBACK_DROP;
   panelY = clamp(panelY, headY - UI_BELOW_HEAD_MAX, headY - UI_BELOW_HEAD_MIN);
+  // Keep refining until hands/controllers report; head fallback is only temporary.
   if (trackedHandY != null) uiAwaitingHandAnchor = false;
+  else if (renderer.xr.isPresenting) uiAwaitingHandAnchor = true;
 
   uiHitPoint.copy(uiPanelWorld).addScaledVector(uiRayDir, UI_MENU_DISTANCE);
   uiHitPoint.y = panelY;
@@ -612,6 +633,8 @@ function placeMenusInFrontOfPlayer() {
     uiFaceQuat.premultiply(uiParentQuat);
   }
 
+  // Convert with the current playSpace shift so later floor calibration cannot
+  // leave menus stranded under the floor.
   uiTempWorld.copy(uiHitPoint);
   playSpace.worldToLocal(uiTempWorld);
 
@@ -1482,7 +1505,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.71`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.72`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -2238,6 +2261,9 @@ function calibratePlaySpaceHeight(frame) {
     playSpace.position.y = 0;
   }
   playSpaceHeightReady = true;
+  // Play-space Y shift moves every child — re-anchor menus to hand/head height.
+  uiAwaitingHandAnchor = true;
+  if (uiMode !== "game") placeMenusInFrontOfPlayer();
 }
 
 /** Wireframe overlay for WebXR environment meshes (Quest Space Setup). */
