@@ -369,13 +369,12 @@ function updateUiPanelInteraction() {
       uiTempWorld.copy(uiHitPoint).add(uiDrag.offsetWorld);
       playSpace.worldToLocal(uiTempWorld);
       uiDrag.panel.position.copy(uiTempWorld);
+      // Match headset orientation so panel +Z faces the user (lookAt aims -Z and flipped the UI).
       const viewCam = engineListenerObject();
-      if (viewCam) {
-        viewCam.getWorldPosition(uiLookTarget);
-        uiDrag.panel.getWorldPosition(uiPanelWorld);
-        uiLookTarget.y = uiPanelWorld.y;
-        uiDrag.panel.lookAt(uiLookTarget);
-        uiDrag.panel.rotateY(Math.PI);
+      if (viewCam && uiDrag.panel.parent) {
+        viewCam.getWorldQuaternion(uiRayQuat);
+        uiDrag.panel.parent.getWorldQuaternion(uiParentQuat).invert();
+        uiDrag.panel.quaternion.copy(uiParentQuat).multiply(uiRayQuat);
       }
       for (const entry of uiControllerEntries) {
         entry.laser.visible = entry.controller === uiDrag.controller;
@@ -703,7 +702,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.41`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.42`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
