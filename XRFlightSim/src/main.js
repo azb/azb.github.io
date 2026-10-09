@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.59";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.59";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.60";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.60";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -466,9 +466,6 @@ const uiControllerEntries = [0, 1].map((index) => {
 const HAND_JOYSTICK_RADIUS = 0.12;
 const handPinchTip = new THREE.Vector3();
 const handJoystickDelta = new THREE.Vector3();
-const handViewRight = new THREE.Vector3();
-const handViewUp = new THREE.Vector3();
-const handViewQuat = new THREE.Quaternion();
 const handSteer = {
   active: false,
   hand: null,
@@ -477,7 +474,16 @@ const handSteer = {
   roll: 0,
   /** Absolute 0–1 throttle from pinch distance (null when inactive). */
   throttle: null,
+  /** World-space aim direction from pinch origin → tip (null near origin). */
+  aimDirection: null,
+  aimWorld: new THREE.Vector3(),
 };
+const handAimRight = new THREE.Vector3();
+const handAimUp = new THREE.Vector3();
+const handAimForward = new THREE.Vector3();
+const handAimMatrix = new THREE.Matrix4();
+const handAimQuat = new THREE.Quaternion();
+const handWorldUp = new THREE.Vector3(0, 1, 0);
 let handFirePinching = false;
 
 const handJoystickVisual = new THREE.Group();
@@ -547,6 +553,7 @@ function onHandPinchStart(hand) {
     handSteer.pitch = 0;
     handSteer.roll = 0;
     handSteer.throttle = 0;
+    handSteer.aimDirection = null;
     handJoystickVisual.visible = !simulationPaused && uiMode === "game";
     handJoystickOriginMesh.position.copy(handSteer.origin);
     handJoystickTipMesh.position.copy(handSteer.origin);
@@ -563,6 +570,7 @@ function onHandPinchEnd(hand) {
     handSteer.pitch = 0;
     handSteer.roll = 0;
     handSteer.throttle = null;
+    handSteer.aimDirection = null;
     handJoystickVisual.visible = false;
   }
   if (handedness === "left") {
@@ -593,44 +601,45 @@ function updateHandSteerAxes() {
     handSteer.pitch = 0;
     handSteer.roll = 0;
     handSteer.throttle = null;
+    handSteer.aimDirection = null;
     return;
   }
   if (!getHandPinchPoint(handSteer.hand, handPinchTip)) {
     handSteer.pitch = 0;
     handSteer.roll = 0;
     handSteer.throttle = 0;
+    handSteer.aimDirection = null;
     return;
   }
 
   handJoystickDelta.subVectors(handPinchTip, handSteer.origin);
-  const viewCam = engineListenerObject() || camera;
-  viewCam.getWorldQuaternion(handViewQuat);
-  handViewRight.set(1, 0, 0).applyQuaternion(handViewQuat).normalize();
-  handViewUp.set(0, 1, 0).applyQuaternion(handViewQuat).normalize();
-  const right = handJoystickDelta.dot(handViewRight) / HAND_JOYSTICK_RADIUS;
-  const up = handJoystickDelta.dot(handViewUp) / HAND_JOYSTICK_RADIUS;
-  // Match right-stick mapping: +roll right, +pitch when pulling up.
-  handSteer.roll = stick(clamp(right, -1, 1));
-  handSteer.pitch = stick(clamp(up, -1, 1));
+  const distance = handJoystickDelta.length();
   // Absolute throttle from how far the pinch is from the start point.
-  handSteer.throttle = stick(clamp(
-    handJoystickDelta.length() / HAND_JOYSTICK_RADIUS,
-    0,
-    1,
-  ));
+  handSteer.throttle = stick(clamp(distance / HAND_JOYSTICK_RADIUS, 0, 1));
+  handSteer.pitch = 0;
+  handSteer.roll = 0;
+  // Near the origin there is no clear aim — keep current heading.
+  if (distance < HAND_JOYSTICK_RADIUS * 0.08) {
+    handSteer.aimDirection = null;
+    return;
+  }
+  // Plane points the way the joystick is pulled (world-space).
+  handSteer.aimWorld.copy(handJoystickDelta).multiplyScalar(1 / distance);
+  handSteer.aimDirection = handSteer.aimWorld;
 }
 
 function applyHandControls(value, readout) {
   updateHandSteerAxes();
   updateHandJoystickVisual();
   if (handSteer.active) {
-    value.roll += handSteer.roll;
-    value.pitch += handSteer.pitch;
+    if (handSteer.aimDirection) {
+      value.aimDirection = handSteer.aimDirection;
+    }
     if (handSteer.throttle != null) {
       value.throttleAbsolute = handSteer.throttle;
     }
     readout.push(
-      `R pinch ${handSteer.roll.toFixed(2)},${handSteer.pitch.toFixed(2)} thr ${Math.round((handSteer.throttle ?? 0) * 100)}%`,
+      `R aim thr ${Math.round((handSteer.throttle ?? 0) * 100)}%`,
     );
   }
   if (handFirePinching) {
@@ -879,14 +888,31 @@ class FlightModel {
     // (Lens cm-ish 500 ≈ same feel after worldSpeedScale), but use the Lens
     // authority curve: referenceSpeed = maxSpeed * 0.25 when minSpeed is 0.
     const speed = lerp(0, 100, this.throttle);
-    const controlAirspeed = lerp(0, 500, this.throttle);
-    const referenceSpeed = Math.max(500 * .25, 1);
-    const authority = clamp(controlAirspeed / referenceSpeed, .5, 1.25);
-    const controlScale = 240 / 120;
-    const rate = controlScale * authority * dt * Math.PI / 180;
-    this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), input.roll * 70 * rate));
-    this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -input.pitch * 70 * rate));
-    this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 70 * rate)).normalize();
+    if (input.aimDirection && input.aimDirection.lengthSq() > 1e-8) {
+      // Hand joystick: point the nose along the pull direction (level to ground).
+      handAimForward.copy(input.aimDirection).normalize();
+      handAimRight.crossVectors(handWorldUp, handAimForward);
+      if (handAimRight.lengthSq() < 1e-8) {
+        handAimRight.set(1, 0, 0).applyQuaternion(this.rotation);
+      } else {
+        handAimRight.normalize();
+      }
+      handAimUp.crossVectors(handAimForward, handAimRight).normalize();
+      // Local -Z is flight forward.
+      handJoystickDelta.copy(handAimForward).negate();
+      handAimMatrix.makeBasis(handAimRight, handAimUp, handJoystickDelta);
+      handAimQuat.setFromRotationMatrix(handAimMatrix);
+      this.rotation.slerp(handAimQuat, clamp(14 * dt, 0, 1)).normalize();
+    } else {
+      const controlAirspeed = lerp(0, 500, this.throttle);
+      const referenceSpeed = Math.max(500 * .25, 1);
+      const authority = clamp(controlAirspeed / referenceSpeed, .5, 1.25);
+      const controlScale = 240 / 120;
+      const rate = controlScale * authority * dt * Math.PI / 180;
+      this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), input.roll * 70 * rate));
+      this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -input.pitch * 70 * rate));
+      this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 70 * rate)).normalize();
+    }
     const worldSpeed = speed * worldSpeedScale;
     this.velocity.copy(this.forward()).multiplyScalar(speed > .01 ? worldSpeed : 0);
     if (speed > .01) this.position.addScaledVector(this.velocity, dt);
@@ -1131,7 +1157,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.59`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.60`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
