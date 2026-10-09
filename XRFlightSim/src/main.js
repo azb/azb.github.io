@@ -1,8 +1,8 @@
-import * as THREE from "three";
+﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.49";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.49";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.50";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.50";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -537,11 +537,12 @@ function updateUiPanelInteraction() {
   let hoveredButton = null;
   const panels = draggableUiPanels();
   for (const entry of uiControllerEntries) {
-    entry.laser.visible = true;
     getControllerAimRay(entry.controller, uiRayOrigin, uiRayDir);
     uiRaycaster.set(uiRayOrigin, uiRayDir);
     const hits = panels.length ? uiRaycaster.intersectObjects(panels, true) : [];
     const hit = hits.find((entryHit) => uiRootFromHit(entryHit.object)) ?? null;
+    // Only show the pointer while aiming at UI — hide when looking elsewhere.
+    entry.laser.visible = Boolean(hit);
     if (hit) {
       hovered = true;
       entry.laser.scale.z = Math.max(hit.distance, 0.05);
@@ -556,10 +557,6 @@ function updateUiPanelInteraction() {
           }
         }
       }
-    } else {
-      entry.laser.scale.z = 3;
-      entry.laser.material.color.setHex(0x7fd4ff);
-      entry.laser.material.opacity = 0.45;
     }
 
     // Clicks/drags are handled only on selectstart — polling here double-fired
@@ -850,7 +847,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.49`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.50`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
