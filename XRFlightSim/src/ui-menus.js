@@ -1,12 +1,13 @@
 import * as THREE from "three";
 
-const SETTINGS_KEY = "xrflightsim-settings-v1";
+// v3: reset prefs so mesh visual/collision start Off (was On in older builds).
+const SETTINGS_KEY = "xrflightsim-settings-v3";
 const VOLUME_STEPS = [0, 0.25, 0.5, 0.75, 1];
 const SENSITIVITY_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
 
 export const defaultSettings = () => ({
-  meshCollision: true,
-  meshVisual: true,
+  meshCollision: false,
+  meshVisual: false,
   masterVolume: 1,
   engineVolume: 1,
   stickSensitivity: 1,

@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.68";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.68";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.70";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.70";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -43,7 +43,11 @@ let inputProfilesList = null;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType("local-floor");
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+function syncRendererResolution() {
+  // Retina DPR in XR is a common micro-stutter source; keep desktop sharp.
+  renderer.setPixelRatio(renderer.xr.isPresenting ? 1 : Math.min(devicePixelRatio, 2));
+}
+syncRendererResolution();
 renderer.setClearColor(0x8ac5ee, 1);
 const scene = new THREE.Scene();
 scene.background = null;
@@ -323,9 +327,20 @@ gamePanel.position.set(0, 0.55, -1.4);
 gamePanel.visible = false;
 playSpace.add(gamePanel);
 
+let xrSessionHasMeshDetection = false;
 const settingsPanel = createSettingsMenu(gameSettings, {
   onBack: () => showUiMode("pause"),
-  onChange: () => applyGameSettings(),
+  onChange: () => {
+    applyGameSettings();
+    // mesh-detection is only requested at session start.
+    if (
+      renderer.xr.isPresenting
+      && (gameSettings.meshVisual || gameSettings.meshCollision)
+      && !xrSessionHasMeshDetection
+    ) {
+      statusLabel.textContent = "Mesh on - re-enter XR to enable detection";
+    }
+  },
 });
 settingsPanel.position.set(0, 0.55, -1.4);
 settingsPanel.visible = false;
@@ -840,9 +855,8 @@ function applyHandControls(value, readout) {
   updateHandJoystickVisual();
   if (handSteer.active) {
     if (handSteer.aimDirection) {
-      // Copy so later temp-vector reuse cannot alias/corrupt aim.
-      if (!value.aimDirection) value.aimDirection = new THREE.Vector3();
-      value.aimDirection.copy(handSteer.aimDirection);
+      // Stable vector on controlState — avoid per-frame allocation.
+      value.aimDirection = controlAimDirection.copy(handSteer.aimDirection);
     }
     if (handSteer.throttle != null) {
       value.throttleAbsolute = handSteer.throttle;
@@ -1217,7 +1231,7 @@ const wingTipLocal = [
 ];
 // Lens WingtipVortexFX defaults / scene overrides.
 const vortexMinAirspeedRatio = 0.45;
-const vortexMaxSpawnsPerSecond = 28;
+const vortexMaxSpawnsPerSecond = 14;
 const vortexWispLifetime = 0.65;
 // Lens wispLength/width are cm world scale ? meters.
 const vortexWispLength = 5 * 0.01;
@@ -1301,6 +1315,13 @@ function spawnVortexWisp(side, intensity) {
   vortexMesh.setMatrixAt(instanceId, vortexDummy.matrix);
   vortexActive.push({
     id: instanceId,
+    x: vortexDummy.position.x,
+    y: vortexDummy.position.y,
+    z: vortexDummy.position.z,
+    qx: vortexDummy.quaternion.x,
+    qy: vortexDummy.quaternion.y,
+    qz: vortexDummy.quaternion.z,
+    qw: vortexDummy.quaternion.w,
     velocityX: vortexVelocity.x,
     velocityY: vortexVelocity.y,
     velocityZ: vortexVelocity.z,
@@ -1326,11 +1347,11 @@ function updateWingVortex(dt) {
     const lifeRatio = 1 - wisp.age / wisp.lifetime;
     const width = wisp.startWidth * (0.2 + lifeRatio * 0.8);
     const length = wisp.startLength * (0.35 + lifeRatio * 0.65);
-    vortexMesh.getMatrixAt(wisp.id, vortexDummy.matrix);
-    vortexDummy.matrix.decompose(vortexDummy.position, vortexDummy.quaternion, vortexDummy.scale);
-    vortexDummy.position.x += wisp.velocityX * dt;
-    vortexDummy.position.y += wisp.velocityY * dt;
-    vortexDummy.position.z += wisp.velocityZ * dt;
+    wisp.x += wisp.velocityX * dt;
+    wisp.y += wisp.velocityY * dt;
+    wisp.z += wisp.velocityZ * dt;
+    vortexDummy.position.set(wisp.x, wisp.y, wisp.z);
+    vortexDummy.quaternion.set(wisp.qx, wisp.qy, wisp.qz, wisp.qw);
     vortexDummy.scale.set(width, width, length);
     vortexDummy.updateMatrix();
     vortexMesh.setMatrixAt(wisp.id, vortexDummy.matrix);
@@ -1387,8 +1408,9 @@ function hookFighterModel(model, item, statusText) {
   if (Array.isArray(item?.scale)) model.scale.multiply(new THREE.Vector3(item.scale[0] ?? 1, item.scale[1] ?? 1, item.scale[2] ?? 1));
   model.traverse((node) => {
     if (!node.isMesh) return;
-    node.castShadow = true;
-    node.receiveShadow = true;
+    // Shadows are unused — keep draw cheap on headset GPUs.
+    node.castShadow = false;
+    node.receiveShadow = false;
   });
   bindControlSurfaces(model, animatedParts);
   planeRoot.remove(aircraft);
@@ -1437,7 +1459,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.68`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.70`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1549,17 +1571,43 @@ function findBrowserGamepad(xrSources) {
     }
   }
   if (!candidates.length) return null;
+  if (candidates.length === 1) return candidates[0];
   // Most recently updated pad wins (Safari keeps stale slots around).
-  candidates.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  return candidates[0];
+  let best = candidates[0];
+  for (let i = 1; i < candidates.length; i += 1) {
+    if ((candidates[i].timestamp || 0) > (best.timestamp || 0)) best = candidates[i];
+  }
+  return best;
 }
+const controlState = {
+  pitch: 0,
+  roll: 0,
+  yaw: 0,
+  throttle: 0,
+  fire: false,
+  pause: false,
+  throttleAbsolute: undefined,
+  aimDirection: null,
+};
+const controlAimDirection = new THREE.Vector3();
+const controllerReadout = [];
+let lastControllerHudMs = 0;
+let lastControllerHudText = "";
 function controls() {
-  const value = { pitch: 0, roll: 0, yaw: 0, throttle: 0, fire: false, pause: false };
+  const value = controlState;
+  value.pitch = 0;
+  value.roll = 0;
+  value.yaw = 0;
+  value.throttle = 0;
+  value.fire = false;
+  value.pause = false;
+  value.throttleAbsolute = undefined;
+  value.aimDirection = null;
+  controllerReadout.length = 0;
   const xrSources = renderer.xr.getSession()?.inputSources ?? [];
   // Prefer DualSense/Xbox whenever present. On Vision Pro, Safari may expose the
   // pad via getGamepads() and/or XR inputSources with a blank mapping.
   const browserPad = findBrowserGamepad(xrSources);
-  const controllerReadout = [];
   if (browserPad) {
     applyBrowserGamepad(value, browserPad);
     controllerReadout.push(`${gamepadLabel(browserPad)} pad`);
@@ -1595,9 +1643,18 @@ function controls() {
     applyHandControls(value, controllerReadout);
   }
   value.pitch += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0); value.roll += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0); value.yaw += (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0); value.throttle += (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0); value.fire ||= keys.has("Space");
-  controllerLabel.textContent = controllerReadout.length
-    ? `Sticks ${controllerReadout.join(" · ")}`
-    : "Sticks: waiting for controller";
+  // DOM HUD updates are relatively expensive in XR — refresh stick readout ~8 Hz.
+  const now = performance.now();
+  if (now - lastControllerHudMs > 120) {
+    lastControllerHudMs = now;
+    const next = controllerReadout.length
+      ? `Sticks ${controllerReadout.join(" · ")}`
+      : "Sticks: waiting for controller";
+    if (next !== lastControllerHudText) {
+      lastControllerHudText = next;
+      controllerLabel.textContent = next;
+    }
+  }
   for (const key of ["pitch", "roll", "yaw", "throttle"]) value[key] = clamp(value[key], -1, 1); return value;
 }
 const deflectQuatScratch = new THREE.Quaternion();
@@ -1821,8 +1878,13 @@ async function startEngineSound() {
 function pauseEngineSound() {
   if (engineContext?.state === "running") engineContext.suspend();
 }
+let lastEngineAudioMs = 0;
 function updateEngineSound() {
   if (!engineContext || !engineGain || !engineSource) return;
+  // AudioParam writes every frame show up as XR micro-hitches; 20 Hz is plenty.
+  const now = performance.now();
+  if (now - lastEngineAudioMs < 50) return;
+  lastEngineAudioMs = now;
   const time = engineContext.currentTime;
   engineSource.playbackRate.setTargetAtTime(enginePlaybackRate(), time, .125);
   engineGain.gain.setTargetAtTime(
@@ -2076,8 +2138,12 @@ renderer.setAnimationLoop((time, frame) => {
   updateOffScreenPlaneArrow();
   updateEnvironmentMeshes(frame);
   calibratePlaySpaceHeight(frame);
-  speedLabel.textContent = `Speed ${Math.round(lerp(0, 100, flight.throttle))}${simulationPaused ? " · paused" : ""}`;
-  throttleLabel.textContent = `Throttle ${Math.round(flight.throttle * 100)}%`;
+  const speedValue = Math.round(lerp(0, 100, flight.throttle));
+  const throttlePct = Math.round(flight.throttle * 100);
+  const speedText = `Speed ${speedValue}${simulationPaused ? " - paused" : ""}`;
+  if (speedLabel.textContent !== speedText) speedLabel.textContent = speedText;
+  const throttleText = `Throttle ${throttlePct}%`;
+  if (throttleLabel.textContent !== throttleText) throttleLabel.textContent = throttleText;
   if (uiMode === "game") {
     gamePanel?.userData.setThrottle?.(flight.throttle);
   }
@@ -2085,7 +2151,14 @@ renderer.setAnimationLoop((time, frame) => {
   renderer.render(scene, camera);
 });
 resetButton.addEventListener("click", () => flight.reset());
-const xrOptionalFeatures = ["local-floor", "bounded-floor", "hand-tracking", "mesh-detection"];
+function xrOptionalFeatures() {
+  const features = ["local-floor", "bounded-floor", "hand-tracking"];
+  // Only ask for mesh-detection when a mesh setting is on (avoids headset mesh work).
+  if (gameSettings.meshVisual || gameSettings.meshCollision) {
+    features.push("mesh-detection");
+  }
+  return features;
+}
 
 /** Scene Y of the controls panel / strip — authored for Quest local-floor standing. */
 const playSpaceAnchorY = 1.48;
@@ -2189,6 +2262,15 @@ function clearEnvironmentMeshes() {
 }
 
 function updateEnvironmentMeshes(frame) {
+  // Skip all mesh-detection work when both overlays/colliders are off.
+  if (!gameSettings.meshVisual && !gameSettings.meshCollision) {
+    if (environmentMeshes.size) {
+      clearEnvironmentMeshes();
+      markBulletCollidersDirty();
+    }
+    environmentMeshRoot.visible = false;
+    return;
+  }
   if (!frame?.detectedMeshes) {
     environmentMeshRoot.visible = false;
     return;
@@ -2196,14 +2278,18 @@ function updateEnvironmentMeshes(frame) {
   const referenceSpace = renderer.xr.getReferenceSpace();
   if (!referenceSpace) return;
 
-  for (const [xrMesh, entry] of [...environmentMeshes]) {
-    if (!frame.detectedMeshes.has(xrMesh)) {
-      environmentMeshRoot.remove(entry.mesh);
-      environmentMeshRoot.remove(entry.collider);
-      disposeMeshGeometry(entry.mesh.geometry);
-      environmentMeshes.delete(xrMesh);
-      markBulletCollidersDirty();
-    }
+  const staleMeshes = [];
+  for (const xrMesh of environmentMeshes.keys()) {
+    if (!frame.detectedMeshes.has(xrMesh)) staleMeshes.push(xrMesh);
+  }
+  for (const xrMesh of staleMeshes) {
+    const entry = environmentMeshes.get(xrMesh);
+    if (!entry) continue;
+    environmentMeshRoot.remove(entry.mesh);
+    environmentMeshRoot.remove(entry.collider);
+    disposeMeshGeometry(entry.mesh.geometry);
+    environmentMeshes.delete(xrMesh);
+    markBulletCollidersDirty();
   }
 
   frame.detectedMeshes.forEach((xrMesh) => {
@@ -2269,7 +2355,7 @@ function probeSessionSupport(mode, timeoutMs = 0) {
 }
 async function requestXrSession(mode, timeoutMs = 12000) {
   return Promise.race([
-    navigator.xr.requestSession(mode, { optionalFeatures: xrOptionalFeatures }),
+    navigator.xr.requestSession(mode, { optionalFeatures: xrOptionalFeatures() }),
     new Promise((_, reject) => setTimeout(() => reject(new Error("XR session timed out")), timeoutMs)),
   ]);
 }
@@ -2363,6 +2449,8 @@ async function configureVR() {
       if (mode === "immersive-ar") applyPassthroughPresentation();
       else applyOpaqueXrPresentation();
       await renderer.xr.setSession(session);
+      xrSessionHasMeshDetection = gameSettings.meshVisual || gameSettings.meshCollision;
+      syncRendererResolution();
       resetPlaySpaceHeight();
       await ensureXrReferenceSpace(session);
       const blend = session.environmentBlendMode ?? renderer.xr.getEnvironmentBlendMode?.();
@@ -2375,10 +2463,12 @@ async function configureVR() {
         clearEnvironmentMeshes();
         resetPlaySpaceHeight();
         uiAwaitingHandAnchor = false;
+        xrSessionHasMeshDetection = false;
         restoreDesktopPresentation();
+        syncRendererResolution();
         vrButton.disabled = false;
         vrButton.textContent = labelFor();
-        statusLabel.textContent = "Desktop preview · controller or keyboard";
+        statusLabel.textContent = "Desktop preview - controller or keyboard";
       });
     } catch (error) {
       vrButton.disabled = false;
