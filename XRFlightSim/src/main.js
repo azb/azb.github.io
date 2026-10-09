@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.57";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.57";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.58";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.58";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -273,7 +273,7 @@ function showUiMode(mode) {
     } else {
       startEngineSound();
       statusLabel.textContent = renderer.xr.isPresenting
-        ? "Flying · press left X to pause"
+        ? "Flying · R pinch steer · L pinch fire · X pauses"
         : "Desktop preview · controller or keyboard";
     }
   }
@@ -460,6 +460,186 @@ const uiControllerEntries = [0, 1].map((index) => {
   });
 
   return entry;
+});
+
+/** Hand tracking: right pinch = virtual stick, left pinch = fire. */
+const HAND_JOYSTICK_RADIUS = 0.12;
+const handPinchTip = new THREE.Vector3();
+const handJoystickDelta = new THREE.Vector3();
+const handViewRight = new THREE.Vector3();
+const handViewUp = new THREE.Vector3();
+const handViewQuat = new THREE.Quaternion();
+const handSteer = {
+  active: false,
+  hand: null,
+  origin: new THREE.Vector3(),
+  pitch: 0,
+  roll: 0,
+};
+let handFirePinching = false;
+
+const handJoystickVisual = new THREE.Group();
+handJoystickVisual.name = "HandJoystick";
+handJoystickVisual.visible = false;
+scene.add(handJoystickVisual);
+const handJoystickOriginMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.018, 16, 12),
+  new THREE.MeshBasicMaterial({
+    color: 0x7fd4ff,
+    transparent: true,
+    opacity: 0.55,
+    depthTest: false,
+  }),
+);
+handJoystickOriginMesh.renderOrder = 40;
+handJoystickVisual.add(handJoystickOriginMesh);
+const handJoystickTipMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.012, 12, 10),
+  new THREE.MeshBasicMaterial({
+    color: 0xffe626,
+    transparent: true,
+    opacity: 0.9,
+    depthTest: false,
+  }),
+);
+handJoystickTipMesh.renderOrder = 41;
+handJoystickVisual.add(handJoystickTipMesh);
+const handJoystickLine = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(),
+    new THREE.Vector3(0, 0, 0),
+  ]),
+  new THREE.LineBasicMaterial({
+    color: 0xa9dbff,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: false,
+  }),
+);
+handJoystickLine.renderOrder = 42;
+handJoystickVisual.add(handJoystickLine);
+
+function handHandedness(hand) {
+  return hand?.userData?.inputSource?.handedness || hand?.userData?.handedness || "";
+}
+
+function getHandPinchPoint(hand, target) {
+  const tip = hand?.joints?.["index-finger-tip"];
+  if (tip) {
+    tip.getWorldPosition(target);
+    return true;
+  }
+  if (hand) {
+    hand.getWorldPosition(target);
+    return true;
+  }
+  return false;
+}
+
+function onHandPinchStart(hand) {
+  const handedness = handHandedness(hand);
+  if (handedness === "right") {
+    if (!getHandPinchPoint(hand, handSteer.origin)) return;
+    handSteer.active = true;
+    handSteer.hand = hand;
+    handSteer.pitch = 0;
+    handSteer.roll = 0;
+    handJoystickVisual.visible = !simulationPaused && uiMode === "game";
+    handJoystickOriginMesh.position.copy(handSteer.origin);
+    handJoystickTipMesh.position.copy(handSteer.origin);
+  } else if (handedness === "left") {
+    handFirePinching = true;
+  }
+}
+
+function onHandPinchEnd(hand) {
+  const handedness = handHandedness(hand);
+  if (handedness === "right" || hand === handSteer.hand) {
+    handSteer.active = false;
+    handSteer.hand = null;
+    handSteer.pitch = 0;
+    handSteer.roll = 0;
+    handJoystickVisual.visible = false;
+  }
+  if (handedness === "left") {
+    handFirePinching = false;
+  }
+}
+
+function updateHandJoystickVisual() {
+  if (!handSteer.active || simulationPaused || uiMode !== "game") {
+    handJoystickVisual.visible = false;
+    return;
+  }
+  if (!getHandPinchPoint(handSteer.hand, handPinchTip)) {
+    handJoystickVisual.visible = false;
+    return;
+  }
+  handJoystickVisual.visible = true;
+  handJoystickOriginMesh.position.copy(handSteer.origin);
+  handJoystickTipMesh.position.copy(handPinchTip);
+  const positions = handJoystickLine.geometry.attributes.position;
+  positions.setXYZ(0, handSteer.origin.x, handSteer.origin.y, handSteer.origin.z);
+  positions.setXYZ(1, handPinchTip.x, handPinchTip.y, handPinchTip.z);
+  positions.needsUpdate = true;
+}
+
+function updateHandSteerAxes() {
+  if (!handSteer.active || !handSteer.hand) {
+    handSteer.pitch = 0;
+    handSteer.roll = 0;
+    return;
+  }
+  if (!getHandPinchPoint(handSteer.hand, handPinchTip)) {
+    handSteer.pitch = 0;
+    handSteer.roll = 0;
+    return;
+  }
+
+  handJoystickDelta.subVectors(handPinchTip, handSteer.origin);
+  const viewCam = engineListenerObject() || camera;
+  viewCam.getWorldQuaternion(handViewQuat);
+  handViewRight.set(1, 0, 0).applyQuaternion(handViewQuat).normalize();
+  handViewUp.set(0, 1, 0).applyQuaternion(handViewQuat).normalize();
+  const right = handJoystickDelta.dot(handViewRight) / HAND_JOYSTICK_RADIUS;
+  const up = handJoystickDelta.dot(handViewUp) / HAND_JOYSTICK_RADIUS;
+  // Match right-stick mapping: +roll right, +pitch when pulling up.
+  handSteer.roll = stick(clamp(right, -1, 1));
+  handSteer.pitch = stick(clamp(up, -1, 1));
+}
+
+function applyHandControls(value, readout) {
+  updateHandSteerAxes();
+  updateHandJoystickVisual();
+  if (handSteer.active) {
+    value.roll += handSteer.roll;
+    value.pitch += handSteer.pitch;
+    readout.push(
+      `R pinch ${handSteer.roll.toFixed(2)},${handSteer.pitch.toFixed(2)}`,
+    );
+  }
+  if (handFirePinching) {
+    value.fire = true;
+    readout.push("L pinch fire");
+  }
+}
+
+const xrHands = [0, 1].map((index) => {
+  const hand = renderer.xr.getHand(index);
+  scene.add(hand);
+  hand.addEventListener("connected", (event) => {
+    hand.userData.inputSource = event.data ?? null;
+    hand.userData.handedness = event.data?.handedness || "";
+  });
+  hand.addEventListener("disconnected", () => {
+    if (handSteer.hand === hand) onHandPinchEnd(hand);
+    if (handHandedness(hand) === "left") handFirePinching = false;
+    hand.userData.inputSource = null;
+    hand.userData.handedness = "";
+  });
+  hand.addEventListener("pinchstart", () => onHandPinchStart(hand));
+  hand.addEventListener("pinchend", () => onHandPinchEnd(hand));
+  return hand;
 });
 
 function draggableUiPanels() {
@@ -930,7 +1110,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.57`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.58`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1038,6 +1218,8 @@ function controls() {
     controllerReadout.push(`${gamepadLabel(browserPad)} pad`);
   } else {
     for (const source of xrSources) {
+      // Hands use pinch joystick / fire below — skip emulated hand gamepads here.
+      if (source.hand) continue;
       const gamepad = source.gamepad;
       if (!isXrStandardGamepad(gamepad)) continue;
       const [rawX, rawY] = activeStick(gamepad);
@@ -1063,6 +1245,7 @@ function controls() {
       }
     }
   }
+  applyHandControls(value, controllerReadout);
   value.pitch += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0); value.roll += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0); value.yaw += (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0); value.throttle += (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0); value.fire ||= keys.has("Space");
   controllerLabel.textContent = controllerReadout.length
     ? `Sticks ${controllerReadout.join(" · ")}`
