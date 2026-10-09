@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.44";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.45";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -370,13 +370,14 @@ function updateUiPanelInteraction() {
       uiTempWorld.copy(uiHitPoint).add(uiDrag.offsetWorld);
       playSpace.worldToLocal(uiTempWorld);
       uiDrag.panel.position.copy(uiTempWorld);
-      // Scene UI puts labels/controllers on local +Z of the panel. Aim that axis at the
-      // headset so children stay on the near side (parent rotation moves all children).
+      // Scene UI puts labels/controllers on local +Z. Yaw only toward the headset so the
+      // panel stays upright / flat with the ground (no pitch or roll from head tilt).
       const viewCam = engineListenerObject();
       if (viewCam && uiDrag.panel.parent) {
         uiDrag.panel.getWorldPosition(uiPanelWorld);
         viewCam.getWorldPosition(uiTempWorld);
         uiRayDir.subVectors(uiTempWorld, uiPanelWorld);
+        uiRayDir.y = 0;
         if (uiRayDir.lengthSq() > 1e-8) {
           uiRayDir.normalize();
           uiFaceQuat.setFromUnitVectors(uiFaceLocalZ, uiRayDir);
@@ -710,7 +711,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.44`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.45`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
