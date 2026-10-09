@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.48";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.48";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.49";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.49";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -562,15 +562,9 @@ function updateUiPanelInteraction() {
       entry.laser.material.opacity = 0.45;
     }
 
-    const down = isControllerTriggerDown(entry);
-    if (down && !entry.triggerWasDown) {
-      if (tryUiButtonClick(entry.controller)) {
-        /* button handled */
-      } else if (hit) {
-        tryStartUiDrag(entry.controller);
-      }
-    }
-    entry.triggerWasDown = down;
+    // Clicks/drags are handled only on selectstart — polling here double-fired
+    // settings toggles (On→Off→On in one press).
+    entry.triggerWasDown = isControllerTriggerDown(entry);
   }
   setUiButtonHovers(panels, hoveredButton);
   uiPointerBlocksFire = hovered || Boolean(uiDrag) || uiMode !== "game";
@@ -856,7 +850,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.48`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.49`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
