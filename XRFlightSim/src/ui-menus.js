@@ -37,20 +37,23 @@ function formatPercent(value) {
   return `${Math.round(value * 100)}%`;
 }
 
-function makeLabelTexture(text, width = 1024, height = 256) {
+/** World-space scale for procedural menus (authored sizes were ~3× too large). */
+export const UI_MENU_SCALE = 1 / 3;
+
+function makeLabelTexture(text, width = 1024, height = 256, hovered = false) {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
   context.clearRect(0, 0, width, height);
-  context.fillStyle = "rgba(8, 28, 44, 0.92)";
-  context.strokeStyle = "#7fd4ff";
-  context.lineWidth = 8;
+  context.fillStyle = hovered ? "rgba(40, 70, 28, 0.96)" : "rgba(8, 28, 44, 0.92)";
+  context.strokeStyle = hovered ? "#ffe626" : "#7fd4ff";
+  context.lineWidth = hovered ? 14 : 8;
   context.beginPath();
   context.roundRect(12, 12, width - 24, height - 24, 28);
   context.fill();
   context.stroke();
-  context.fillStyle = "#eaf6ff";
+  context.fillStyle = hovered ? "#fff6b0" : "#eaf6ff";
   context.font = "bold 84px system-ui, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "middle";
@@ -73,16 +76,39 @@ export function createUiButton(label, width = 1.6, height = 0.32) {
   button.renderOrder = 8;
   button.userData.uiButton = {
     label,
+    hovered: false,
     setLabel(next) {
       this.label = next;
-      const map = makeLabelTexture(next);
+      const map = makeLabelTexture(next, 1024, 256, this.hovered);
       material.map?.dispose();
       material.map = map;
       material.needsUpdate = true;
     },
+    setHovered(next) {
+      const on = Boolean(next);
+      if (this.hovered === on) return;
+      this.hovered = on;
+      const map = makeLabelTexture(this.label, 1024, 256, on);
+      material.map?.dispose();
+      material.map = map;
+      material.needsUpdate = true;
+      button.scale.setScalar(on ? 1.06 : 1);
+    },
     onClick: null,
   };
   return button;
+}
+
+/** Clear / apply hover highlight across visible UI panels. */
+export function setUiButtonHovers(panels, hoveredButton) {
+  for (const panel of panels) {
+    panel?.traverse((obj) => {
+      const ui = obj.userData?.uiButton;
+      if (!ui || typeof ui.setHovered !== "function") return;
+      if (!ui.onClick) return;
+      ui.setHovered(obj === hoveredButton);
+    });
+  }
 }
 
 function createMenuPanel(title, width, height) {
@@ -122,16 +148,17 @@ function createMenuPanel(title, width, height) {
 }
 
 export function createPauseMenu({ onResume, onControls, onSettings, onRestart }) {
-  const root = createMenuPanel("Simulation Paused", 2.4, 2.55);
+  const s = UI_MENU_SCALE;
+  const root = createMenuPanel("Simulation Paused", 2.4 * s, 2.55 * s);
   const buttons = [
-    { label: "Resume", y: 0.55, onClick: onResume },
-    { label: "Controls", y: 0.15, onClick: onControls },
-    { label: "Settings", y: -0.25, onClick: onSettings },
-    { label: "Restart", y: -0.65, onClick: onRestart },
+    { label: "Resume", y: 0.55 * s, onClick: onResume },
+    { label: "Controls", y: 0.15 * s, onClick: onControls },
+    { label: "Settings", y: -0.25 * s, onClick: onSettings },
+    { label: "Restart", y: -0.65 * s, onClick: onRestart },
   ];
   for (const spec of buttons) {
-    const button = createUiButton(spec.label, 1.7, 0.34);
-    button.position.set(0, spec.y, 0.02);
+    const button = createUiButton(spec.label, 1.7 * s, 0.34 * s);
+    button.position.set(0, spec.y, 0.02 * s);
     button.userData.uiButton.onClick = spec.onClick;
     root.add(button);
   }
@@ -140,17 +167,18 @@ export function createPauseMenu({ onResume, onControls, onSettings, onRestart })
 
 /** In-flight HUD matching Lens Game Panel: throttle readout + Menu → pause. */
 export function createGamePanel({ onMenu }) {
-  const root = createMenuPanel("Flight", 2.1, 1.35);
+  const s = UI_MENU_SCALE;
+  const root = createMenuPanel("Flight", 2.1 * s, 1.35 * s);
   root.name = "Game Panel";
 
-  const throttleReadout = createUiButton("Throttle: 0%", 1.7, 0.34);
-  throttleReadout.position.set(0, 0.12, 0.02);
+  const throttleReadout = createUiButton("Throttle: 0%", 1.7 * s, 0.34 * s);
+  throttleReadout.position.set(0, 0.12 * s, 0.02 * s);
   // Label only — findUiButton requires onClick, so leave it null.
   throttleReadout.userData.uiButton.onClick = null;
   root.add(throttleReadout);
 
-  const barWidth = 1.55;
-  const barHeight = 0.12;
+  const barWidth = 1.55 * s;
+  const barHeight = 0.12 * s;
   const barBg = new THREE.Mesh(
     new THREE.PlaneGeometry(barWidth, barHeight),
     new THREE.MeshBasicMaterial({
@@ -161,7 +189,7 @@ export function createGamePanel({ onMenu }) {
       side: THREE.DoubleSide,
     }),
   );
-  barBg.position.set(0, -0.18, 0.015);
+  barBg.position.set(0, -0.18 * s, 0.015 * s);
   barBg.renderOrder = 7;
   root.add(barBg);
 
@@ -175,12 +203,12 @@ export function createGamePanel({ onMenu }) {
       side: THREE.DoubleSide,
     }),
   );
-  barFill.position.set(0, -0.18, 0.02);
+  barFill.position.set(0, -0.18 * s, 0.02 * s);
   barFill.renderOrder = 8;
   root.add(barFill);
 
-  const menu = createUiButton("Menu", 1.35, 0.32);
-  menu.position.set(0, -0.48, 0.02);
+  const menu = createUiButton("Menu", 1.35 * s, 0.32 * s);
+  menu.position.set(0, -0.48 * s, 0.02 * s);
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);
 
@@ -199,13 +227,14 @@ export function createGamePanel({ onMenu }) {
 }
 
 export function createSettingsMenu(settings, { onBack, onChange }) {
-  const root = createMenuPanel("Settings", 2.6, 2.85);
+  const s = UI_MENU_SCALE;
+  const root = createMenuPanel("Settings", 2.6 * s, 2.85 * s);
   root.userData.settingsButtons = {};
 
   const rows = [
     {
       key: "meshVisual",
-      y: 0.7,
+      y: 0.7 * s,
       label: () => `Mesh Visual: ${settings.meshVisual ? "On" : "Off"}`,
       click: () => {
         settings.meshVisual = !settings.meshVisual;
@@ -213,7 +242,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshCollision",
-      y: 0.3,
+      y: 0.3 * s,
       label: () => `Mesh Collision: ${settings.meshCollision ? "On" : "Off"}`,
       click: () => {
         settings.meshCollision = !settings.meshCollision;
@@ -221,7 +250,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "masterVolume",
-      y: -0.1,
+      y: -0.1 * s,
       label: () => `Master Volume: ${formatPercent(settings.masterVolume)}`,
       click: () => {
         settings.masterVolume = nextStep(VOLUME_STEPS, settings.masterVolume);
@@ -229,7 +258,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "engineVolume",
-      y: -0.5,
+      y: -0.5 * s,
       label: () => `Engine Volume: ${formatPercent(settings.engineVolume)}`,
       click: () => {
         settings.engineVolume = nextStep(VOLUME_STEPS, settings.engineVolume);
@@ -237,7 +266,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "stickSensitivity",
-      y: -0.9,
+      y: -0.9 * s,
       label: () => `Stick Sensitivity: ${settings.stickSensitivity.toFixed(2)}x`,
       click: () => {
         settings.stickSensitivity = nextStep(SENSITIVITY_STEPS, settings.stickSensitivity);
@@ -246,8 +275,8 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
   ];
 
   for (const row of rows) {
-    const button = createUiButton(row.label(), 2.1, 0.32);
-    button.position.set(0, row.y, 0.02);
+    const button = createUiButton(row.label(), 2.1 * s, 0.32 * s);
+    button.position.set(0, row.y, 0.02 * s);
     button.userData.uiButton.onClick = () => {
       row.click();
       button.userData.uiButton.setLabel(row.label());
@@ -258,8 +287,8 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     root.add(button);
   }
 
-  const back = createUiButton("Back", 1.4, 0.32);
-  back.position.set(0, -1.25, 0.02);
+  const back = createUiButton("Back", 1.4 * s, 0.32 * s);
+  back.position.set(0, -1.25 * s, 0.02 * s);
   back.userData.uiButton.onClick = onBack;
   root.add(back);
 

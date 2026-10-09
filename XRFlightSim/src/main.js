@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.47";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings } from "./ui-menus.js?v=0.4.47";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.48";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.48";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -358,9 +358,12 @@ const uiControllerEntries = [0, 1].map((index) => {
       transparent: true,
       opacity: 0.45,
       depthTest: false,
+      depthWrite: false,
     }),
   );
   laser.name = "UiLaser";
+  // Draw after UI panels (renderOrder 6–8) so the ray isn't hidden behind them.
+  laser.renderOrder = 100;
   laser.scale.z = 3;
   laser.visible = false;
   laser.frustumCulled = false;
@@ -481,6 +484,7 @@ function updateUiPanelInteraction() {
   const presenting = renderer.xr.isPresenting;
   if (!presenting) {
     uiDrag = null;
+    setUiButtonHovers(draggableUiPanels(), null);
     for (const entry of uiControllerEntries) {
       entry.laser.visible = false;
       entry.triggerWasDown = false;
@@ -529,19 +533,29 @@ function updateUiPanelInteraction() {
   }
 
   let hovered = false;
+  /** @type {THREE.Object3D | null} */
+  let hoveredButton = null;
+  const panels = draggableUiPanels();
   for (const entry of uiControllerEntries) {
     entry.laser.visible = true;
     getControllerAimRay(entry.controller, uiRayOrigin, uiRayDir);
     uiRaycaster.set(uiRayOrigin, uiRayDir);
-    const panels = draggableUiPanels();
-    const hit = panels.length
-      ? uiRaycaster.intersectObjects(panels, true).find((entryHit) => uiRootFromHit(entryHit.object))
-      : null;
+    const hits = panels.length ? uiRaycaster.intersectObjects(panels, true) : [];
+    const hit = hits.find((entryHit) => uiRootFromHit(entryHit.object)) ?? null;
     if (hit) {
       hovered = true;
       entry.laser.scale.z = Math.max(hit.distance, 0.05);
       entry.laser.material.color.setHex(0xffe626);
       entry.laser.material.opacity = 0.95;
+      if (!hoveredButton) {
+        for (const entryHit of hits) {
+          const button = findUiButton(entryHit.object);
+          if (button) {
+            hoveredButton = button;
+            break;
+          }
+        }
+      }
     } else {
       entry.laser.scale.z = 3;
       entry.laser.material.color.setHex(0x7fd4ff);
@@ -558,6 +572,7 @@ function updateUiPanelInteraction() {
     }
     entry.triggerWasDown = down;
   }
+  setUiButtonHovers(panels, hoveredButton);
   uiPointerBlocksFire = hovered || Boolean(uiDrag) || uiMode !== "game";
 }
 
@@ -841,7 +856,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.47`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.48`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
