@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.54";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.54";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.55";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.55";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -191,7 +191,7 @@ function createControlsPanel() {
   panel.add(worldText("OK · PRESS RIGHT TRIGGER", new THREE.Vector3(0, -.9, .13), .22));
   return panel;
 }
-let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 1.05, -1.4); playSpace.add(controlsPanel);
+let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 0.55, -1.4); playSpace.add(controlsPanel);
 async function loadInstructionControllerModels(session) {
   for (const hand of ["left", "right"]) loadLocalInstructionController(hand, instructionControllerSlots[hand]);
   try {
@@ -243,9 +243,9 @@ function dismissControlsToGame() {
 }
 
 /** Hand-height menus in front of the player so they don't cover the sky / plane. */
-const UI_HAND_HEIGHT_DROP = 0.55;
-const UI_HAND_HEIGHT_MIN = 0.9;
-const UI_HAND_HEIGHT_MAX = 1.2;
+const UI_HAND_HEIGHT_DROP = 1.05; // ~0.5m lower than prior hand placement
+const UI_HAND_HEIGHT_MIN = 0.4;
+const UI_HAND_HEIGHT_MAX = 0.7;
 const UI_MENU_DISTANCE = 1.35;
 
 function showUiMode(mode) {
@@ -302,14 +302,14 @@ let pausePanel = createPauseMenu({
     showUiMode("game");
   },
 });
-pausePanel.position.set(0, 1.05, -1.4);
+pausePanel.position.set(0, 0.55, -1.4);
 pausePanel.visible = false;
 playSpace.add(pausePanel);
 
 const gamePanel = createGamePanel({
   onMenu: () => showUiMode("pause"),
 });
-gamePanel.position.set(0, 1.05, -1.4);
+gamePanel.position.set(0, 0.55, -1.4);
 gamePanel.visible = false;
 playSpace.add(gamePanel);
 
@@ -317,7 +317,7 @@ const settingsPanel = createSettingsMenu(gameSettings, {
   onBack: () => showUiMode("pause"),
   onChange: () => applyGameSettings(),
 });
-settingsPanel.position.set(0, 1.05, -1.4);
+settingsPanel.position.set(0, 0.55, -1.4);
 settingsPanel.visible = false;
 playSpace.add(settingsPanel);
 
@@ -365,27 +365,34 @@ function placeMenusInFrontOfPlayer() {
   viewCam.getWorldPosition(uiPanelWorld);
   viewCam.getWorldQuaternion(uiFaceQuat);
 
-  // Horizontal forward from headset yaw (ignore pitch so height stays hand-level).
+  // Horizontal forward from headset yaw (height is set separately, below hands).
   uiRayDir.set(0, 0, -1).applyQuaternion(uiFaceQuat);
   uiRayDir.y = 0;
   if (uiRayDir.lengthSq() < 1e-8) uiRayDir.set(0, 0, -1);
   else uiRayDir.normalize();
 
-  uiTempWorld.copy(uiPanelWorld).addScaledVector(uiRayDir, UI_MENU_DISTANCE);
-  uiTempWorld.y = clamp(
+  uiHitPoint.copy(uiPanelWorld).addScaledVector(uiRayDir, UI_MENU_DISTANCE);
+  uiHitPoint.y = clamp(
     uiPanelWorld.y - UI_HAND_HEIGHT_DROP,
     UI_HAND_HEIGHT_MIN,
     UI_HAND_HEIGHT_MAX,
   );
-  playSpace.worldToLocal(uiTempWorld);
 
-  // Content faces local +Z; point that toward the player.
-  uiFaceTowardPlayer.copy(uiRayDir).multiplyScalar(-1);
+  // Tilt up: aim local +Z at the headset so the panel faces the player.
+  uiFaceTowardPlayer.subVectors(uiPanelWorld, uiHitPoint);
+  if (uiFaceTowardPlayer.lengthSq() < 1e-8) {
+    uiFaceTowardPlayer.copy(uiRayDir).multiplyScalar(-1);
+  } else {
+    uiFaceTowardPlayer.normalize();
+  }
   uiFaceQuat.setFromUnitVectors(uiFaceLocalZ, uiFaceTowardPlayer);
   if (playSpace.parent) {
     playSpace.getWorldQuaternion(uiParentQuat).invert();
     uiFaceQuat.premultiply(uiParentQuat);
   }
+
+  uiTempWorld.copy(uiHitPoint);
+  playSpace.worldToLocal(uiTempWorld);
 
   for (const panel of [controlsPanel, pausePanel, settingsPanel, gamePanel]) {
     if (!panel) continue;
@@ -911,7 +918,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.54`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.55`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
