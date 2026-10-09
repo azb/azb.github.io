@@ -44,6 +44,8 @@ const BUTTON_TEX_W = 1024;
 const BUTTON_TEX_H = 256;
 /** How far outline + text lift off the UI plane on hover (local Z). */
 const BUTTON_POP_Z = 0.045;
+/** Outline + text settle near the plane while the trigger is held. */
+const BUTTON_PRESS_Z = 0.003;
 
 function buttonFont(context) {
   context.font = "bold 84px system-ui, sans-serif";
@@ -151,26 +153,50 @@ export function createUiButton(label, width = 1.6, height = 0.32) {
   root.userData.uiButton = {
     label,
     hovered: false,
+    pressed: false,
+    hot: false,
     layers: { bg, outline, text, textShadow },
+    applyPose() {
+      const hot = this.hovered || this.pressed;
+      if (this.hot !== hot) {
+        this.hot = hot;
+        swapLayerMap(bg, makeButtonBgTexture(hot));
+        swapLayerMap(outline, makeButtonOutlineTexture(hot));
+        swapLayerMap(text, makeButtonTextTexture(this.label, hot));
+      }
+      if (this.pressed) {
+        // Depress toward the UI plane; hide the raised-text shadow.
+        outline.position.z = BUTTON_PRESS_Z;
+        text.position.z = BUTTON_PRESS_Z + 0.001;
+        textShadow.visible = false;
+      } else if (this.hovered) {
+        outline.position.z = BUTTON_POP_Z;
+        text.position.z = BUTTON_POP_Z + 0.002;
+        textShadow.visible = true;
+      } else {
+        outline.position.z = 0.004;
+        text.position.z = 0.006;
+        textShadow.visible = false;
+      }
+    },
     setLabel(next) {
       this.label = next;
-      swapLayerMap(bg, makeButtonBgTexture(this.hovered));
-      swapLayerMap(outline, makeButtonOutlineTexture(this.hovered));
-      swapLayerMap(text, makeButtonTextTexture(next, this.hovered));
       swapLayerMap(textShadow, makeButtonTextShadowTexture(next));
+      // Force tint textures to rebuild for the new string.
+      this.hot = null;
+      this.applyPose();
     },
     setHovered(next) {
       const on = Boolean(next);
       if (this.hovered === on) return;
       this.hovered = on;
-      swapLayerMap(bg, makeButtonBgTexture(on));
-      swapLayerMap(outline, makeButtonOutlineTexture(on));
-      swapLayerMap(text, makeButtonTextTexture(this.label, on));
-      // Background stays on the UI plane; outline + text pop out in Z.
-      outline.position.z = on ? BUTTON_POP_Z : 0.004;
-      text.position.z = on ? BUTTON_POP_Z + 0.002 : 0.006;
-      // Contact shadow of the raised text stays flat on the plane.
-      textShadow.visible = on;
+      this.applyPose();
+    },
+    setPressed(next) {
+      const on = Boolean(next);
+      if (this.pressed === on) return;
+      this.pressed = on;
+      this.applyPose();
     },
     onClick: null,
   };

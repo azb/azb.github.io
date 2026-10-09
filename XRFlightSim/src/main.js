@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.62";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.62";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.63";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.63";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -435,7 +435,15 @@ const uiControllerEntries = [0, 1].map((index) => {
   laser.visible = false;
   laser.frustumCulled = false;
   controller.add(laser);
-  const entry = { index, controller, laser, triggerWasDown: false, selectHeld: false };
+  const entry = {
+    index,
+    controller,
+    laser,
+    triggerWasDown: false,
+    selectHeld: false,
+    /** @type {THREE.Object3D | null} */
+    pressedButton: null,
+  };
 
   // Three.js dispatches these on the target-ray group; inputSource is NOT auto-copied to userData.
   controller.addEventListener("connected", (event) => {
@@ -445,17 +453,20 @@ const uiControllerEntries = [0, 1].map((index) => {
     controller.userData.inputSource = null;
     entry.selectHeld = false;
     entry.triggerWasDown = false;
+    clearUiButtonPress(entry);
     if (uiDrag?.controller === controller) uiDrag = null;
   });
   controller.addEventListener("selectstart", () => {
     entry.selectHeld = true;
     // In-flight: no UI rays/clicks — use the controller menu button to pause.
     if (uiMode === "game") return;
-    if (tryUiButtonClick(controller)) return;
+    // Press on down; click action runs on selectend if still aimed at the button.
+    if (tryUiButtonPress(controller, entry)) return;
     tryStartUiDrag(controller);
   });
   controller.addEventListener("selectend", () => {
     entry.selectHeld = false;
+    tryUiButtonRelease(controller, entry);
     if (uiDrag?.controller === controller) uiDrag = null;
   });
 
@@ -693,19 +704,46 @@ function uiRootFromHit(object) {
   return null;
 }
 
-function tryUiButtonClick(controller) {
+function findUiButtonUnderController(controller) {
   getControllerAimRay(controller, uiRayOrigin, uiRayDir);
   uiRaycaster.set(uiRayOrigin, uiRayDir);
   const panels = draggableUiPanels();
-  if (!panels.length) return false;
+  if (!panels.length) return null;
   const hits = uiRaycaster.intersectObjects(panels, true);
   for (const hit of hits) {
     const button = findUiButton(hit.object);
-    if (!button) continue;
-    button.userData.uiButton.onClick?.();
-    return true;
+    if (button) return button;
   }
-  return false;
+  return null;
+}
+
+function clearUiButtonPress(entry) {
+  const button = entry.pressedButton;
+  if (button?.userData?.uiButton) {
+    button.userData.uiButton.setPressed?.(false);
+  }
+  entry.pressedButton = null;
+}
+
+/** Depress the aimed button; click is deferred until selectend. */
+function tryUiButtonPress(controller, entry) {
+  const button = findUiButtonUnderController(controller);
+  if (!button?.userData?.uiButton?.onClick) return false;
+  clearUiButtonPress(entry);
+  entry.pressedButton = button;
+  button.userData.uiButton.setPressed?.(true);
+  return true;
+}
+
+/** Fire click only if the ray is still on the pressed button at release. */
+function tryUiButtonRelease(controller, entry) {
+  const pressed = entry.pressedButton;
+  if (!pressed) return;
+  const stillOn = findUiButtonUnderController(controller);
+  clearUiButtonPress(entry);
+  if (stillOn === pressed) {
+    pressed.userData.uiButton.onClick?.();
+  }
 }
 
 function getControllerAimRay(controller, origin, direction) {
@@ -828,18 +866,19 @@ function updateUiPanelInteraction() {
     uiRaycaster.set(uiRayOrigin, uiRayDir);
     const hits = panels.length ? uiRaycaster.intersectObjects(panels, true) : [];
     const hit = hits.find((entryHit) => uiRootFromHit(entryHit.object)) ?? null;
+    /** @type {THREE.Object3D | null} */
+    let entryHoveredButton = null;
     if (hit) {
       hovered = true;
       entry.laser.scale.z = Math.max(hit.distance, 0.05);
       entry.laser.material.color.setHex(0xffe626);
       entry.laser.material.opacity = 0.95;
-      if (!hoveredButton) {
-        for (const entryHit of hits) {
-          const button = findUiButton(entryHit.object);
-          if (button) {
-            hoveredButton = button;
-            break;
-          }
+      for (const entryHit of hits) {
+        const button = findUiButton(entryHit.object);
+        if (button) {
+          entryHoveredButton = button;
+          if (!hoveredButton) hoveredButton = button;
+          break;
         }
       }
     } else {
@@ -848,8 +887,14 @@ function updateUiPanelInteraction() {
       entry.laser.material.opacity = 0.45;
     }
 
-    // Clicks/drags are handled only on selectstart — polling here double-fired
-    // settings toggles (On→Off→On in one press).
+    // Keep the depress pose only while the ray stays on the pressed button.
+    if (entry.selectHeld && entry.pressedButton?.userData?.uiButton) {
+      entry.pressedButton.userData.uiButton.setPressed(
+        entryHoveredButton === entry.pressedButton,
+      );
+    }
+
+    // Clicks/drags are handled on selectstart/selectend (release-to-click).
     entry.triggerWasDown = isControllerTriggerDown(entry);
   }
   setUiButtonHovers(panels, hoveredButton);
@@ -1167,7 +1212,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.62`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.63`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
