@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.60";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.60";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.61";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.61";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -623,7 +623,7 @@ function updateHandSteerAxes() {
     handSteer.aimDirection = null;
     return;
   }
-  // Plane points the way the joystick is pulled (world-space).
+  // Flight direction = pinch pull vector (origin → tip) in world space.
   handSteer.aimWorld.copy(handJoystickDelta).multiplyScalar(1 / distance);
   handSteer.aimDirection = handSteer.aimWorld;
 }
@@ -633,7 +633,9 @@ function applyHandControls(value, readout) {
   updateHandJoystickVisual();
   if (handSteer.active) {
     if (handSteer.aimDirection) {
-      value.aimDirection = handSteer.aimDirection;
+      // Copy so later temp-vector reuse cannot alias/corrupt aim.
+      if (!value.aimDirection) value.aimDirection = new THREE.Vector3();
+      value.aimDirection.copy(handSteer.aimDirection);
     }
     if (handSteer.throttle != null) {
       value.throttleAbsolute = handSteer.throttle;
@@ -888,21 +890,24 @@ class FlightModel {
     // (Lens cm-ish 500 ≈ same feel after worldSpeedScale), but use the Lens
     // authority curve: referenceSpeed = maxSpeed * 0.25 when minSpeed is 0.
     const speed = lerp(0, 100, this.throttle);
+    let handAiming = false;
     if (input.aimDirection && input.aimDirection.lengthSq() > 1e-8) {
-      // Hand joystick: point the nose along the pull direction (level to ground).
+      // Hand joystick: nose + velocity follow the pull (origin → tip) immediately.
+      // Local forward is -Z; build a right-handed level basis for that.
       handAimForward.copy(input.aimDirection).normalize();
-      handAimRight.crossVectors(handWorldUp, handAimForward);
+      handAimRight.crossVectors(handAimForward, handWorldUp);
       if (handAimRight.lengthSq() < 1e-8) {
         handAimRight.set(1, 0, 0).applyQuaternion(this.rotation);
       } else {
         handAimRight.normalize();
       }
-      handAimUp.crossVectors(handAimForward, handAimRight).normalize();
-      // Local -Z is flight forward.
+      handAimUp.crossVectors(handAimRight, handAimForward).normalize();
+      // Local +Z column = -flightForward so (0,0,-1) maps to handAimForward.
       handJoystickDelta.copy(handAimForward).negate();
       handAimMatrix.makeBasis(handAimRight, handAimUp, handJoystickDelta);
       handAimQuat.setFromRotationMatrix(handAimMatrix);
-      this.rotation.slerp(handAimQuat, clamp(14 * dt, 0, 1)).normalize();
+      this.rotation.copy(handAimQuat);
+      handAiming = true;
     } else {
       const controlAirspeed = lerp(0, 500, this.throttle);
       const referenceSpeed = Math.max(500 * .25, 1);
@@ -914,7 +919,12 @@ class FlightModel {
       this.rotation.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -input.yaw * 70 * rate)).normalize();
     }
     const worldSpeed = speed * worldSpeedScale;
-    this.velocity.copy(this.forward()).multiplyScalar(speed > .01 ? worldSpeed : 0);
+    // While hand-aiming, move along the pull vector (not a lagging nose heading).
+    if (handAiming) {
+      this.velocity.copy(handAimForward).multiplyScalar(speed > .01 ? worldSpeed : 0);
+    } else {
+      this.velocity.copy(this.forward()).multiplyScalar(speed > .01 ? worldSpeed : 0);
+    }
     if (speed > .01) this.position.addScaledVector(this.velocity, dt);
   }
 }
@@ -1157,7 +1167,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.60`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.61`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
