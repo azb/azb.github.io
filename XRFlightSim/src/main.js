@@ -234,7 +234,6 @@ const uiHitPoint = new THREE.Vector3();
 const uiPanelWorld = new THREE.Vector3();
 const uiGrabOffset = new THREE.Vector3();
 const uiTempWorld = new THREE.Vector3();
-const uiLookTarget = new THREE.Vector3();
 const uiParentQuat = new THREE.Quaternion();
 /** @type {{ controller: THREE.Object3D, panel: THREE.Object3D, distance: number, offsetWorld: THREE.Vector3 } | null} */
 let uiDrag = null;
