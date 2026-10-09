@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.40";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.41";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -258,7 +258,28 @@ const uiControllerEntries = [0, 1].map((index) => {
   laser.visible = false;
   laser.frustumCulled = false;
   controller.add(laser);
-  return { controller, laser, triggerWasDown: false };
+  const entry = { index, controller, laser, triggerWasDown: false, selectHeld: false };
+
+  // Three.js dispatches these on the target-ray group; inputSource is NOT auto-copied to userData.
+  controller.addEventListener("connected", (event) => {
+    controller.userData.inputSource = event.data ?? null;
+  });
+  controller.addEventListener("disconnected", () => {
+    controller.userData.inputSource = null;
+    entry.selectHeld = false;
+    entry.triggerWasDown = false;
+    if (uiDrag?.controller === controller) uiDrag = null;
+  });
+  controller.addEventListener("selectstart", () => {
+    entry.selectHeld = true;
+    tryStartUiDrag(controller);
+  });
+  controller.addEventListener("selectend", () => {
+    entry.selectHeld = false;
+    if (uiDrag?.controller === controller) uiDrag = null;
+  });
+
+  return entry;
 });
 
 function draggableUiPanels() {
@@ -283,8 +304,20 @@ function getControllerAimRay(controller, origin, direction) {
   direction.set(0, 0, -1).applyQuaternion(uiRayQuat);
 }
 
-function isControllerTriggerDown(controller) {
-  const button = controller.userData?.inputSource?.gamepad?.buttons?.[0];
+function inputSourceForController(entry) {
+  const fromEvent = entry.controller.userData?.inputSource;
+  if (fromEvent) return fromEvent;
+  const session = renderer.xr.getSession();
+  if (!session) return null;
+  const tracked = [...session.inputSources].filter((source) => (
+    source.targetRayMode === "tracked-pointer" && source.gamepad
+  ));
+  return tracked[entry.index] ?? null;
+}
+
+function isControllerTriggerDown(entry) {
+  if (entry.selectHeld) return true;
+  const button = inputSourceForController(entry)?.gamepad?.buttons?.[0];
   if (!button) return false;
   return Boolean(button.pressed) || (button.value ?? 0) > 0.55;
 }
@@ -319,12 +352,14 @@ function updateUiPanelInteraction() {
     for (const entry of uiControllerEntries) {
       entry.laser.visible = false;
       entry.triggerWasDown = false;
+      entry.selectHeld = false;
     }
     return;
   }
 
   if (uiDrag) {
-    if (!uiDrag.panel.parent || !isControllerTriggerDown(uiDrag.controller)) {
+    const dragEntry = uiControllerEntries.find((entry) => entry.controller === uiDrag.controller);
+    if (!uiDrag.panel.parent || (dragEntry && !isControllerTriggerDown(dragEntry))) {
       uiDrag = null;
     } else {
       uiPointerBlocksFire = true;
@@ -348,7 +383,7 @@ function updateUiPanelInteraction() {
           entry.laser.material.color.setHex(0xffe626);
           entry.laser.material.opacity = 0.95;
         }
-        entry.triggerWasDown = isControllerTriggerDown(entry.controller);
+        entry.triggerWasDown = isControllerTriggerDown(entry);
       }
       return;
     }
@@ -374,7 +409,7 @@ function updateUiPanelInteraction() {
       entry.laser.material.opacity = 0.45;
     }
 
-    const down = isControllerTriggerDown(entry.controller);
+    const down = isControllerTriggerDown(entry);
     if (down && !entry.triggerWasDown && hit) tryStartUiDrag(entry.controller);
     entry.triggerWasDown = down;
   }
@@ -667,7 +702,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.40`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.41`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
