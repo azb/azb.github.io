@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.38";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.39";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -64,10 +64,10 @@ playSpace.add(planeRoot);
 // Lens OffScreenPlaneArrow — camera-edge chevron when the plane leaves the FOV.
 // Lens units are ~cm (depth 70); WebXR uses meters.
 const OFFSCREEN_ARROW_DEPTH = 0.7;
-const OFFSCREEN_ARROW_EDGE_INSET = 0.48;
+const OFFSCREEN_ARROW_EDGE_INSET = 0.58;
 const OFFSCREEN_ARROW_VISIBLE_INSET = 0.08;
-const OFFSCREEN_ARROW_LENGTH = 0.032;
-const OFFSCREEN_ARROW_THICKNESS = 0.0042;
+const OFFSCREEN_ARROW_LENGTH = 0.055;
+const OFFSCREEN_ARROW_THICKNESS = 0.007;
 const OFFSCREEN_LOOK_Z = -1;
 const offScreenPlaneLocal = new THREE.Vector3();
 const offScreenArrowLocalPos = new THREE.Vector3();
@@ -509,7 +509,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.38`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.39`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
