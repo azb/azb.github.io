@@ -1,8 +1,8 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.63";
-import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.63";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.64";
+import { createGamePanel, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.4.64";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -242,11 +242,15 @@ function dismissControlsToGame() {
   showUiMode("game");
 }
 
-/** Hand-height menus in front of the player so they don't cover the sky / plane. */
-const UI_HAND_HEIGHT_DROP = 1.05; // ~0.5m lower than prior hand placement
-const UI_HAND_HEIGHT_MIN = 0.4;
-const UI_HAND_HEIGHT_MAX = 0.7;
-const UI_MENU_DISTANCE = 1.35;
+/** Menus sit at tracked hand height, in front of the player (platform-agnostic). */
+const UI_MENU_DISTANCE = 1.25;
+/** Fallback when no hands/controllers yet: meters below the headset. */
+const UI_HEAD_FALLBACK_DROP = 0.45;
+/** Keep panel between these offsets below the headset (no absolute floor clamps). */
+const UI_BELOW_HEAD_MIN = 0.18;
+const UI_BELOW_HEAD_MAX = 0.9;
+/** Re-place once hands/controllers report a pose after XR starts. */
+let uiAwaitingHandAnchor = false;
 
 function showUiMode(mode) {
   uiMode = mode;
@@ -361,6 +365,36 @@ const uiWorldUp = new THREE.Vector3(0, 1, 0);
 let uiDrag = null;
 let uiPointerBlocksFire = false;
 
+/** Average Y of tracked controllers / hand wrists near the headset. */
+function sampleTrackedHandHeight(headY) {
+  let sumY = 0;
+  let count = 0;
+  for (let i = 0; i < 2; i += 1) {
+    const controller = renderer.xr.getController(i);
+    const source = controller?.userData?.inputSource;
+    if (source) {
+      const grip = renderer.xr.getControllerGrip?.(i) ?? controller;
+      grip.updateMatrixWorld(true);
+      grip.getWorldPosition(uiHitPoint);
+      if (Math.abs(uiHitPoint.y - headY) <= 1.25) {
+        sumY += uiHitPoint.y;
+        count += 1;
+      }
+    }
+    const hand = renderer.xr.getHand(i);
+    if (!hand?.userData?.inputSource) continue;
+    const wrist = hand.joints?.wrist ?? hand.joints?.["index-finger-metacarpal"];
+    if (!wrist) continue;
+    wrist.updateMatrixWorld?.(true);
+    wrist.getWorldPosition(uiHitPoint);
+    if (Math.abs(uiHitPoint.y - headY) <= 1.25) {
+      sumY += uiHitPoint.y;
+      count += 1;
+    }
+  }
+  return count > 0 ? sumY / count : null;
+}
+
 function placeMenusInFrontOfPlayer() {
   const viewCam = typeof engineListenerObject === "function" ? engineListenerObject() : camera;
   if (!viewCam || !playSpace) return;
@@ -369,18 +403,22 @@ function placeMenusInFrontOfPlayer() {
   viewCam.getWorldPosition(uiPanelWorld);
   viewCam.getWorldQuaternion(uiFaceQuat);
 
-  // Horizontal forward from headset yaw (height is set separately, below hands).
+  // Horizontal forward from headset yaw.
   uiRayDir.set(0, 0, -1).applyQuaternion(uiFaceQuat);
   uiRayDir.y = 0;
   if (uiRayDir.lengthSq() < 1e-8) uiRayDir.set(0, 0, -1);
   else uiRayDir.normalize();
 
+  const headY = uiPanelWorld.y;
+  const trackedHandY = sampleTrackedHandHeight(headY);
+  // Prefer real hand/controller height so Quest / Vision Pro match; never use
+  // absolute floor clamps (AVP local space often puts those under the floor).
+  let panelY = trackedHandY != null ? trackedHandY : headY - UI_HEAD_FALLBACK_DROP;
+  panelY = clamp(panelY, headY - UI_BELOW_HEAD_MAX, headY - UI_BELOW_HEAD_MIN);
+  if (trackedHandY != null) uiAwaitingHandAnchor = false;
+
   uiHitPoint.copy(uiPanelWorld).addScaledVector(uiRayDir, UI_MENU_DISTANCE);
-  uiHitPoint.y = clamp(
-    uiPanelWorld.y - UI_HAND_HEIGHT_DROP,
-    UI_HAND_HEIGHT_MIN,
-    UI_HAND_HEIGHT_MAX,
-  );
+  uiHitPoint.y = panelY;
 
   // Pitch toward the headset but keep world-up so the panel stays level (no roll).
   uiFaceTowardPlayer.subVectors(uiPanelWorld, uiHitPoint);
@@ -448,6 +486,8 @@ const uiControllerEntries = [0, 1].map((index) => {
   // Three.js dispatches these on the target-ray group; inputSource is NOT auto-copied to userData.
   controller.addEventListener("connected", (event) => {
     controller.userData.inputSource = event.data ?? null;
+    // Controllers often connect after the first menu place — re-anchor to hand height.
+    if (uiMode !== "game") placeMenusInFrontOfPlayer();
   });
   controller.addEventListener("disconnected", () => {
     controller.userData.inputSource = null;
@@ -667,6 +707,7 @@ const xrHands = [0, 1].map((index) => {
   hand.addEventListener("connected", (event) => {
     hand.userData.inputSource = event.data ?? null;
     hand.userData.handedness = event.data?.handedness || "";
+    if (uiMode !== "game") placeMenusInFrontOfPlayer();
   });
   hand.addEventListener("disconnected", () => {
     if (handSteer.hand === hand) onHandPinchEnd(hand);
@@ -797,6 +838,7 @@ function updateUiPanelInteraction() {
   const presenting = renderer.xr.isPresenting;
   if (!presenting) {
     uiDrag = null;
+    uiAwaitingHandAnchor = false;
     setUiButtonHovers(draggableUiPanels(), null);
     for (const entry of uiControllerEntries) {
       entry.laser.visible = false;
@@ -804,6 +846,11 @@ function updateUiPanelInteraction() {
       entry.selectHeld = false;
     }
     return;
+  }
+
+  // Session often starts before hand poses exist — re-anchor when they appear.
+  if (uiAwaitingHandAnchor && uiMode !== "game") {
+    placeMenusInFrontOfPlayer();
   }
 
   // Flying: hide interaction rays. Pause/resume with the controller menu button.
@@ -1212,7 +1259,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.63`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.64`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -2100,12 +2147,14 @@ async function configureVR() {
       await ensureXrReferenceSpace(session);
       const blend = session.environmentBlendMode ?? renderer.xr.getEnvironmentBlendMode?.();
       applySessionPresentation(mode, blend);
+      uiAwaitingHandAnchor = true;
       placeMenusInFrontOfPlayer();
       vrButton.textContent = "XR active";
       session.addEventListener("end", () => {
         pauseEngineSound();
         clearEnvironmentMeshes();
         resetPlaySpaceHeight();
+        uiAwaitingHandAnchor = false;
         restoreDesktopPresentation();
         vrButton.disabled = false;
         vrButton.textContent = labelFor();
