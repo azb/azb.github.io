@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.42";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.43";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -235,6 +235,7 @@ const uiPanelWorld = new THREE.Vector3();
 const uiGrabOffset = new THREE.Vector3();
 const uiTempWorld = new THREE.Vector3();
 const uiParentQuat = new THREE.Quaternion();
+const uiFaceUserQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 /** @type {{ controller: THREE.Object3D, panel: THREE.Object3D, distance: number, offsetWorld: THREE.Vector3 } | null} */
 let uiDrag = null;
 let uiPointerBlocksFire = false;
@@ -368,12 +369,12 @@ function updateUiPanelInteraction() {
       uiTempWorld.copy(uiHitPoint).add(uiDrag.offsetWorld);
       playSpace.worldToLocal(uiTempWorld);
       uiDrag.panel.position.copy(uiTempWorld);
-      // Match headset orientation so panel +Z faces the user (lookAt aims -Z and flipped the UI).
+      // Match headset orientation, then yaw 180° so the panel front faces the user.
       const viewCam = engineListenerObject();
       if (viewCam && uiDrag.panel.parent) {
         viewCam.getWorldQuaternion(uiRayQuat);
         uiDrag.panel.parent.getWorldQuaternion(uiParentQuat).invert();
-        uiDrag.panel.quaternion.copy(uiParentQuat).multiply(uiRayQuat);
+        uiDrag.panel.quaternion.copy(uiParentQuat).multiply(uiRayQuat).multiply(uiFaceUserQuat);
       }
       for (const entry of uiControllerEntries) {
         entry.laser.visible = entry.controller === uiDrag.controller;
@@ -701,7 +702,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.42`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.43`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
