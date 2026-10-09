@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.39";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.4.40";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -223,6 +223,163 @@ let pausePanel = createWorldPanel([
   { text: "Press the left controller Menu button to resume", x: 768, y: 425, size: 39, align: "center" },
 ], 2.9, 1.05);
 pausePanel.position.set(0, 1.6, -2.55); pausePanel.visible = false; playSpace.add(pausePanel);
+
+/** XR distance-drag for floating UI panels (Lens Floating UI / ContainerFrame translation). */
+const uiRaycaster = new THREE.Raycaster();
+uiRaycaster.far = 12;
+const uiRayOrigin = new THREE.Vector3();
+const uiRayDir = new THREE.Vector3();
+const uiRayQuat = new THREE.Quaternion();
+const uiHitPoint = new THREE.Vector3();
+const uiPanelWorld = new THREE.Vector3();
+const uiGrabOffset = new THREE.Vector3();
+const uiTempWorld = new THREE.Vector3();
+const uiLookTarget = new THREE.Vector3();
+/** @type {{ controller: THREE.Object3D, panel: THREE.Object3D, distance: number, offsetWorld: THREE.Vector3 } | null} */
+let uiDrag = null;
+let uiPointerBlocksFire = false;
+const uiControllerEntries = [0, 1].map((index) => {
+  const controller = renderer.xr.getController(index);
+  scene.add(controller);
+  const laser = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, -1),
+    ]),
+    new THREE.LineBasicMaterial({
+      color: 0x7fd4ff,
+      transparent: true,
+      opacity: 0.45,
+      depthTest: false,
+    }),
+  );
+  laser.name = "UiLaser";
+  laser.scale.z = 3;
+  laser.visible = false;
+  laser.frustumCulled = false;
+  controller.add(laser);
+  return { controller, laser, triggerWasDown: false };
+});
+
+function draggableUiPanels() {
+  const panels = [];
+  if (controlsPanel?.visible) panels.push(controlsPanel);
+  if (pausePanel?.visible) panels.push(pausePanel);
+  return panels;
+}
+
+function uiRootFromHit(object) {
+  let node = object;
+  while (node) {
+    if (node === controlsPanel || node === pausePanel) return node;
+    node = node.parent;
+  }
+  return null;
+}
+
+function getControllerAimRay(controller, origin, direction) {
+  controller.getWorldPosition(origin);
+  controller.getWorldQuaternion(uiRayQuat);
+  direction.set(0, 0, -1).applyQuaternion(uiRayQuat);
+}
+
+function isControllerTriggerDown(controller) {
+  const button = controller.userData?.inputSource?.gamepad?.buttons?.[0];
+  if (!button) return false;
+  return Boolean(button.pressed) || (button.value ?? 0) > 0.55;
+}
+
+function tryStartUiDrag(controller) {
+  const panels = draggableUiPanels();
+  if (!panels.length) return false;
+  getControllerAimRay(controller, uiRayOrigin, uiRayDir);
+  uiRaycaster.set(uiRayOrigin, uiRayDir);
+  const hits = uiRaycaster.intersectObjects(panels, true);
+  for (const hit of hits) {
+    const panel = uiRootFromHit(hit.object);
+    if (!panel) continue;
+    panel.getWorldPosition(uiPanelWorld);
+    uiGrabOffset.copy(uiPanelWorld).sub(hit.point);
+    uiDrag = {
+      controller,
+      panel,
+      distance: hit.distance,
+      offsetWorld: uiGrabOffset.clone(),
+    };
+    return true;
+  }
+  return false;
+}
+
+function updateUiPanelInteraction() {
+  uiPointerBlocksFire = false;
+  const presenting = renderer.xr.isPresenting;
+  if (!presenting) {
+    uiDrag = null;
+    for (const entry of uiControllerEntries) {
+      entry.laser.visible = false;
+      entry.triggerWasDown = false;
+    }
+    return;
+  }
+
+  if (uiDrag) {
+    if (!uiDrag.panel.parent || !isControllerTriggerDown(uiDrag.controller)) {
+      uiDrag = null;
+    } else {
+      uiPointerBlocksFire = true;
+      getControllerAimRay(uiDrag.controller, uiRayOrigin, uiRayDir);
+      uiHitPoint.copy(uiRayOrigin).addScaledVector(uiRayDir, uiDrag.distance);
+      uiTempWorld.copy(uiHitPoint).add(uiDrag.offsetWorld);
+      playSpace.worldToLocal(uiTempWorld);
+      uiDrag.panel.position.copy(uiTempWorld);
+      const viewCam = engineListenerObject();
+      if (viewCam) {
+        viewCam.getWorldPosition(uiLookTarget);
+        uiDrag.panel.getWorldPosition(uiPanelWorld);
+        uiLookTarget.y = uiPanelWorld.y;
+        uiDrag.panel.lookAt(uiLookTarget);
+        uiDrag.panel.rotateY(Math.PI);
+      }
+      for (const entry of uiControllerEntries) {
+        entry.laser.visible = entry.controller === uiDrag.controller;
+        if (entry.laser.visible) {
+          entry.laser.scale.z = Math.max(uiDrag.distance, 0.05);
+          entry.laser.material.color.setHex(0xffe626);
+          entry.laser.material.opacity = 0.95;
+        }
+        entry.triggerWasDown = isControllerTriggerDown(entry.controller);
+      }
+      return;
+    }
+  }
+
+  let hovered = false;
+  for (const entry of uiControllerEntries) {
+    entry.laser.visible = true;
+    getControllerAimRay(entry.controller, uiRayOrigin, uiRayDir);
+    uiRaycaster.set(uiRayOrigin, uiRayDir);
+    const panels = draggableUiPanels();
+    const hit = panels.length
+      ? uiRaycaster.intersectObjects(panels, true).find((entryHit) => uiRootFromHit(entryHit.object))
+      : null;
+    if (hit) {
+      hovered = true;
+      entry.laser.scale.z = Math.max(hit.distance, 0.05);
+      entry.laser.material.color.setHex(0xffe626);
+      entry.laser.material.opacity = 0.95;
+    } else {
+      entry.laser.scale.z = 3;
+      entry.laser.material.color.setHex(0x7fd4ff);
+      entry.laser.material.opacity = 0.45;
+    }
+
+    const down = isControllerTriggerDown(entry.controller);
+    if (down && !entry.triggerWasDown && hit) tryStartUiDrag(entry.controller);
+    entry.triggerWasDown = down;
+  }
+  uiPointerBlocksFire = hovered || Boolean(uiDrag);
+}
 
 function createAircraft() {
   const plane = new THREE.Group();
@@ -486,6 +643,7 @@ function loadFallbackFighter() {
 function replacePanel(next, role) {
   if (!next) return;
   const previous = role === "controls" ? controlsPanel : pausePanel;
+  if (uiDrag?.panel === previous) uiDrag = null;
   playSpace.remove(previous);
   if (role === "controls") {
     controlsPanel = next;
@@ -509,7 +667,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.39`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.4.40`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -1054,13 +1212,14 @@ addEventListener("resize", resize); resize(); let previous = performance.now();
 renderer.setAnimationLoop((time, frame) => {
   const dt = (time - previous) / 1000;
   previous = time;
+  updateUiPanelInteraction();
   const input = controls();
   if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused);
   pauseButtonWasPressed = input.pause;
   if (!simulationPaused) {
     flight.step(input, dt);
     animateAircraft(input, dt);
-    if (input.fire && time - lastFire > fireCooldownMs) {
+    if (input.fire && !uiPointerBlocksFire && time - lastFire > fireCooldownMs) {
       fire();
       lastFire = time;
     }
