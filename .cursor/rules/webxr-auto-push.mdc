@@ -1,0 +1,16 @@
+---
+description: Auto-commit and push XRFlightSim / WebXR changes
+globs: XRFlightSim/**
+alwaysApply: false
+---
+
+# WebXR auto-push
+
+When you finish a batch of edits under `XRFlightSim/` (or the user asks to ship WebXR work):
+
+1. `git status` / `git diff` scoped to `XRFlightSim/` (and related WebXR paths only).
+2. Stage those files, commit with an imperative message matching repo style.
+3. `git push origin HEAD` immediately after a successful commit.
+4. Do **not** wait for a separate “commit” or “push” request for WebXR-only work.
+
+Still ask first if the change set includes unrelated paths outside WebXR, or if push would need force.
