@@ -22,7 +22,8 @@ import {
 
 const HEARTBEAT_MS = 20000;
 const SIGNAL_HEARTBEAT_MS = 2500;
-const POSE_FIRESTORE_MS = 100;
+/** Faster relay helps Spectacles (poll-only, no WebRTC). */
+const POSE_FIRESTORE_MS = 80;
 /** Drop ghost seats after this (refresh creates a new anonymous uid each time). */
 const STALE_MS = 20000;
 /** Join/create prune — Firestore rules allow deleting others after ~8s. */
