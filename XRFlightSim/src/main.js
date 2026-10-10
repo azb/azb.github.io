@@ -1,9 +1,10 @@
 ﻿import * as THREE from "three";
+import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.7";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.7";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.7";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.8";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.8";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.8";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1228,15 +1229,28 @@ const net = new FlightMultiplayerSession();
 const BALLOON_COUNT = 8;
 const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
+/** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
+const BALLOON_TARGET_HEIGHT = 0.9;
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.8");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
   metalness: 0.05,
 });
+const balloonKnotMat = new THREE.MeshStandardMaterial({
+  color: 0x2a2a2a,
+  roughness: 0.65,
+  metalness: 0.05,
+});
 const balloonGeom = new THREE.SphereGeometry(BALLOON_HIT_RADIUS, 16, 12);
-/** @type {{ id: number, mesh: THREE.Mesh, active: boolean, respawnAt: number, respawnPos: THREE.Vector3 }[]} */
+/** @type {THREE.Object3D | null} */
+let balloonTemplate = null;
+/** @type {Promise<THREE.Object3D | null> | null} */
+let balloonLoadPromise = null;
+/** @type {{ id: number, mesh: THREE.Object3D, active: boolean, respawnAt: number, respawnPos: THREE.Vector3 }[]} */
 const balloons = [];
 let balloonsSeeded = false;
+let balloonsSeeding = false;
 
 function randomBalloonPosition(target = new THREE.Vector3()) {
   // Flight-area field in playSpace meters — new spot each respawn.
@@ -1247,19 +1261,80 @@ function randomBalloonPosition(target = new THREE.Vector3()) {
   );
 }
 
-function createBalloonMesh(id) {
+function normalizeBalloonTemplate(source) {
+  const root = new THREE.Group();
+  root.name = "BalloonTemplate";
+  root.add(source);
+  // Lens FBX is authored in cm-scale units; fit to WebXR meters.
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z, 1e-4);
+  source.scale.multiplyScalar(BALLOON_TARGET_HEIGHT / maxDim);
+  root.updateMatrixWorld(true);
+  const centered = new THREE.Box3().setFromObject(root);
+  const center = new THREE.Vector3();
+  centered.getCenter(center);
+  // Root stays at the balloon center so hit tests use mesh.position.
+  source.position.sub(center);
+  root.traverse((node) => {
+    if (!node.isMesh) return;
+    node.castShadow = false;
+    node.receiveShadow = false;
+  });
+  return root;
+}
+
+function loadBalloonTemplate() {
+  if (balloonTemplate) return Promise.resolve(balloonTemplate);
+  if (balloonLoadPromise) return balloonLoadPromise;
+  balloonLoadPromise = new Promise((resolve) => {
+    new FBXLoader().load(
+      balloonModelUrl,
+      (fbx) => {
+        balloonTemplate = normalizeBalloonTemplate(fbx);
+        resolve(balloonTemplate);
+      },
+      undefined,
+      (error) => {
+        console.error("Balloon FBX failed to load", error);
+        resolve(null);
+      },
+    );
+  });
+  return balloonLoadPromise;
+}
+
+function createFallbackBalloonMesh(id) {
   const mesh = new THREE.Mesh(balloonGeom, balloonMat.clone());
   mesh.name = `Balloon:${id}`;
   mesh.castShadow = false;
   mesh.receiveShadow = false;
-  // Slight color variety per balloon.
   mesh.material.color.offsetHSL((id * 0.11) % 1, 0, 0);
   return mesh;
 }
 
-function ensureBalloonsSeeded() {
+function createBalloonMesh(id) {
+  if (!balloonTemplate) return createFallbackBalloonMesh(id);
+  const mesh = balloonTemplate.clone(true);
+  mesh.name = `Balloon:${id}`;
+  mesh.traverse((node) => {
+    if (!node.isMesh) return;
+    const name = String(node.name || "").toLowerCase();
+    const isKnot = name.includes("cube") || name.includes("knot") || name.includes("tie");
+    const mat = (isKnot ? balloonKnotMat : balloonMat).clone();
+    if (!isKnot && mat.color) mat.color.offsetHSL((id * 0.11) % 1, 0, 0);
+    node.material = mat;
+    node.castShadow = false;
+    node.receiveShadow = false;
+  });
+  return mesh;
+}
+
+function seedBalloonsNow() {
   if (balloonsSeeded) return;
   balloonsSeeded = true;
+  balloonsSeeding = false;
   for (let id = 0; id < BALLOON_COUNT; id += 1) {
     const mesh = createBalloonMesh(id);
     const pos = randomBalloonPosition();
@@ -1273,6 +1348,12 @@ function ensureBalloonsSeeded() {
       respawnPos: pos.clone(),
     });
   }
+}
+
+function ensureBalloonsSeeded() {
+  if (balloonsSeeded || balloonsSeeding) return;
+  balloonsSeeding = true;
+  loadBalloonTemplate().then(() => seedBalloonsNow());
 }
 
 function getBalloonSyncPayload() {
@@ -1980,7 +2061,8 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.7`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.8`);
+    loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
