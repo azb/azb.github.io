@@ -2,9 +2,9 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.9";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.9";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.9";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.10";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.10";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.10";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -233,8 +233,13 @@ async function loadInstructionControllerModels(session) {
 }
 const gameSettings = loadSettings();
 let returnToPauseAfterControls = false;
-/** @type {"controls" | "game" | "pause" | "settings"} */
+/** @type {"controls" | "game" | "pause" | "settings" | "multiplayer"} */
 let uiMode = "controls";
+
+/** Controls board stays up while the plane still flies (try-before-OK). */
+function isFlightLiveUi() {
+  return uiMode === "game" || uiMode === "controls";
+}
 
 let bulletCollidersDirty = true;
 function markBulletCollidersDirty() {
@@ -285,24 +290,25 @@ function showUiMode(mode) {
   if (pausePanel) pausePanel.visible = showPause;
   if (settingsPanel) settingsPanel.visible = showSettings;
   if (multiplayerPanel) multiplayerPanel.visible = showMultiplayer;
-  const shouldPause = mode !== "game";
-  if (shouldPause !== simulationPaused) {
-    simulationPaused = shouldPause;
-    if (shouldPause) {
-      pauseEngineSound();
-      statusLabel.textContent = mode === "settings"
-        ? "Settings"
-        : mode === "controls"
-          ? "Controls"
-          : mode === "multiplayer"
-            ? "Multiplayer"
-            : "Simulation paused";
-    } else {
-      startEngineSound();
-      statusLabel.textContent = renderer.xr.isPresenting
+  // Stay live on the controls board so players can test sticks/keys before OK.
+  const shouldPause = mode !== "game" && mode !== "controls";
+  simulationPaused = shouldPause;
+  if (shouldPause) {
+    pauseEngineSound();
+    statusLabel.textContent = mode === "settings"
+      ? "Settings"
+      : mode === "multiplayer"
+        ? "Multiplayer"
+        : "Simulation paused";
+  } else {
+    startEngineSound();
+    statusLabel.textContent = mode === "controls"
+      ? (renderer.xr.isPresenting
+        ? "Try controls · OK when ready · X pauses"
+        : "Try controls · arrows/WASD · OK when ready")
+      : (renderer.xr.isPresenting
         ? "Flying · R pinch steer · L pinch fire · X pauses"
-        : "Desktop preview · controller or keyboard";
-    }
+        : "Desktop preview · arrows/WASD · PgUp/PgDn throttle");
   }
   if (showGame) {
     setUiButtonHovers(draggableUiPanels(), null);
@@ -832,7 +838,7 @@ function onHandPinchStart(hand) {
     handSteer.roll = 0;
     handSteer.throttle = 0;
     handSteer.aimDirection = null;
-    handJoystickVisual.visible = !simulationPaused && uiMode === "game";
+    handJoystickVisual.visible = !simulationPaused && isFlightLiveUi();
     handJoystickOriginMesh.position.copy(handSteer.origin);
     handJoystickTipMesh.position.copy(handSteer.origin);
   } else if (handedness === "left") {
@@ -857,7 +863,7 @@ function onHandPinchEnd(hand) {
 }
 
 function updateHandJoystickVisual() {
-  if (!handSteer.active || simulationPaused || uiMode !== "game") {
+  if (!handSteer.active || simulationPaused || !isFlightLiveUi()) {
     handJoystickVisual.visible = false;
     return;
   }
@@ -1082,13 +1088,14 @@ function updateUiPanelInteraction() {
     placeMenusInFrontOfPlayer();
   }
 
-  // Flying: hide interaction rays. Pause/resume with the controller menu button.
+  // Flying HUD only: hide interaction rays. Controls board keeps rays so OK works.
   if (uiMode === "game") {
     uiDrag = null;
     for (const entry of uiControllerEntries) {
       entry.laser.visible = false;
       entry.triggerWasDown = isControllerTriggerDown(entry);
     }
+    uiPointerBlocksFire = false;
     return;
   }
 
@@ -1104,7 +1111,9 @@ function updateUiPanelInteraction() {
       if (entry.pressedButton) clearUiButtonPress(entry);
     }
     setUiButtonHovers(draggableUiPanels(), gamepadMenuFocusedButton);
-    uiPointerBlocksFire = uiMode !== "game";
+    // On controls, only block fire when a UI button is focused/pressed.
+    uiPointerBlocksFire = uiMode !== "controls"
+      || Boolean(gamepadMenuFocusedButton);
     return;
   }
 
@@ -1198,7 +1207,9 @@ function updateUiPanelInteraction() {
     }
   }
   setUiButtonHovers(panels, hoveredButton || gamepadMenuFocusedButton);
-  uiPointerBlocksFire = hovered || Boolean(uiDrag) || uiMode !== "game";
+  // Pause/settings always block fire; controls only blocks when aiming at UI.
+  uiPointerBlocksFire = hovered || Boolean(uiDrag)
+    || (uiMode !== "game" && uiMode !== "controls");
 }
 
 function createAircraft() {
@@ -1231,7 +1242,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.9");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.10");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1814,7 +1825,9 @@ class FlightModel {
     if (speed > .01) this.position.addScaledVector(this.velocity, dt);
   }
 }
-const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = true; let pauseButtonWasPressed = false; let controlsVisible = true;
+const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true;
+// Controls board is live from the start — fly while reading the diagram, then OK.
+showUiMode("controls");
 // Lens BulletSpawnPoint1/2 under Player (scale 0.296423). Scene units are cm ? meters; flip Z for THREE -forward.
 const lensPlayerScale = 0.296423;
 const lensLocalToThree = (p) => new THREE.Vector3(
@@ -1982,7 +1995,7 @@ function updateWingVortex(dt) {
 }
 function setSimulationPaused(paused) {
   if (paused) {
-    if (uiMode === "game") showUiMode("pause");
+    if (uiMode === "game" || uiMode === "controls") showUiMode("pause");
     return;
   }
   showUiMode("game");
@@ -2061,7 +2074,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.9`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.10`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
