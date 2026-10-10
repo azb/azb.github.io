@@ -2,9 +2,9 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.10";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.10";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.10";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.11";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.11";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.11";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -305,10 +305,10 @@ function showUiMode(mode) {
     statusLabel.textContent = mode === "controls"
       ? (renderer.xr.isPresenting
         ? "Try controls · OK when ready · X pauses"
-        : "Try controls · arrows/WASD · OK when ready")
+        : "Try controls · arrows/WASD · X/Z throttle · OK when ready")
       : (renderer.xr.isPresenting
-        ? "Flying · R pinch steer · L pinch fire · X pauses"
-        : "Desktop preview · arrows/WASD · PgUp/PgDn throttle");
+        ? "Flying · R pinch steer · L pinch fire · menu pauses"
+        : "Desktop preview · arrows/WASD · X/Z throttle");
   }
   if (showGame) {
     setUiButtonHovers(draggableUiPanels(), null);
@@ -1242,7 +1242,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.10");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.11");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2074,7 +2074,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.10`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.11`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2265,16 +2265,16 @@ function controls() {
     // Hands must not override an active Bluetooth pad (common AVP regression).
     applyHandControls(value, controllerReadout);
   }
-  // Desktop: arrows or WASD steer; PageUp/PageDown (or +/-) throttle; Space fires.
+  // Desktop: arrows or WASD steer; X/Z (or PgUp/PgDn / +/-) throttle; Space fires.
   value.pitch += (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0)
     - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
   value.roll += (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0)
     - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
   value.yaw += (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
   value.throttle += (
-    keys.has("PageUp") || keys.has("Equal") || keys.has("NumpadAdd") ? 1 : 0
+    keys.has("KeyX") || keys.has("PageUp") || keys.has("Equal") || keys.has("NumpadAdd") ? 1 : 0
   ) - (
-    keys.has("PageDown") || keys.has("Minus") || keys.has("NumpadSubtract") ? 1 : 0
+    keys.has("KeyZ") || keys.has("PageDown") || keys.has("Minus") || keys.has("NumpadSubtract") ? 1 : 0
   );
   value.fire ||= keys.has("Space");
   // DOM HUD updates are relatively expensive in XR — refresh stick readout ~8 Hz.
