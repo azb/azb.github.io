@@ -101,7 +101,7 @@ export class FlightMultiplayerSession {
 
   async joinRoom(rawCode) {
     const code = normalizeRoomCode(rawCode);
-    if (code.length < 4) throw new Error("Enter a 4-character room code.");
+    if (code.length < 4) throw new Error("Enter a 4-digit room code.");
     await this.ensureAuth();
     const { db, fs } = firebaseApi();
     const ref = fs.doc(db, "rooms", code);

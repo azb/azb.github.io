@@ -293,7 +293,7 @@ export function createMultiplayerMenu({ onHost, onJoin, onLeave, onBack }) {
 
   const buttons = [
     { label: "Host Room", y: 0.25 * s, onClick: onHost },
-    { label: "Join (code in URL ?room=)", y: -0.15 * s, onClick: onJoin },
+    { label: "Join (?room=1234)", y: -0.15 * s, onClick: onJoin },
     { label: "Leave Room", y: -0.55 * s, onClick: onLeave },
     { label: "Back", y: -0.95 * s, onClick: onBack },
   ];

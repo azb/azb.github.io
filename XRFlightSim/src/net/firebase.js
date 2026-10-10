@@ -72,7 +72,8 @@ export function firebaseErrorMessage(e) {
   return message || "Firebase connection failed.";
 }
 
-const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+/** Digits only — easier to type on Quest / VR keyboards. */
+const CODE_CHARS = "0123456789";
 
 export function randomRoomCode() {
   let s = "";
@@ -85,7 +86,6 @@ export function randomRoomCode() {
 export function normalizeRoomCode(raw) {
   return String(raw || "")
     .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
+    .replace(/\D/g, "")
     .slice(0, 6);
 }
