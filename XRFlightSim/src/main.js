@@ -1,9 +1,9 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.1";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.1";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.1";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.2";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.2";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.2";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -306,6 +306,7 @@ function showUiMode(mode) {
   if (showGame) {
     setUiButtonHovers(draggableUiPanels(), null);
     gamePanel?.userData.setThrottle?.(flight?.throttle ?? 0);
+    ensureBalloonsSeeded();
   }
   if (showMultiplayer) refreshMultiplayerUi();
   // Snap to hand height in front of the player whenever a menu/HUD opens.
@@ -1215,11 +1216,154 @@ let aircraft = createAircraft(); aircraft.position.y = -1.25; planeRoot.add(airc
 const animatedParts = { propeller: null, leftAileron: null, rightAileron: null, elevator: null, rudder: null, neutral: new Map() };
 const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.23");
 
-/** @type {Map<string, { root: THREE.Group, targetPos: THREE.Vector3, targetQuat: THREE.Quaternion }>} */
+/** @type {Map<string, { root: THREE.Group, targetPos: THREE.Vector3, targetQuat: THREE.Quaternion, throttle: number, propeller: THREE.Object3D | null }>} */
 const remotePlanes = new Map();
+const remoteBullets = [];
+const seenRemoteBulletIds = new Set();
 const PLANE_NET_INTERVAL_MS = 66;
 let lastPlaneNetMs = 0;
+let nextNetBulletId = 0;
 const net = new FlightMultiplayerSession();
+
+const BALLOON_COUNT = 8;
+const BALLOON_HIT_RADIUS = 0.45;
+const BALLOON_RESPAWN_SEC = 10;
+const balloonMat = new THREE.MeshStandardMaterial({
+  color: 0xff4d6d,
+  roughness: 0.35,
+  metalness: 0.05,
+});
+const balloonGeom = new THREE.SphereGeometry(BALLOON_HIT_RADIUS, 16, 12);
+/** @type {{ id: number, mesh: THREE.Mesh, active: boolean, respawnAt: number, respawnPos: THREE.Vector3 }[]} */
+const balloons = [];
+let balloonsSeeded = false;
+
+function randomBalloonPosition(target = new THREE.Vector3()) {
+  // Flight-area field in playSpace meters (Lens balloons are far larger in cm units).
+  return target.set(
+    (Math.random() * 2 - 1) * 10,
+    2 + Math.random() * 6,
+    -6 - Math.random() * 16,
+  );
+}
+
+function createBalloonMesh(id) {
+  const mesh = new THREE.Mesh(balloonGeom, balloonMat.clone());
+  mesh.name = `Balloon:${id}`;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  // Slight color variety per balloon.
+  mesh.material.color.offsetHSL((id * 0.11) % 1, 0, 0);
+  return mesh;
+}
+
+function ensureBalloonsSeeded() {
+  if (balloonsSeeded) return;
+  balloonsSeeded = true;
+  for (let id = 0; id < BALLOON_COUNT; id += 1) {
+    const mesh = createBalloonMesh(id);
+    const pos = randomBalloonPosition();
+    mesh.position.copy(pos);
+    playSpace.add(mesh);
+    balloons.push({
+      id,
+      mesh,
+      active: true,
+      respawnAt: -1,
+      respawnPos: pos.clone(),
+    });
+  }
+}
+
+function getBalloonSyncPayload() {
+  ensureBalloonsSeeded();
+  return balloons.map((b) => ({
+    id: b.id,
+    pos: b.active ? b.mesh.position : b.respawnPos,
+    active: b.active,
+  }));
+}
+
+function applyBalloonSync(list) {
+  if (!list?.length) return;
+  ensureBalloonsSeeded();
+  for (const spec of list) {
+    const balloon = balloons[spec.id];
+    if (!balloon) continue;
+    balloon.active = spec.active !== false;
+    balloon.mesh.visible = balloon.active;
+    balloon.mesh.position.set(spec.pos.x, spec.pos.y, spec.pos.z);
+    balloon.respawnPos.copy(balloon.mesh.position);
+    balloon.respawnAt = -1;
+  }
+}
+
+function popBalloon(id, respawnPos, delaySec = BALLOON_RESPAWN_SEC, fromNet = false) {
+  ensureBalloonsSeeded();
+  const balloon = balloons[id];
+  if (!balloon || !balloon.active) return false;
+  balloon.active = false;
+  balloon.mesh.visible = false;
+  balloon.respawnPos.set(respawnPos.x, respawnPos.y, respawnPos.z);
+  balloon.respawnAt = performance.now() + delaySec * 1000;
+  playBalloonPop();
+  if (!fromNet && net.active) {
+    net.broadcastBalloonPop({ id, respawnPos: balloon.respawnPos, delaySec });
+  }
+  if (net.active && net.isHost) {
+    net.broadcastBalloonSync(getBalloonSyncPayload());
+  }
+  return true;
+}
+
+function updateBalloons() {
+  if (!balloonsSeeded) return;
+  const now = performance.now();
+  for (const balloon of balloons) {
+    if (balloon.active || balloon.respawnAt < 0) continue;
+    if (now < balloon.respawnAt) continue;
+    balloon.respawnAt = -1;
+    balloon.active = true;
+    balloon.mesh.visible = true;
+    balloon.mesh.position.copy(balloon.respawnPos);
+    if (net.active && net.isHost) net.broadcastBalloonSync(getBalloonSyncPayload());
+  }
+}
+
+function bulletHitsBalloon(prevLocal, nextLocal) {
+  ensureBalloonsSeeded();
+  for (const balloon of balloons) {
+    if (!balloon.active) continue;
+    const dist = distPointToSegment(balloon.mesh.position, prevLocal, nextLocal);
+    if (dist <= BALLOON_HIT_RADIUS + 0.06) return balloon;
+  }
+  return null;
+}
+
+const balloonSegAb = new THREE.Vector3();
+const balloonSegClosest = new THREE.Vector3();
+function distPointToSegment(point, a, b) {
+  balloonSegAb.subVectors(b, a);
+  const lenSq = balloonSegAb.lengthSq();
+  if (lenSq < 1e-10) return point.distanceTo(a);
+  let t = (
+    (point.x - a.x) * balloonSegAb.x
+    + (point.y - a.y) * balloonSegAb.y
+    + (point.z - a.z) * balloonSegAb.z
+  ) / lenSq;
+  t = clamp(t, 0, 1);
+  balloonSegClosest.copy(a).addScaledVector(balloonSegAb, t);
+  return point.distanceTo(balloonSegClosest);
+}
+
+function findNamedPropeller(root) {
+  let found = null;
+  root.traverse((node) => {
+    if (found) return;
+    if (node.name === "Propeller") found = node;
+  });
+  return found;
+}
 
 function createRemotePlaneMesh() {
   const mesh = aircraft.clone(true);
@@ -1245,12 +1389,15 @@ function ensureRemotePlane(playerId) {
   if (entry) return entry;
   const root = new THREE.Group();
   root.name = `RemotePlane:${playerId.slice(0, 6)}`;
-  root.add(createRemotePlaneMesh());
+  const mesh = createRemotePlaneMesh();
+  root.add(mesh);
   playSpace.add(root);
   entry = {
     root,
     targetPos: new THREE.Vector3(),
     targetQuat: new THREE.Quaternion(),
+    throttle: 0,
+    propeller: findNamedPropeller(mesh),
   };
   remotePlanes.set(playerId, entry);
   return entry;
@@ -1265,6 +1412,9 @@ function removeRemotePlane(playerId) {
 
 function clearRemotePlanes() {
   for (const id of [...remotePlanes.keys()]) removeRemotePlane(id);
+  for (const shot of remoteBullets) playSpace.remove(shot);
+  remoteBullets.length = 0;
+  seenRemoteBulletIds.clear();
 }
 
 function applyRemotePlanePose(playerId, plane) {
@@ -1272,6 +1422,7 @@ function applyRemotePlanePose(playerId, plane) {
   const entry = ensureRemotePlane(playerId);
   entry.targetPos.set(plane.pos.x, plane.pos.y, plane.pos.z);
   entry.targetQuat.set(plane.rot.x, plane.rot.y, plane.rot.z, plane.rot.w).normalize();
+  entry.throttle = plane.throttle ?? 0;
   if (!entry.root.userData.placed) {
     entry.root.position.copy(entry.targetPos);
     entry.root.quaternion.copy(entry.targetQuat);
@@ -1284,6 +1435,62 @@ function updateRemotePlanes(dt) {
   for (const entry of remotePlanes.values()) {
     entry.root.position.lerp(entry.targetPos, alpha);
     entry.root.quaternion.slerp(entry.targetQuat, alpha);
+    if (entry.propeller) {
+      entry.propeller.rotateY(-dt * (4 + entry.throttle * 38));
+    }
+  }
+}
+
+function spawnRemoteBullet(fire) {
+  if (!fire || seenRemoteBulletIds.has(fire.bulletId)) return;
+  seenRemoteBulletIds.add(fire.bulletId);
+  if (seenRemoteBulletIds.size > 200) {
+    const first = seenRemoteBulletIds.values().next().value;
+    seenRemoteBulletIds.delete(first);
+  }
+  const shot = new THREE.Mesh(bulletGeom, bulletMat);
+  shot.scale.set(0.03, 0.03, 0.12);
+  shot.position.set(fire.pos.x, fire.pos.y, fire.pos.z);
+  shot.quaternion.set(fire.rot.x, fire.rot.y, fire.rot.z, fire.rot.w);
+  shot.userData.velocity = new THREE.Vector3(fire.vel.x, fire.vel.y, fire.vel.z);
+  shot.userData.age = 0;
+  shot.userData.traveled = 0;
+  shot.userData.prevPosition = shot.position.clone();
+  shot.userData.remote = true;
+  shot.userData.ownerId = fire.playerId;
+  playSpace.add(shot);
+  remoteBullets.push(shot);
+}
+
+function updateRemoteBullets(dt) {
+  if (!remoteBullets.length) return;
+  collectBulletColliders();
+  for (let i = remoteBullets.length - 1; i >= 0; i -= 1) {
+    const shot = remoteBullets[i];
+    bulletNextLocal.copy(shot.position).addScaledVector(shot.userData.velocity, dt);
+    const balloon = bulletHitsBalloon(shot.position, bulletNextLocal);
+    if (balloon) {
+      const respawn = randomBalloonPosition();
+      popBalloon(balloon.id, respawn, BALLOON_RESPAWN_SEC, true);
+      playSpace.remove(shot);
+      remoteBullets.splice(i, 1);
+      continue;
+    }
+    const hit = bulletHitsEnvironment(shot, bulletNextLocal);
+    if (hit) {
+      spawnBulletImpact(hit.point);
+      playSpace.remove(shot);
+      remoteBullets.splice(i, 1);
+      continue;
+    }
+    if (shot.userData.prevPosition) shot.userData.prevPosition.copy(shot.position);
+    shot.position.copy(bulletNextLocal);
+    shot.userData.traveled = (shot.userData.traveled ?? 0) + shot.userData.velocity.length() * dt;
+    shot.userData.age += dt;
+    if (shot.userData.age > bulletLifetimeSec) {
+      playSpace.remove(shot);
+      remoteBullets.splice(i, 1);
+    }
   }
 }
 
@@ -1322,6 +1529,7 @@ async function hostMultiplayerRoom() {
   try {
     refreshMultiplayerUi();
     if (mpStatusLabel) mpStatusLabel.textContent = "Hosting…";
+    ensureBalloonsSeeded();
     const code = await net.createRoom();
     if (mpCodeInput) mpCodeInput.value = code;
     try {
@@ -1329,6 +1537,7 @@ async function hostMultiplayerRoom() {
       url.searchParams.set("room", code);
       history.replaceState(null, "", url);
     } catch { /* ignore */ }
+    net.broadcastBalloonSync(getBalloonSyncPayload());
     refreshMultiplayerUi();
     statusLabel.textContent = `Hosted room ${code}`;
   } catch (error) {
@@ -1381,14 +1590,26 @@ async function leaveMultiplayerRoom() {
 net.on({
   playerName: () => "Pilot",
   presenting: () => renderer.xr.isPresenting,
+  getBalloonSync: () => getBalloonSyncPayload(),
   onRoster: () => refreshMultiplayerUi(),
   onRoom: () => refreshMultiplayerUi(),
-  onLink: () => refreshMultiplayerUi(),
+  onLink: () => {
+    refreshMultiplayerUi();
+    if (net.isHost) {
+      ensureBalloonsSeeded();
+      net.broadcastBalloonSync(getBalloonSyncPayload());
+    }
+  },
   onPeerClose: (id) => {
     removeRemotePlane(id);
     refreshMultiplayerUi();
   },
   onPlane: (from, plane) => applyRemotePlanePose(plane.playerId || from, plane),
+  onFire: (_from, fire) => spawnRemoteBullet(fire),
+  onBalloonSync: (list) => applyBalloonSync(list),
+  onBalloonPop: (_from, pop) => {
+    popBalloon(pop.id, pop.respawnPos, pop.delaySec, true);
+  },
   onLeave: () => {
     clearRemotePlanes();
     refreshMultiplayerUi();
@@ -1724,7 +1945,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.1`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.2`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];
@@ -2337,6 +2558,15 @@ function fire() {
   playSpace.add(shot);
   bullets.push(shot);
   vibrateFireController();
+  if (net.active) {
+    nextNetBulletId += 1;
+    net.broadcastFire({
+      bulletId: `${net.uid}-${nextNetBulletId}`,
+      position: shot.position,
+      velocity: shot.userData.velocity,
+      rotation: shot.quaternion,
+    });
+  }
 }
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
 function applyDesktopCamera() {
@@ -2378,6 +2608,14 @@ renderer.setAnimationLoop((time, frame) => {
       const shot = bullets[i];
       bulletNextLocal.copy(shot.position).addScaledVector(shot.userData.velocity, dt);
       const stepDistance = shot.position.distanceTo(bulletNextLocal);
+      const balloon = bulletHitsBalloon(shot.position, bulletNextLocal);
+      if (balloon) {
+        const respawn = randomBalloonPosition();
+        popBalloon(balloon.id, respawn, BALLOON_RESPAWN_SEC, false);
+        playSpace.remove(shot);
+        bullets.splice(i, 1);
+        continue;
+      }
       const hit = bulletHitsEnvironment(shot, bulletNextLocal);
       if (hit) {
         spawnBulletImpact(hit.point);
@@ -2400,6 +2638,8 @@ renderer.setAnimationLoop((time, frame) => {
   planeRoot.quaternion.copy(flight.rotation);
   broadcastLocalPlane(time);
   updateRemotePlanes(dt);
+  updateRemoteBullets(dt);
+  updateBalloons();
   updateWingVortex(dt);
   applyDesktopCamera();
   updateOffScreenPlaneArrow();
