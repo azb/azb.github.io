@@ -22,6 +22,13 @@ export const firebaseConfig = {
 
 export const APP_ID = "xrflightsim";
 
+/**
+ * Cloudflare Worker WSS relay (pose / fire / balloons).
+ * Deploy: `cd relay && npm i && npm run deploy` — then paste the workers.dev URL here.
+ * Empty string disables the socket (Firestore + WebRTC only).
+ */
+export const WS_RELAY_URL = "wss://xrflightsim-relay.lean-poppyseed.workers.dev";
+
 let appMod;
 let authMod;
 let fsMod;

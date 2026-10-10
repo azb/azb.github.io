@@ -1,5 +1,6 @@
 import {
   APP_ID,
+  WS_RELAY_URL,
   loadFirebase,
   startFirebase,
   firebaseApi,
@@ -8,6 +9,7 @@ import {
   normalizeRoomCode,
 } from "./firebase.js";
 import { createRtcMesh } from "./webrtc.js";
+import { createWsRelay, roomWsUrl } from "./ws-relay.js";
 import {
   makeBalloonPopMessage,
   makeBalloonSyncMessage,
@@ -22,8 +24,8 @@ import {
 
 const HEARTBEAT_MS = 20000;
 const SIGNAL_HEARTBEAT_MS = 2500;
-/** Faster relay helps Spectacles (poll-only, no WebRTC). */
-const POSE_FIRESTORE_MS = 80;
+/** Firestore pose fallback when WSS is down (Spectacles / Quest without WebRTC). */
+const POSE_FIRESTORE_MS = 250;
 /** Drop ghost seats after this (refresh creates a new anonymous uid each time). */
 const STALE_MS = 20000;
 /** Join/create prune — Firestore rules allow deleting others after ~8s. */
@@ -45,13 +47,14 @@ export class FlightMultiplayerSession {
     this._unsubPlayers = null;
     this._pruneTimer = null;
     this._rtc = null;
+    this._ws = null;
     this._lastPresence = 0;
     this._lastPosePublish = 0;
     this._localPose = null;
     this._evtSeq = 0;
     this._lastBalloonsKey = "";
     /** @type {Map<string, number>} */
-    this._lastRtcPlaneMs = new Map();
+    this._lastFastPlaneMs = new Map();
     /** @type {Map<string, number>} */
     this._lastEvtSeq = new Map();
   }
@@ -61,7 +64,12 @@ export class FlightMultiplayerSession {
   }
 
   linkCount() {
-    return this._rtc?.openCount?.() ?? 0;
+    const rtc = this._rtc?.openCount?.() ?? 0;
+    return rtc + (this._ws?.ready() ? 1 : 0);
+  }
+
+  _wsReady() {
+    return !!this._ws?.ready();
   }
 
   async ensureAuth() {
@@ -191,11 +199,12 @@ export class FlightMultiplayerSession {
         this.handlers.onLink?.(id);
       },
       onClose: (id) => {
-        this._lastRtcPlaneMs.delete(id);
+        this._lastFastPlaneMs.delete(id);
         this.handlers.onPeerClose?.(id);
       },
       publishSignal: () => this.publishPresence(true),
     });
+    this._connectWs();
     this._unsubRoom = fs.onSnapshot(fs.doc(db, "rooms", this.roomId), (docSnap) => {
       this.room = { id: docSnap.id, ...docSnap.data() };
       this.hostUid = this.room.host;
@@ -244,13 +253,13 @@ export class FlightMultiplayerSession {
     }));
     this._rtc?.syncPresence(live);
 
-    // Firestore pose / event relay — works when Quest Browser WebRTC never opens.
+    // Firestore pose / event fallback when WSS + WebRTC are quiet.
     for (const d of live) {
       if (d.id === this.uid) continue;
       const pose = d.data?.pose;
       if (pose) {
-        const lastRtc = this._lastRtcPlaneMs.get(d.id) || 0;
-        if (performance.now() - lastRtc >= 400) {
+        const lastFast = this._lastFastPlaneMs.get(d.id) || 0;
+        if (performance.now() - lastFast >= 400) {
           const plane = parsePlaneMessage({
             type: "plane",
             playerId: d.id,
@@ -320,15 +329,16 @@ export class FlightMultiplayerSession {
       rot: [rotation.x, rotation.y, rotation.z, rotation.w],
       throttle: Number(throttle) || 0,
     };
-    this._rtc?.broadcast(
-      makePlaneMessage({
-        playerId: this.uid,
-        position,
-        rotation,
-        throttle,
-      }),
-    );
-    this._publishPoseRelay();
+    const msg = makePlaneMessage({
+      playerId: this.uid,
+      position,
+      rotation,
+      throttle,
+    });
+    this._ws?.send(msg);
+    this._rtc?.broadcast(msg);
+    // Firestore only when the fast path is down (keeps write quota reasonable).
+    if (!this._wsReady()) this._publishPoseRelay();
   }
 
   _publishPoseRelay() {
@@ -357,13 +367,15 @@ export class FlightMultiplayerSession {
       velocity,
       rotation,
     });
+    this._ws?.send(msg);
     this._rtc?.broadcast(msg);
-    this._publishEvent(msg);
+    if (!this._wsReady()) this._publishEvent(msg);
   }
 
   broadcastBalloonSync(balloons) {
     if (!this.active || !this.isHost) return;
     const msg = makeBalloonSyncMessage(balloons);
+    this._ws?.send(msg);
     this._rtc?.broadcast(msg);
     const { db, fs } = firebaseApi();
     if (!db || !this.roomId) return;
@@ -385,8 +397,9 @@ export class FlightMultiplayerSession {
       respawnPos,
       delaySec,
     });
+    this._ws?.send(msg);
     this._rtc?.broadcast(msg);
-    this._publishEvent(msg);
+    if (!this._wsReady()) this._publishEvent(msg);
   }
 
   _publishEvent(msg) {
@@ -402,6 +415,48 @@ export class FlightMultiplayerSession {
       },
       { merge: true },
     ).catch(() => {});
+  }
+
+  _connectWs() {
+    this._ws?.close();
+    this._ws = null;
+    const url = roomWsUrl(WS_RELAY_URL, this.roomId);
+    if (!url || !this.uid) return;
+    this._ws = createWsRelay({
+      url,
+      uid: this.uid,
+      name: this.handlers.playerName?.() || "Pilot",
+      onMessage: (from, msg) => this._onRtc(from, msg),
+      onOpen: () => {
+        this._ws?.send(makeHelloMessage(this.uid));
+        if (this._localPose) {
+          this._ws?.send(
+            makePlaneMessage({
+              playerId: this.uid,
+              position: {
+                x: this._localPose.pos[0],
+                y: this._localPose.pos[1],
+                z: this._localPose.pos[2],
+              },
+              rotation: {
+                x: this._localPose.rot[0],
+                y: this._localPose.rot[1],
+                z: this._localPose.rot[2],
+                w: this._localPose.rot[3],
+              },
+              throttle: this._localPose.throttle,
+            }),
+          );
+        }
+        if (this.isHost) {
+          const balloons = this.handlers.getBalloonSync?.();
+          if (balloons?.length) {
+            this._ws?.send(makeBalloonSyncMessage(balloons));
+          }
+        }
+        this.handlers.onLink?.("ws");
+      },
+    });
   }
 
   _dispatchEvent(from, msg) {
@@ -435,7 +490,7 @@ export class FlightMultiplayerSession {
       const plane = parsePlaneMessage(msg);
       if (!plane) return;
       if (!plane.playerId) plane.playerId = from;
-      this._lastRtcPlaneMs.set(from, performance.now());
+      this._lastFastPlaneMs.set(from, performance.now());
       this.handlers.onPlane?.(from, plane);
       return;
     }
@@ -456,6 +511,8 @@ export class FlightMultiplayerSession {
       clearInterval(this._pruneTimer);
       this._pruneTimer = null;
     }
+    this._ws?.close();
+    this._ws = null;
     this._rtc?.closeAll();
     this._rtc = null;
     if (this.uid && this.roomId && db) {
@@ -470,7 +527,7 @@ export class FlightMultiplayerSession {
     this.status = "idle";
     this._localPose = null;
     this._lastBalloonsKey = "";
-    this._lastRtcPlaneMs.clear();
+    this._lastFastPlaneMs.clear();
     this._lastEvtSeq.clear();
     this.handlers.onLeave?.();
   }

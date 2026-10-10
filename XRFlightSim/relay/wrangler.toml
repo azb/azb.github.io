@@ -1,0 +1,11 @@
+name = "xrflightsim-relay"
+main = "src/worker.js"
+compatibility_date = "2025-04-01"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "FlightRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["FlightRoom"]
