@@ -1,9 +1,9 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.0";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.0";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.0";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.1";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.1";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.1";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1288,7 +1288,8 @@ function updateRemotePlanes(dt) {
 }
 
 function broadcastLocalPlane(time) {
-  if (!net.active || simulationPaused) return;
+  // Keep publishing while paused/on menus so peers still see you.
+  if (!net.active) return;
   if (time - lastPlaneNetMs < PLANE_NET_INTERVAL_MS) return;
   lastPlaneNetMs = time;
   net.broadcastPlane({
@@ -1302,7 +1303,8 @@ function multiplayerStatusText() {
   if (!net.active) return "Multiplayer: solo";
   const links = net.linkCount();
   const peers = Math.max(0, net.roster.length - 1);
-  return `MP ${net.roomId}${net.isHost ? " (host)" : ""} · ${peers} peer${peers === 1 ? "" : "s"} · ${links} link${links === 1 ? "" : "s"}`;
+  const path = links > 0 ? "webrtc" : "relay";
+  return `MP ${net.roomId}${net.isHost ? " (host)" : ""} · ${peers} peer${peers === 1 ? "" : "s"} · ${path}`;
 }
 
 function refreshMultiplayerUi() {
@@ -1722,7 +1724,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.0`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.1`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];

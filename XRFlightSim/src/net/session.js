@@ -11,6 +11,8 @@ import { createRtcMesh } from "./webrtc.js";
 import { makeHelloMessage, makePlaneMessage, parsePlaneMessage } from "./protocol.js";
 
 const HEARTBEAT_MS = 20000;
+const SIGNAL_HEARTBEAT_MS = 2500;
+const POSE_FIRESTORE_MS = 100;
 const STALE_MS = 45000;
 const MAX_PLAYERS = 4;
 
@@ -30,6 +32,10 @@ export class FlightMultiplayerSession {
     this._pruneTimer = null;
     this._rtc = null;
     this._lastPresence = 0;
+    this._lastPosePublish = 0;
+    this._localPose = null;
+    /** @type {Map<string, number>} */
+    this._lastRtcPlaneMs = new Map();
   }
 
   on(handlers) {
@@ -87,7 +93,9 @@ export class FlightMultiplayerSession {
     }
     const data = snap.data();
     const playersSnap = await fs.getDocs(fs.collection(db, "rooms", code, "players"));
-    if (playersSnap.size >= MAX_PLAYERS) {
+    // Allow re-join of our own stale seat.
+    const others = playersSnap.docs.filter((d) => d.id !== this.uid);
+    if (others.length >= MAX_PLAYERS) {
       throw new Error("That room is full (max 4).");
     }
     this.roomId = code;
@@ -114,9 +122,32 @@ export class FlightMultiplayerSession {
       onMessage: (from, msg) => this._onRtc(from, msg),
       onOpen: (id) => {
         this._rtc?.sendTo(id, makeHelloMessage(this.uid));
+        if (this._localPose) {
+          this._rtc?.sendTo(
+            id,
+            makePlaneMessage({
+              playerId: this.uid,
+              position: {
+                x: this._localPose.pos[0],
+                y: this._localPose.pos[1],
+                z: this._localPose.pos[2],
+              },
+              rotation: {
+                x: this._localPose.rot[0],
+                y: this._localPose.rot[1],
+                z: this._localPose.rot[2],
+                w: this._localPose.rot[3],
+              },
+              throttle: this._localPose.throttle,
+            }),
+          );
+        }
         this.handlers.onLink?.(id);
       },
-      onClose: (id) => this.handlers.onPeerClose?.(id),
+      onClose: (id) => {
+        this._lastRtcPlaneMs.delete(id);
+        this.handlers.onPeerClose?.(id);
+      },
       publishSignal: () => this.publishPresence(true),
     });
     this._unsubRoom = fs.onSnapshot(fs.doc(db, "rooms", this.roomId), (docSnap) => {
@@ -132,7 +163,11 @@ export class FlightMultiplayerSession {
       this._applyPlayers(docs);
       this._pruneStale(snap);
     });
-    this._pruneTimer = setInterval(() => this._pruneStale(), HEARTBEAT_MS);
+    this._pruneTimer = setInterval(() => {
+      this._pruneStale();
+      // Keep ICE/signaling alive while waiting for a data channel.
+      if (this.linkCount() === 0) this.publishPresence(true).catch(() => {});
+    }, SIGNAL_HEARTBEAT_MS);
     await this.publishPresence(true);
     this.handlers.onRoster?.(this.roster);
   }
@@ -151,6 +186,25 @@ export class FlightMultiplayerSession {
       host: d.id === this.hostUid,
     }));
     this._rtc?.syncPresence(live);
+
+    // Firestore pose relay — works when Quest Browser WebRTC never opens.
+    for (const d of live) {
+      if (d.id === this.uid) continue;
+      const pose = d.data?.pose;
+      if (!pose) continue;
+      const lastRtc = this._lastRtcPlaneMs.get(d.id) || 0;
+      if (performance.now() - lastRtc < 400) continue; // RTC is fresher
+      const plane = parsePlaneMessage({
+        type: "plane",
+        playerId: d.id,
+        t: pose.t,
+        pos: pose.pos,
+        rot: pose.rot,
+        throttle: pose.throttle,
+      });
+      if (plane) this.handlers.onPlane?.(d.id, plane);
+    }
+
     this.handlers.onRoster?.(this.roster);
   }
 
@@ -172,26 +226,34 @@ export class FlightMultiplayerSession {
   async publishPresence(force = false) {
     if (!this.active || !this.uid || !this.roomId) return;
     const now = performance.now();
-    if (!force && now - this._lastPresence < HEARTBEAT_MS) return;
+    const interval = this.linkCount() === 0 ? SIGNAL_HEARTBEAT_MS : HEARTBEAT_MS;
+    if (!force && now - this._lastPresence < interval) return;
     this._lastPresence = now;
     const { db, fs } = firebaseApi();
     const sig = this._rtc?.signalBlob() || {};
-    await fs.setDoc(
-      fs.doc(db, "rooms", this.roomId, "players", this.uid),
-      {
-        name: this.handlers.playerName?.() || "Pilot",
-        host: this.isHost,
-        presenting: !!this.handlers.presenting?.(),
-        updatedAt: fs.serverTimestamp(),
-        ...sig,
-      },
-      { merge: true },
-    );
+    const doc = {
+      name: this.handlers.playerName?.() || "Pilot",
+      host: this.isHost,
+      presenting: !!this.handlers.presenting?.(),
+      updatedAt: fs.serverTimestamp(),
+    };
+    if (this._localPose) doc.pose = this._localPose;
+    // Do not publish empty maps — merge:true would wipe in-flight SDP/ICE.
+    if (sig.offers && Object.keys(sig.offers).length) doc.offers = sig.offers;
+    if (sig.answers && Object.keys(sig.answers).length) doc.answers = sig.answers;
+    if (sig.ice && Object.keys(sig.ice).length) doc.ice = sig.ice;
+    await fs.setDoc(fs.doc(db, "rooms", this.roomId, "players", this.uid), doc, { merge: true });
   }
 
   broadcastPlane({ position, rotation, throttle }) {
-    if (!this.active || !this.uid || !this._rtc) return;
-    this._rtc.broadcast(
+    if (!this.active || !this.uid) return;
+    this._localPose = {
+      t: performance.now(),
+      pos: [position.x, position.y, position.z],
+      rot: [rotation.x, rotation.y, rotation.z, rotation.w],
+      throttle: Number(throttle) || 0,
+    };
+    this._rtc?.broadcast(
       makePlaneMessage({
         playerId: this.uid,
         position,
@@ -199,6 +261,24 @@ export class FlightMultiplayerSession {
         throttle,
       }),
     );
+    this._publishPoseRelay();
+  }
+
+  _publishPoseRelay() {
+    if (!this.active || !this.uid || !this.roomId || !this._localPose) return;
+    const now = performance.now();
+    if (now - this._lastPosePublish < POSE_FIRESTORE_MS) return;
+    this._lastPosePublish = now;
+    const { db, fs } = firebaseApi();
+    if (!db) return;
+    fs.setDoc(
+      fs.doc(db, "rooms", this.roomId, "players", this.uid),
+      {
+        pose: this._localPose,
+        updatedAt: fs.serverTimestamp(),
+      },
+      { merge: true },
+    ).catch(() => {});
   }
 
   _onRtc(from, msg) {
@@ -211,6 +291,7 @@ export class FlightMultiplayerSession {
       const plane = parsePlaneMessage(msg);
       if (!plane) return;
       if (!plane.playerId) plane.playerId = from;
+      this._lastRtcPlaneMs.set(from, performance.now());
       this.handlers.onPlane?.(from, plane);
     }
   }
@@ -241,6 +322,8 @@ export class FlightMultiplayerSession {
     this.roster = [];
     this.room = null;
     this.status = "idle";
+    this._localPose = null;
+    this._lastRtcPlaneMs.clear();
     this.handlers.onLeave?.();
   }
 }
