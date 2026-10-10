@@ -23,7 +23,10 @@ import {
 const HEARTBEAT_MS = 20000;
 const SIGNAL_HEARTBEAT_MS = 2500;
 const POSE_FIRESTORE_MS = 100;
-const STALE_MS = 45000;
+/** Drop ghost seats after this (refresh creates a new anonymous uid each time). */
+const STALE_MS = 20000;
+/** Join/create prune — Firestore rules allow deleting others after ~8s. */
+const JOIN_STALE_MS = 10000;
 const MAX_PLAYERS = 4;
 
 export class FlightMultiplayerSession {
@@ -78,6 +81,8 @@ export class FlightMultiplayerSession {
         this.roomId = code;
         this.isHost = true;
         this.hostUid = this.uid;
+        // Wipe leftover player docs from abandoned refreshes before reclaiming.
+        await this._pruneStalePlayers(code, 0);
         await fs.setDoc(ref, {
           app: APP_ID,
           host: this.uid,
@@ -105,11 +110,15 @@ export class FlightMultiplayerSession {
       throw new Error("No XRFlightSim room with that code.");
     }
     const data = snap.data();
+    // Refresh-ghosts inflate the seat count — prune before enforcing the cap.
+    await this._pruneStalePlayers(code, JOIN_STALE_MS);
     const playersSnap = await fs.getDocs(fs.collection(db, "rooms", code, "players"));
-    // Allow re-join of our own stale seat.
-    const others = playersSnap.docs.filter((d) => d.id !== this.uid);
-    if (others.length >= MAX_PLAYERS) {
-      throw new Error("That room is full (max 4).");
+    const now = Date.now();
+    const liveOthers = playersSnap.docs.filter(
+      (d) => d.id !== this.uid && !isPlayerStale(d.data(), now, JOIN_STALE_MS),
+    );
+    if (liveOthers.length >= MAX_PLAYERS) {
+      throw new Error("That room is full (max 4). Wait a few seconds and retry, or Host a new room.");
     }
     this.roomId = code;
     this.isHost = data.host === this.uid;
@@ -124,6 +133,22 @@ export class FlightMultiplayerSession {
     );
     await this._enterRoom();
     return code;
+  }
+
+  /** Delete abandoned player seats. staleMs=0 removes everyone except the caller. */
+  async _pruneStalePlayers(roomId, staleMs = STALE_MS) {
+    const { db, fs } = firebaseApi();
+    if (!db || !roomId) return;
+    const snap = await fs.getDocs(fs.collection(db, "rooms", roomId, "players"));
+    const now = Date.now();
+    const deletes = [];
+    snap.forEach((d) => {
+      if (d.id === this.uid) return;
+      if (staleMs <= 0 || isPlayerStale(d.data(), now, staleMs)) {
+        deletes.push(fs.deleteDoc(d.ref).catch(() => {}));
+      }
+    });
+    if (deletes.length) await Promise.all(deletes);
   }
 
   async _enterRoom() {
@@ -251,7 +276,7 @@ export class FlightMultiplayerSession {
     if (snap) {
       snap.forEach((d) => {
         if (d.id === this.uid) return;
-        if (isPlayerStale(d.data())) stale.push(d.id);
+        if (isPlayerStale(d.data(), Date.now(), STALE_MS)) stale.push(d.id);
       });
     }
     for (const id of stale) {
@@ -444,10 +469,12 @@ export class FlightMultiplayerSession {
   }
 }
 
-function isPlayerStale(data, now = Date.now()) {
+function isPlayerStale(data, now = Date.now(), staleMs = STALE_MS) {
   const t = data?.updatedAt?.toMillis?.()
     ?? (data?.updatedAt?.seconds ? data.updatedAt.seconds * 1000 : 0);
-  return t > 0 && now - t > STALE_MS;
+  // Missing timestamp = abandoned / never heartbeated — treat as stale.
+  if (!(t > 0)) return true;
+  return now - t > staleMs;
 }
 
 function isRoomStale(data) {
