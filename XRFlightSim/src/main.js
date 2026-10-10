@@ -1,9 +1,9 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.6";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.6";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.6";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.7";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.7";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.7";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1227,7 +1227,7 @@ const net = new FlightMultiplayerSession();
 
 const BALLOON_COUNT = 8;
 const BALLOON_HIT_RADIUS = 0.45;
-const BALLOON_RESPAWN_SEC = 10;
+const BALLOON_RESPAWN_SEC = 5;
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1239,11 +1239,11 @@ const balloons = [];
 let balloonsSeeded = false;
 
 function randomBalloonPosition(target = new THREE.Vector3()) {
-  // Flight-area field in playSpace meters (Lens balloons are far larger in cm units).
+  // Flight-area field in playSpace meters — new spot each respawn.
   return target.set(
-    (Math.random() * 2 - 1) * 10,
-    2 + Math.random() * 6,
-    -6 - Math.random() * 16,
+    (Math.random() * 2 - 1) * 14,
+    1.5 + Math.random() * 8,
+    -4 - Math.random() * 22,
   );
 }
 
@@ -1277,24 +1277,41 @@ function ensureBalloonsSeeded() {
 
 function getBalloonSyncPayload() {
   ensureBalloonsSeeded();
+  const now = performance.now();
   return balloons.map((b) => ({
     id: b.id,
     pos: b.active ? b.mesh.position : b.respawnPos,
     active: b.active,
+    delaySec: !b.active && b.respawnAt >= 0
+      ? Math.max(0, (b.respawnAt - now) / 1000)
+      : 0,
   }));
 }
 
 function applyBalloonSync(list) {
   if (!list?.length) return;
   ensureBalloonsSeeded();
+  const now = performance.now();
   for (const spec of list) {
     const balloon = balloons[spec.id];
     if (!balloon) continue;
-    balloon.active = spec.active !== false;
-    balloon.mesh.visible = balloon.active;
-    balloon.mesh.position.set(spec.pos.x, spec.pos.y, spec.pos.z);
-    balloon.respawnPos.copy(balloon.mesh.position);
-    balloon.respawnAt = -1;
+    if (spec.active !== false) {
+      balloon.active = true;
+      balloon.mesh.visible = true;
+      balloon.mesh.position.set(spec.pos.x, spec.pos.y, spec.pos.z);
+      balloon.respawnPos.copy(balloon.mesh.position);
+      balloon.respawnAt = -1;
+      continue;
+    }
+    balloon.active = false;
+    balloon.mesh.visible = false;
+    balloon.respawnPos.set(spec.pos.x, spec.pos.y, spec.pos.z);
+    const delay = Number(spec.delaySec);
+    if (Number.isFinite(delay) && delay > 0) {
+      balloon.respawnAt = now + delay * 1000;
+    } else if (balloon.respawnAt < 0) {
+      balloon.respawnAt = now + BALLOON_RESPAWN_SEC * 1000;
+    }
   }
 }
 
@@ -1302,13 +1319,15 @@ function popBalloon(id, respawnPos, delaySec = BALLOON_RESPAWN_SEC, fromNet = fa
   ensureBalloonsSeeded();
   const balloon = balloons[id];
   if (!balloon || !balloon.active) return false;
+  const wait = Number.isFinite(delaySec) && delaySec > 0 ? delaySec : BALLOON_RESPAWN_SEC;
+  const next = respawnPos || randomBalloonPosition();
   balloon.active = false;
   balloon.mesh.visible = false;
-  balloon.respawnPos.set(respawnPos.x, respawnPos.y, respawnPos.z);
-  balloon.respawnAt = performance.now() + delaySec * 1000;
+  balloon.respawnPos.set(next.x, next.y, next.z);
+  balloon.respawnAt = performance.now() + wait * 1000;
   playBalloonPop();
   if (!fromNet && net.active) {
-    net.broadcastBalloonPop({ id, respawnPos: balloon.respawnPos, delaySec });
+    net.broadcastBalloonPop({ id, respawnPos: balloon.respawnPos, delaySec: wait });
   }
   if (net.active && net.isHost) {
     net.broadcastBalloonSync(getBalloonSyncPayload());
@@ -1468,14 +1487,7 @@ function updateRemoteBullets(dt) {
   for (let i = remoteBullets.length - 1; i >= 0; i -= 1) {
     const shot = remoteBullets[i];
     bulletNextLocal.copy(shot.position).addScaledVector(shot.userData.velocity, dt);
-    const balloon = bulletHitsBalloon(shot.position, bulletNextLocal);
-    if (balloon) {
-      const respawn = randomBalloonPosition();
-      popBalloon(balloon.id, respawn, BALLOON_RESPAWN_SEC, true);
-      playSpace.remove(shot);
-      remoteBullets.splice(i, 1);
-      continue;
-    }
+    // Balloon pops are owned by the shooter (broadcast); don't re-roll here.
     const hit = bulletHitsEnvironment(shot, bulletNextLocal);
     if (hit) {
       spawnBulletImpact(hit.point);
@@ -1618,9 +1630,13 @@ net.on({
   },
   onPlane: (from, plane) => applyRemotePlanePose(plane.playerId || from, plane),
   onFire: (_from, fire) => spawnRemoteBullet(fire),
-  onBalloonSync: (list) => applyBalloonSync(list),
+  onBalloonSync: (list) => {
+    // Host is authority; applying our own Firestore echo used to revive pops instantly.
+    if (net.isHost) return;
+    applyBalloonSync(list);
+  },
   onBalloonPop: (_from, pop) => {
-    popBalloon(pop.id, pop.respawnPos, pop.delaySec, true);
+    popBalloon(pop.id, pop.respawnPos ?? randomBalloonPosition(), pop.delaySec ?? BALLOON_RESPAWN_SEC, true);
   },
   onLeave: () => {
     clearRemotePlanes();
@@ -1964,7 +1980,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.6`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.7`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];

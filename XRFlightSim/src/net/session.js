@@ -48,6 +48,7 @@ export class FlightMultiplayerSession {
     this._lastPosePublish = 0;
     this._localPose = null;
     this._evtSeq = 0;
+    this._lastBalloonsKey = "";
     /** @type {Map<string, number>} */
     this._lastRtcPlaneMs = new Map();
     /** @type {Map<string, number>} */
@@ -200,6 +201,17 @@ export class FlightMultiplayerSession {
       this.isHost = this.room.host === this.uid;
       this.status = this.room.status || "playing";
       this.handlers.onRoom?.(this.room);
+      // Apply balloons only when the room field changes — not on every player heartbeat.
+      const balloonsKey = JSON.stringify(this.room.balloons ?? null);
+      if (balloonsKey !== this._lastBalloonsKey) {
+        this._lastBalloonsKey = balloonsKey;
+        if (Array.isArray(this.room.balloons)) {
+          this.handlers.onBalloonSync?.(parseBalloonSyncMessage({
+            type: "balloonSync",
+            balloons: this.room.balloons,
+          }));
+        }
+      }
     });
     this._unsubPlayers = fs.onSnapshot(fs.collection(db, "rooms", this.roomId, "players"), (snap) => {
       const docs = [];
@@ -257,13 +269,6 @@ export class FlightMultiplayerSession {
           this._dispatchEvent(d.id, evt);
         }
       }
-    }
-
-    if (this.room?.balloons && Array.isArray(this.room.balloons)) {
-      this.handlers.onBalloonSync?.(parseBalloonSyncMessage({
-        type: "balloonSync",
-        balloons: this.room.balloons,
-      }));
     }
 
     this.handlers.onRoster?.(this.roster);
@@ -371,7 +376,7 @@ export class FlightMultiplayerSession {
     ).catch(() => {});
   }
 
-  broadcastBalloonPop({ id, respawnPos, delaySec = 10 }) {
+  broadcastBalloonPop({ id, respawnPos, delaySec = 5 }) {
     if (!this.active || !this.uid) return;
     const msg = makeBalloonPopMessage({
       id,
@@ -463,6 +468,7 @@ export class FlightMultiplayerSession {
     this.room = null;
     this.status = "idle";
     this._localPose = null;
+    this._lastBalloonsKey = "";
     this._lastRtcPlaneMs.clear();
     this._lastEvtSeq.clear();
     this.handlers.onLeave?.();

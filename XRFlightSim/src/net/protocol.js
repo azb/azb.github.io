@@ -32,11 +32,12 @@ export function makeBalloonSyncMessage(balloons) {
       id: b.id,
       pos: [b.pos.x, b.pos.y, b.pos.z],
       active: Boolean(b.active),
+      delaySec: Math.max(0, Number(b.delaySec) || 0),
     })),
   };
 }
 
-export function makeBalloonPopMessage({ id, by, respawnPos, delaySec = 10 }) {
+export function makeBalloonPopMessage({ id, by, respawnPos, delaySec = 5 }) {
   return {
     type: "balloonPop",
     id,
@@ -89,6 +90,7 @@ export function parseBalloonSyncMessage(msg) {
     id: Number.isFinite(b.id) ? b.id : i,
     pos: vec3FromArr(b.pos || [0, 2, -8]),
     active: b.active !== false,
+    delaySec: Math.max(0, Number(b.delaySec) || 0),
   }));
 }
 
@@ -99,7 +101,7 @@ export function parseBalloonPopMessage(msg) {
     id: msg.id,
     by: String(msg.by || ""),
     respawnPos: vec3FromArr(msg.respawnPos || [0, 3, -10]),
-    delaySec: Math.max(1, Number(msg.delaySec) || 10),
+    delaySec: Math.max(1, Number(msg.delaySec) || 5),
   };
 }
 
