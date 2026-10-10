@@ -1,9 +1,9 @@
 ﻿import * as THREE from "three";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.4";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.4";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.4";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.6";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.6";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.6";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1528,7 +1528,9 @@ function refreshMultiplayerUi() {
 async function hostMultiplayerRoom() {
   try {
     refreshMultiplayerUi();
-    if (mpStatusLabel) mpStatusLabel.textContent = "Hosting…";
+    const pending = "Hosting...";
+    if (mpStatusLabel) mpStatusLabel.textContent = pending;
+    multiplayerPanel?.userData.setStatus?.(pending);
     ensureBalloonsSeeded();
     const code = await net.createRoom();
     if (mpCodeInput) mpCodeInput.value = code;
@@ -1539,10 +1541,13 @@ async function hostMultiplayerRoom() {
     } catch { /* ignore */ }
     net.broadcastBalloonSync(getBalloonSyncPayload());
     refreshMultiplayerUi();
-    statusLabel.textContent = `Hosted room ${code}`;
+    const ok = `Hosted room ${code}`;
+    statusLabel.textContent = ok;
+    multiplayerPanel?.userData.setStatus?.(ok);
   } catch (error) {
     const msg = firebaseErrorMessage(error);
     if (mpStatusLabel) mpStatusLabel.textContent = msg;
+    multiplayerPanel?.userData.setStatus?.(msg);
     statusLabel.textContent = msg;
   }
 }
@@ -1552,13 +1557,17 @@ async function joinMultiplayerRoom(rawCode) {
   const fromUrl = new URL(location.href).searchParams.get("room");
   const code = normalizeRoomCode(rawCode || fromInput || fromUrl || "");
   if (code.length < 4) {
-    const msg = "Enter a 4-digit room code (or use ?room=1234)";
+    const msg = "Type a 4-digit code in the box, then Join";
     if (mpStatusLabel) mpStatusLabel.textContent = msg;
     multiplayerPanel?.userData.setStatus?.(msg);
+    statusLabel.textContent = msg;
     return;
   }
   try {
-    if (mpStatusLabel) mpStatusLabel.textContent = `Joining ${code}…`;
+    const pending = `Joining ${code}...`;
+    if (mpStatusLabel) mpStatusLabel.textContent = pending;
+    multiplayerPanel?.userData.setStatus?.(pending);
+    statusLabel.textContent = pending;
     await net.joinRoom(code);
     if (mpCodeInput) mpCodeInput.value = code;
     try {
@@ -1567,10 +1576,13 @@ async function joinMultiplayerRoom(rawCode) {
       history.replaceState(null, "", url);
     } catch { /* ignore */ }
     refreshMultiplayerUi();
-    statusLabel.textContent = `Joined room ${code}`;
+    const ok = `Joined room ${code}`;
+    statusLabel.textContent = ok;
+    multiplayerPanel?.userData.setStatus?.(ok);
   } catch (error) {
     const msg = firebaseErrorMessage(error);
     if (mpStatusLabel) mpStatusLabel.textContent = msg;
+    multiplayerPanel?.userData.setStatus?.(msg);
     statusLabel.textContent = msg;
   }
 }
@@ -1952,7 +1964,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.4`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.6`);
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
     const environment = [];

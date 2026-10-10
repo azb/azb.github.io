@@ -282,7 +282,7 @@ export function createPauseMenu({ onResume, onControls, onSettings, onMultiplaye
   return root;
 }
 
-/** In-XR multiplayer lobby: host / join / leave + status label. */
+/** In-XR multiplayer lobby: host / join / leave + status (code via overlay / ?room=). */
 export function createMultiplayerMenu({ onHost, onJoin, onLeave, onBack }) {
   const s = UI_MENU_SCALE;
   const root = createMenuPanel("Multiplayer", 2.6 * s, 2.7 * s);
@@ -293,7 +293,7 @@ export function createMultiplayerMenu({ onHost, onJoin, onLeave, onBack }) {
 
   const buttons = [
     { label: "Host Room", y: 0.25 * s, onClick: onHost },
-    { label: "Join (?room=1234)", y: -0.15 * s, onClick: onJoin },
+    { label: "Join", y: -0.15 * s, onClick: onJoin },
     { label: "Leave Room", y: -0.55 * s, onClick: onLeave },
     { label: "Back", y: -0.95 * s, onClick: onBack },
   ];
