@@ -13,8 +13,8 @@ npm run deploy
 
 Current preview URL (claim or re-deploy to your account):
 
-- `wss://xrflightsim-relay.lean-poppyseed.workers.dev`
-- Claim: https://dash.cloudflare.com/claim-preview?claimToken=3UlQto4_51tfsF0souC-O2E0dujncIFSnav72Dr79Xo
+- `wss://xrflightsim-relay.vast-laborer.workers.dev`
+- Claim: https://dash.cloudflare.com/claim-preview?claimToken=l7ymt20Ohszm6QX6OcNE_03Of-3IJrbJ-O3YVmiIGAw
 
 Set the same base in:
 

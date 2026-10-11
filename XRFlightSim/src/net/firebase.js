@@ -27,7 +27,7 @@ export const APP_ID = "xrflightsim";
  * Deploy: `cd relay && npm i && npm run deploy` — then paste the workers.dev URL here.
  * Empty string disables the socket (Firestore + WebRTC only).
  */
-export const WS_RELAY_URL = "wss://xrflightsim-relay.lean-poppyseed.workers.dev";
+export const WS_RELAY_URL = "wss://xrflightsim-relay.vast-laborer.workers.dev";
 
 let appMod;
 let authMod;
