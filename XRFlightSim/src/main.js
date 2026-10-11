@@ -2,9 +2,9 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.14";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.14";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.14";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.15";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.15";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.15";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1243,7 +1243,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.14");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.15");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2082,7 +2082,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.14`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.15`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2726,17 +2726,16 @@ function fire() {
 }
 function resize() { renderer.setSize(canvas.clientWidth, canvas.clientHeight, false); camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix(); }
 function applyDesktopCamera() {
-  // Authored rig rotation is the desktop aim. lookAt(plane) would discard it.
-  // Scenes without a rig keep the old tripod that tracks the aircraft.
+  // Outside XR, keep the authored rig position (or a default tripod) and always
+  // aim at the local aircraft so desktop preview tracks the flight.
   if (renderer.xr.isPresenting) return;
   if (!desktopCameraRig) {
     camera.position.set(0, 2.1, 4.8);
-    camera.lookAt(planeRoot.position);
-    return;
+  } else {
+    desktopCameraRig.updateWorldMatrix(true, false);
+    desktopCameraRig.getWorldPosition(camera.position);
   }
-  desktopCameraRig.updateWorldMatrix(true, false);
-  desktopCameraRig.getWorldPosition(camera.position);
-  desktopCameraRig.getWorldQuaternion(camera.quaternion);
+  camera.lookAt(planeRoot.position);
 }
 addEventListener("resize", resize); resize(); let previous = performance.now();
 renderer.setAnimationLoop((time, frame) => {
