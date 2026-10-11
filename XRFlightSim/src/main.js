@@ -2,9 +2,9 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.13";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.13";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.13";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.14";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.14";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.14";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1230,6 +1230,7 @@ const fighterModelUrl = assetUrl("FighterPlaneWithControls.glb?v=0.4.23");
 
 /** @type {Map<string, { root: THREE.Group, targetPos: THREE.Vector3, targetQuat: THREE.Quaternion, throttle: number, propeller: THREE.Object3D | null }>} */
 const remotePlanes = new Map();
+const remoteForwardScratch = new THREE.Vector3();
 const remoteBullets = [];
 const seenRemoteBulletIds = new Set();
 const PLANE_NET_INTERVAL_MS = 66;
@@ -1242,7 +1243,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.13");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.14");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1533,7 +1534,7 @@ function applyRemotePlanePose(playerId, plane) {
   const entry = ensureRemotePlane(playerId);
   entry.targetPos.set(plane.pos.x, plane.pos.y, plane.pos.z);
   entry.targetQuat.set(plane.rot.x, plane.rot.y, plane.rot.z, plane.rot.w).normalize();
-  entry.throttle = plane.throttle ?? 0;
+  entry.throttle = clamp(Number(plane.throttle) || 0, 0, 1);
   if (!entry.root.userData.placed) {
     entry.root.position.copy(entry.targetPos);
     entry.root.quaternion.copy(entry.targetQuat);
@@ -1542,12 +1543,19 @@ function applyRemotePlanePose(playerId, plane) {
 }
 
 function updateRemotePlanes(dt) {
-  const alpha = 1 - Math.exp(-12 * Math.max(dt, 0));
+  const step = clamp(dt, 0, 0.1);
+  const alpha = 1 - Math.exp(-12 * step);
   for (const entry of remotePlanes.values()) {
+    // Coast with synced throttle so remotes don't stall between pose packets.
+    const speed = lerp(0, 100, entry.throttle) * worldSpeedScale;
+    if (speed > 0.01) {
+      remoteForwardScratch.set(0, 0, -1).applyQuaternion(entry.targetQuat).normalize();
+      entry.targetPos.addScaledVector(remoteForwardScratch, speed * step);
+    }
     entry.root.position.lerp(entry.targetPos, alpha);
     entry.root.quaternion.slerp(entry.targetQuat, alpha);
     if (entry.propeller) {
-      entry.propeller.rotateY(-dt * (4 + entry.throttle * 38));
+      entry.propeller.rotateY(-step * (4 + entry.throttle * 38));
     }
   }
 }
@@ -2074,7 +2082,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.13`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.14`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
