@@ -86,9 +86,22 @@ export function createAiFleet(opts) {
   let nextBulletId = 0;
   let meshReady = false;
 
+  function disposeBots() {
+    for (const bot of bots) {
+      opts.playSpace.remove(bot.root);
+    }
+    bots.length = 0;
+    for (const shot of bullets) {
+      opts.playSpace.remove(shot);
+    }
+    bullets.length = 0;
+    meshReady = false;
+  }
+
   function ensureBots() {
     if (meshReady || typeof opts.createMesh !== "function") return;
-    // Aircraft may not be loaded yet — retry until clone works.
+    // Wait until the real fighter GLB is ready (opts.meshReady?.()).
+    if (opts.meshReady && !opts.meshReady()) return;
     let probe = null;
     try {
       probe = opts.createMesh();
@@ -101,6 +114,15 @@ export function createAiFleet(opts) {
       const root = new THREE.Group();
       root.name = `AiPlane:${i + 1}`;
       const mesh = opts.createMesh();
+      // Same transform as the player aircraft (scale + local offset).
+      const src = typeof opts.sourceAircraft === "function"
+        ? opts.sourceAircraft()
+        : opts.sourceAircraft;
+      if (src) {
+        mesh.scale.copy(src.scale);
+        mesh.position.copy(src.position);
+        mesh.rotation.copy(src.rotation);
+      }
       // Tint AI planes slightly red so they're distinct from peer remotes.
       mesh.traverse((node) => {
         if (!node.isMesh || !node.material) return;
@@ -284,6 +306,13 @@ export function createAiFleet(opts) {
     hitTestPlayerBullet,
     aliveCount() {
       return bots.filter((b) => b.alive).length;
+    },
+    /** Drop bots so they can be rebuilt from the loaded player fighter mesh. */
+    rebuild() {
+      disposeBots();
+    },
+    dispose() {
+      disposeBots();
     },
   };
 }

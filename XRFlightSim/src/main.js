@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.17";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.17";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.17";
-import { createAiFleet } from "./ai-planes.js?v=0.5.17";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.18";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.18";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.18";
+import { createAiFleet } from "./ai-planes.js?v=0.5.18";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1244,7 +1244,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.17");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.18");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1480,6 +1480,10 @@ function findNamedPropeller(root) {
 
 function createRemotePlaneMesh() {
   const mesh = aircraft.clone(true);
+  // Keep the same authored scale / local offset as the player's fighter.
+  mesh.scale.copy(aircraft.scale);
+  mesh.position.copy(aircraft.position);
+  mesh.rotation.copy(aircraft.rotation);
   mesh.traverse((node) => {
     if (!node.isMesh) return;
     node.castShadow = false;
@@ -1871,13 +1875,37 @@ const fireHapticIntensity = 20 / 255;
 const fireHapticDurationMs = 10;
 /** Local AI dogfighters — chase/shoot you; you can shoot them back. */
 let aiFleet = null;
+/** @type {{ tumble: THREE.Vector3, tumbleRate: number, fallSpeed: number, smokeAcc: number } | null} */
+let playerCrash = null;
+const crashFlameParticles = [];
+const crashFlameGeom = new THREE.SphereGeometry(0.04, 6, 6);
+const crashFlameMat = new THREE.MeshBasicMaterial({
+  color: 0xff6a00,
+  transparent: true,
+  opacity: 0.95,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+const crashSmokeMat = new THREE.MeshBasicMaterial({
+  color: 0x333333,
+  transparent: true,
+  opacity: 0.55,
+  depthWrite: false,
+});
+const crashTumbleQuat = new THREE.Quaternion();
+const crashAxisScratch = new THREE.Vector3();
+
 function ensureAiFleet() {
+  // Only spawn after the real fighter GLB is hooked — placeholder mesh is huge.
+  if (!fighterHooked) return null;
   if (aiFleet) return aiFleet;
   if (!bulletSpawnLocal?.length) return null;
   aiFleet = createAiFleet({
     playSpace,
     createMesh: createRemotePlaneMesh,
     findPropeller: findNamedPropeller,
+    sourceAircraft: () => aircraft,
+    meshReady: () => fighterHooked,
     worldSpeedScale,
     bulletGeom,
     bulletMat,
@@ -1887,9 +1915,96 @@ function ensureAiFleet() {
   });
   return aiFleet;
 }
+
 function onAiHitPlayer() {
-  flight.reset();
-  if (statusLabel) statusLabel.textContent = "Hit by AI — respawned";
+  if (playerCrash) return;
+  playerCrash = {
+    tumble: new THREE.Vector3(
+      Math.random() * 2 - 1,
+      Math.random() * 0.6 + 0.2,
+      Math.random() * 2 - 1,
+    ).normalize(),
+    tumbleRate: 7 + Math.random() * 5,
+    fallSpeed: 1.2 + Math.random() * 0.8,
+    smokeAcc: 0,
+  };
+  flight.throttle = 0;
+  if (statusLabel) statusLabel.textContent = "Hit! Spinning out…";
+}
+
+function spawnCrashFlameBurst() {
+  const origin = flight.position;
+  for (let i = 0; i < 4; i += 1) {
+    const isSmoke = i % 3 === 0;
+    const mat = (isSmoke ? crashSmokeMat : crashFlameMat).clone();
+    const spark = new THREE.Mesh(crashFlameGeom, mat);
+    spark.position.copy(origin).add(new THREE.Vector3(
+      (Math.random() - 0.5) * 0.25,
+      (Math.random() - 0.5) * 0.15,
+      (Math.random() - 0.5) * 0.25,
+    ));
+    spark.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 1.2,
+      0.8 + Math.random() * 1.6,
+      (Math.random() - 0.5) * 1.2,
+    );
+    spark.userData.age = 0;
+    spark.userData.lifetime = 0.35 + Math.random() * 0.45;
+    spark.userData.isSmoke = isSmoke;
+    spark.scale.setScalar(isSmoke ? 0.9 : 0.55);
+    playSpace.add(spark);
+    crashFlameParticles.push(spark);
+  }
+}
+
+function updateCrashFlames(dt) {
+  for (let i = crashFlameParticles.length - 1; i >= 0; i -= 1) {
+    const spark = crashFlameParticles[i];
+    spark.userData.age += dt;
+    if (spark.userData.age >= spark.userData.lifetime) {
+      playSpace.remove(spark);
+      crashFlameParticles.splice(i, 1);
+      continue;
+    }
+    spark.userData.velocity.y += 1.5 * dt;
+    spark.position.addScaledVector(spark.userData.velocity, dt);
+    const life = 1 - spark.userData.age / spark.userData.lifetime;
+    spark.scale.setScalar(Math.max(0.05, life * (spark.userData.isSmoke ? 1.2 : 0.7)));
+    spark.material.opacity = life * 0.9;
+  }
+}
+
+function clearCrashFlames() {
+  for (const spark of crashFlameParticles) playSpace.remove(spark);
+  crashFlameParticles.length = 0;
+}
+
+/** @returns {boolean} true while crash is active (caller should skip normal flight.step) */
+function updatePlayerCrash(dt) {
+  if (!playerCrash) return false;
+  const step = clamp(dt, 0, 0.1);
+  flight.throttle = 0;
+  crashTumbleQuat.setFromAxisAngle(
+    crashAxisScratch.copy(playerCrash.tumble),
+    playerCrash.tumbleRate * step,
+  );
+  flight.rotation.premultiply(crashTumbleQuat).normalize();
+  // Keep some forward drift while falling.
+  const speed = 100 * worldSpeedScale * 0.35;
+  flight.forward(crashAxisScratch);
+  flight.position.addScaledVector(crashAxisScratch, speed * step);
+  flight.position.y -= playerCrash.fallSpeed * step * (1 + playerCrash.smokeAcc * 0.15);
+  playerCrash.fallSpeed += 4.5 * step;
+  playerCrash.smokeAcc += step;
+  playerCrash.tumbleRate = Math.min(14, playerCrash.tumbleRate + 1.5 * step);
+  spawnCrashFlameBurst();
+  if (flight.position.y <= 0.12) {
+    flight.reset();
+    playerCrash = null;
+    clearCrashFlames();
+    if (statusLabel) statusLabel.textContent = "Crashed — ready to fly";
+  }
+  return true;
 }
 
 // Lightweight Lens-style wingtip vapor: pooled InstancedMesh wisps (white elongated quads).
@@ -2064,6 +2179,10 @@ function hookFighterModel(model, item, statusText) {
   planeRoot.add(aircraft);
   modelLabel.textContent = "Fighter model: GLB loaded";
   if (statusText) notePreviewStatus(statusText);
+  // Rebuild AI fleet from the real fighter (they must not keep the huge placeholder).
+  if (aiFleet) {
+    aiFleet.rebuild();
+  }
 }
 function loadFallbackFighter() {
   if (fighterHooked || fallbackStarted) return;
@@ -2105,7 +2224,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.17`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.18`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2771,11 +2890,16 @@ renderer.setAnimationLoop((time, frame) => {
   if (input.pause && !pauseButtonWasPressed) setSimulationPaused(!simulationPaused);
   pauseButtonWasPressed = input.pause;
   if (!simulationPaused) {
-    flight.step(input, dt);
-    animateAircraft(input, dt);
-    if (input.fire && !uiPointerBlocksFire && time - lastFire > fireCooldownMs) {
-      fire();
-      lastFire = time;
+    const crashing = updatePlayerCrash(dt);
+    if (!crashing) {
+      flight.step(input, dt);
+      animateAircraft(input, dt);
+      if (input.fire && !uiPointerBlocksFire && time - lastFire > fireCooldownMs) {
+        fire();
+        lastFire = time;
+      }
+    } else {
+      animateAircraft({ pitch: 0, roll: 0, yaw: 0, throttle: 0 }, dt);
     }
     if (bullets.length) {
       collectBulletColliders();
@@ -2827,8 +2951,9 @@ renderer.setAnimationLoop((time, frame) => {
   ensureAiFleet()?.update(dt, flight.position, {
     paused: simulationPaused,
     nowSec: time / 1000,
-    onPlayerHit: onAiHitPlayer,
+    onPlayerHit: playerCrash ? null : onAiHitPlayer,
   });
+  updateCrashFlames(dt);
   updateBalloons();
   updateWingVortex(dt);
   applyDesktopCamera();
