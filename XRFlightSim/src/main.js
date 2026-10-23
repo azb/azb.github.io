@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.19";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.19";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.19";
-import { createAiFleet } from "./ai-planes.js?v=0.5.19";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.20";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.20";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.20";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.20";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -336,7 +336,7 @@ let pausePanel = createPauseMenu({
   },
   onMultiplayer: () => showUiMode("multiplayer"),
   onRestart: () => {
-    flight.reset();
+    resetPlayerFlight();
     showUiMode("game");
   },
 });
@@ -1244,7 +1244,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.19");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.20");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1875,6 +1875,8 @@ const fireHapticIntensity = 20 / 255;
 const fireHapticDurationMs = 10;
 /** Local AI dogfighters — chase/shoot you; you can shoot them back. */
 let aiFleet = null;
+let playerHealth = PLANE_MAX_HEALTH;
+let playerDamageSmokeAcc = 0;
 /** @type {{ tumble: THREE.Vector3, tumbleRate: number, fallSpeed: number, smokeAcc: number } | null} */
 let playerCrash = null;
 const crashFlameParticles = [];
@@ -1895,6 +1897,31 @@ const crashSmokeMat = new THREE.MeshBasicMaterial({
 const crashTumbleQuat = new THREE.Quaternion();
 const crashAxisScratch = new THREE.Vector3();
 
+function spawnPlaneFx(origin, kind = "flame") {
+  const count = kind === "smoke" ? 2 : 4;
+  for (let i = 0; i < count; i += 1) {
+    const isSmoke = kind === "smoke" || i % 3 === 0;
+    const mat = (isSmoke ? crashSmokeMat : crashFlameMat).clone();
+    const spark = new THREE.Mesh(crashFlameGeom, mat);
+    spark.position.copy(origin).add(new THREE.Vector3(
+      (Math.random() - 0.5) * 0.25,
+      (Math.random() - 0.5) * 0.15,
+      (Math.random() - 0.5) * 0.25,
+    ));
+    spark.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * (isSmoke ? 0.6 : 1.2),
+      (isSmoke ? 0.4 : 0.8) + Math.random() * (isSmoke ? 0.8 : 1.6),
+      (Math.random() - 0.5) * (isSmoke ? 0.6 : 1.2),
+    );
+    spark.userData.age = 0;
+    spark.userData.lifetime = (isSmoke ? 0.55 : 0.35) + Math.random() * 0.45;
+    spark.userData.isSmoke = isSmoke;
+    spark.scale.setScalar(isSmoke ? 1.0 : 0.55);
+    playSpace.add(spark);
+    crashFlameParticles.push(spark);
+  }
+}
+
 function ensureAiFleet() {
   // Only spawn after the real fighter GLB is hooked — placeholder mesh is huge.
   if (!fighterHooked) return null;
@@ -1912,11 +1939,12 @@ function ensureAiFleet() {
     bulletMuzzleSpeed,
     bulletLifetimeSec,
     bulletSpawnLocal,
+    spawnFx: spawnPlaneFx,
   });
   return aiFleet;
 }
 
-function onAiHitPlayer() {
+function beginPlayerCrash() {
   if (playerCrash) return;
   playerCrash = {
     tumble: new THREE.Vector3(
@@ -1929,32 +1957,33 @@ function onAiHitPlayer() {
     smokeAcc: 0,
   };
   flight.throttle = 0;
-  if (statusLabel) statusLabel.textContent = "Hit! Spinning out…";
+  if (statusLabel) statusLabel.textContent = "Critical! Spinning out…";
+}
+
+function onAiHitPlayer() {
+  if (playerCrash) return;
+  playerHealth -= 1;
+  if (playerHealth <= 0) {
+    playerHealth = 0;
+    beginPlayerCrash();
+    return;
+  }
+  spawnPlaneFx(flight.position, "smoke");
+  if (statusLabel) {
+    statusLabel.textContent = `Hit! Health ${playerHealth}/${PLANE_MAX_HEALTH}`;
+  }
 }
 
 function spawnCrashFlameBurst() {
-  const origin = flight.position;
-  for (let i = 0; i < 4; i += 1) {
-    const isSmoke = i % 3 === 0;
-    const mat = (isSmoke ? crashSmokeMat : crashFlameMat).clone();
-    const spark = new THREE.Mesh(crashFlameGeom, mat);
-    spark.position.copy(origin).add(new THREE.Vector3(
-      (Math.random() - 0.5) * 0.25,
-      (Math.random() - 0.5) * 0.15,
-      (Math.random() - 0.5) * 0.25,
-    ));
-    spark.userData.velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 1.2,
-      0.8 + Math.random() * 1.6,
-      (Math.random() - 0.5) * 1.2,
-    );
-    spark.userData.age = 0;
-    spark.userData.lifetime = 0.35 + Math.random() * 0.45;
-    spark.userData.isSmoke = isSmoke;
-    spark.scale.setScalar(isSmoke ? 0.9 : 0.55);
-    playSpace.add(spark);
-    crashFlameParticles.push(spark);
-  }
+  spawnPlaneFx(flight.position, "flame");
+}
+
+function updatePlayerDamageSmoke(dt) {
+  if (playerCrash || playerHealth >= PLANE_MAX_HEALTH) return;
+  playerDamageSmokeAcc += dt;
+  if (playerDamageSmokeAcc < 0.08) return;
+  playerDamageSmokeAcc = 0;
+  spawnPlaneFx(flight.position, "smoke");
 }
 
 function updateCrashFlames(dt) {
@@ -2001,6 +2030,8 @@ function updatePlayerCrash(dt) {
   if (flight.position.y <= 0.12) {
     flight.reset();
     playerCrash = null;
+    playerHealth = PLANE_MAX_HEALTH;
+    playerDamageSmokeAcc = 0;
     clearCrashFlames();
     if (statusLabel) statusLabel.textContent = "Crashed — ready to fly";
   }
@@ -2224,7 +2255,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.19`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.20`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2286,7 +2317,7 @@ addEventListener("keydown", (event) => {
     event.preventDefault();
   }
   keys.add(event.code);
-  if (event.code === "KeyR") flight.reset();
+  if (event.code === "KeyR") resetPlayerFlight();
   if (event.code === "Escape" && !event.repeat) setSimulationPaused(!simulationPaused);
 });
 addEventListener("keyup", (event) => keys.delete(event.code));
@@ -2919,10 +2950,15 @@ renderer.setAnimationLoop((time, frame) => {
         continue;
       }
       const fleet = ensureAiFleet();
-      if (fleet?.hitTestPlayerBullet(shot.position, bulletNextLocal, time / 1000)) {
+      const aiHit = fleet?.hitTestPlayerBullet(shot.position, bulletNextLocal, time / 1000);
+      if (aiHit?.hit) {
         playSpace.remove(shot);
         bullets.splice(i, 1);
-        if (statusLabel) statusLabel.textContent = "AI down — respawning soon";
+        if (statusLabel) {
+          statusLabel.textContent = aiHit.destroyed
+            ? "AI spinning out!"
+            : `AI hit — ${aiHit.health}/${PLANE_MAX_HEALTH}`;
+        }
         continue;
       }
       const hit = bulletHitsEnvironment(shot, bulletNextLocal);
@@ -2956,6 +2992,7 @@ renderer.setAnimationLoop((time, frame) => {
     playerAirborne: flight.throttle > 0.05
       || flight.position.distanceToSquared(spawnPosition) > 2.25,
   });
+  if (!simulationPaused) updatePlayerDamageSmoke(dt);
   updateCrashFlames(dt);
   updateBalloons();
   updateWingVortex(dt);
@@ -2975,7 +3012,14 @@ renderer.setAnimationLoop((time, frame) => {
   if (!simulationPaused) updateEngineSound();
   renderer.render(scene, camera);
 });
-resetButton.addEventListener("click", () => flight.reset());
+function resetPlayerFlight() {
+  flight.reset();
+  playerCrash = null;
+  playerHealth = PLANE_MAX_HEALTH;
+  playerDamageSmokeAcc = 0;
+  clearCrashFlames();
+}
+resetButton.addEventListener("click", () => resetPlayerFlight());
 function xrOptionalFeatures() {
   const features = ["local-floor", "bounded-floor", "hand-tracking"];
   // Only ask for mesh-detection when a mesh setting is on (avoids headset mesh work).

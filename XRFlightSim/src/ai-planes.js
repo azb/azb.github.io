@@ -8,6 +8,8 @@ import * as THREE from "three";
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 
+export const PLANE_MAX_HEALTH = 5;
+
 const AI_COUNT = 3;
 const AI_HIT_RADIUS = 0.55;
 const AI_RESPAWN_SEC = 5;
@@ -31,6 +33,7 @@ const _mat = new THREE.Matrix4();
 const _quat = new THREE.Quaternion();
 const _seg = new THREE.Vector3();
 const _closest = new THREE.Vector3();
+const _tumbleQ = new THREE.Quaternion();
 
 function distPointToSegment(point, a, b) {
   _seg.subVectors(b, a);
@@ -58,7 +61,6 @@ function lookRotation(forward, outQuat) {
     _right.normalize();
   }
   _aimUp.crossVectors(_right, _fwd).normalize();
-  // Local forward is -Z: basis columns = right, up, -forward
   _mat.makeBasis(_right, _aimUp, _fwd.clone().negate());
   return outQuat.setFromRotationMatrix(_mat);
 }
@@ -76,12 +78,15 @@ function randomSpawn(out) {
  *   playSpace: THREE.Object3D,
  *   createMesh: () => THREE.Object3D,
  *   findPropeller?: (root: THREE.Object3D) => THREE.Object3D | null,
+ *   sourceAircraft?: (() => THREE.Object3D) | THREE.Object3D,
+ *   meshReady?: () => boolean,
  *   worldSpeedScale: number,
  *   bulletGeom: THREE.BufferGeometry,
  *   bulletMat: THREE.Material,
  *   bulletMuzzleSpeed: number,
  *   bulletLifetimeSec: number,
  *   bulletSpawnLocal: THREE.Vector3[],
+ *   spawnFx?: (origin: THREE.Vector3, kind: "smoke" | "flame") => void,
  * }} opts
  */
 export function createAiFleet(opts) {
@@ -104,7 +109,6 @@ export function createAiFleet(opts) {
 
   function ensureBots() {
     if (meshReady || typeof opts.createMesh !== "function") return;
-    // Wait until the real fighter GLB is ready (opts.meshReady?.()).
     if (opts.meshReady && !opts.meshReady()) return;
     let probe = null;
     try {
@@ -118,7 +122,6 @@ export function createAiFleet(opts) {
       const root = new THREE.Group();
       root.name = `AiPlane:${i + 1}`;
       const mesh = opts.createMesh();
-      // Same transform as the player aircraft (scale + local offset).
       const src = typeof opts.sourceAircraft === "function"
         ? opts.sourceAircraft()
         : opts.sourceAircraft;
@@ -127,7 +130,6 @@ export function createAiFleet(opts) {
         mesh.position.copy(src.position);
         mesh.rotation.copy(src.rotation);
       }
-      // Tint AI planes slightly red so they're distinct from peer remotes.
       mesh.traverse((node) => {
         if (!node.isMesh || !node.material) return;
         const mats = Array.isArray(node.material) ? node.material : [node.material];
@@ -150,7 +152,11 @@ export function createAiFleet(opts) {
         rotation: new THREE.Quaternion(),
         throttle: 0.55 + Math.random() * 0.2,
         velocity: new THREE.Vector3(),
+        health: PLANE_MAX_HEALTH,
         alive: true,
+        crashing: false,
+        crash: null,
+        smokeAcc: 0,
         respawnAt: -1,
         lastFire: -Infinity,
         patrolAngle: Math.random() * Math.PI * 2,
@@ -164,12 +170,31 @@ export function createAiFleet(opts) {
     }
   }
 
-  function killBot(bot, nowSec) {
-    if (!bot.alive) return;
+  function beginCrash(bot) {
+    bot.crashing = true;
+    bot.alive = true;
+    bot.throttle = 0;
+    bot.crash = {
+      tumble: new THREE.Vector3(
+        Math.random() * 2 - 1,
+        Math.random() * 0.6 + 0.2,
+        Math.random() * 2 - 1,
+      ).normalize(),
+      tumbleRate: 7 + Math.random() * 5,
+      fallSpeed: 1.2 + Math.random() * 0.8,
+      smokeAcc: 0,
+    };
+    bot.root.visible = true;
+  }
+
+  function finishCrash(bot, nowSec) {
+    bot.crashing = false;
+    bot.crash = null;
     bot.alive = false;
     bot.root.visible = false;
     bot.respawnAt = nowSec + AI_RESPAWN_SEC;
     bot.throttle = 0;
+    bot.health = 0;
   }
 
   function respawnBot(bot) {
@@ -181,7 +206,11 @@ export function createAiFleet(opts) {
       bot.rotation,
     );
     bot.throttle = 0.55 + Math.random() * 0.2;
+    bot.health = PLANE_MAX_HEALTH;
     bot.alive = true;
+    bot.crashing = false;
+    bot.crash = null;
+    bot.smokeAcc = 0;
     bot.respawnAt = -1;
     bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
     bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
@@ -204,7 +233,12 @@ export function createAiFleet(opts) {
     );
   }
 
+  function emitFx(origin, kind) {
+    opts.spawnFx?.(origin, kind);
+  }
+
   function fireFrom(bot, nowSec) {
+    if (bot.crashing) return;
     if (nowSec - bot.lastFire < FIRE_COOLDOWN) return;
     bot.lastFire = nowSec;
     const locals = opts.bulletSpawnLocal;
@@ -236,24 +270,58 @@ export function createAiFleet(opts) {
     else _to.set(0, 0, -1);
     lookRotation(_to, _quat);
     bot.rotation.slerp(_quat, clamp(TURN_RATE * dt, 0, 1));
-    // Close in: more throttle when far, ease when close.
     const desired = clamp(0.4 + dist / 40, 0.35, 0.95);
     bot.throttle = lerp(bot.throttle, desired, clamp(2 * dt, 0, 1));
     return dist;
   }
 
+  function updateCrash(bot, dt, nowSec) {
+    const c = bot.crash;
+    if (!c) return;
+    const step = clamp(dt, 0, 0.1);
+    bot.throttle = 0;
+    _tumbleQ.setFromAxisAngle(c.tumble, c.tumbleRate * step);
+    bot.rotation.premultiply(_tumbleQ).normalize();
+    const speed = 100 * opts.worldSpeedScale * 0.35;
+    _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
+    bot.position.addScaledVector(_fwd, speed * step);
+    bot.position.y -= c.fallSpeed * step * (1 + c.smokeAcc * 0.15);
+    c.fallSpeed += 4.5 * step;
+    c.smokeAcc += step;
+    c.tumbleRate = Math.min(14, c.tumbleRate + 1.5 * step);
+    emitFx(bot.position, "flame");
+    bot.root.position.copy(bot.position);
+    bot.root.quaternion.copy(bot.rotation);
+    if (bot.position.y <= 0.12) {
+      finishCrash(bot, nowSec);
+    }
+  }
+
   function updateBots(dt, nowSec, playerPos, playerAirborne) {
     ensureBots();
     for (const bot of bots) {
-      if (!bot.alive) {
+      if (!bot.alive && !bot.crashing) {
         if (bot.respawnAt > 0 && nowSec >= bot.respawnAt) respawnBot(bot);
         continue;
       }
+      if (bot.crashing) {
+        updateCrash(bot, dt, nowSec);
+        continue;
+      }
+
       bot.moodTimer -= dt;
       if (bot.moodTimer <= 0) rollMood(bot);
 
+      // Damage smoke while flying damaged.
+      if (bot.health < PLANE_MAX_HEALTH) {
+        bot.smokeAcc += dt;
+        if (bot.smokeAcc >= 0.08) {
+          bot.smokeAcc = 0;
+          emitFx(bot.position, "smoke");
+        }
+      }
+
       const toPlayer = bot.position.distanceTo(playerPos);
-      // Chase only ~1/5 of moods, only after the player has taken off, and in range.
       const shouldChase = playerAirborne
         && bot.chasing
         && toPlayer < ENGAGE_RANGE;
@@ -263,7 +331,6 @@ export function createAiFleet(opts) {
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
       bot.velocity.copy(_fwd).multiplyScalar(speed);
       bot.position.addScaledVector(bot.velocity, dt);
-      // Soft floor / ceiling
       bot.position.y = clamp(bot.position.y, 0.8, 16);
       bot.root.position.copy(bot.position);
       bot.root.quaternion.copy(bot.rotation);
@@ -301,18 +368,23 @@ export function createAiFleet(opts) {
   }
 
   /**
-   * Test a player bullet segment against alive AI planes.
-   * @returns {boolean} true if a bot was hit
+   * @returns {{ hit: boolean, health: number, destroyed: boolean } | null}
    */
-  function hitTestPlayerBullet(prev, next, nowSec) {
+  function hitTestPlayerBullet(prev, next, _nowSec) {
     for (const bot of bots) {
-      if (!bot.alive) continue;
+      if (!bot.alive || bot.crashing) continue;
       if (distPointToSegment(bot.position, prev, next) <= AI_HIT_RADIUS) {
-        killBot(bot, nowSec);
-        return true;
+        bot.health -= 1;
+        if (bot.health <= 0) {
+          bot.health = 0;
+          beginCrash(bot);
+          return { hit: true, health: 0, destroyed: true };
+        }
+        emitFx(bot.position, "smoke");
+        return { hit: true, health: bot.health, destroyed: false };
       }
     }
-    return false;
+    return null;
   }
 
   return {
@@ -328,9 +400,8 @@ export function createAiFleet(opts) {
     },
     hitTestPlayerBullet,
     aliveCount() {
-      return bots.filter((b) => b.alive).length;
+      return bots.filter((b) => b.alive && !b.crashing).length;
     },
-    /** Drop bots so they can be rebuilt from the loaded player fighter mesh. */
     rebuild() {
       disposeBots();
     },
