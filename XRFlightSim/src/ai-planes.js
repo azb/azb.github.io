@@ -198,6 +198,7 @@ export function createAiFleet(opts) {
   }
 
   function finishCrash(bot, nowSec) {
+    emitFx(bot.position, "explosion");
     bot.crashing = false;
     bot.crash = null;
     bot.alive = false;
