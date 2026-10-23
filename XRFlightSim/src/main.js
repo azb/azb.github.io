@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.23";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.23";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.23";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.23";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.24";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.24";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.24";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.24";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -38,6 +38,10 @@ let engineSource = null;
 let engineBuffer = null;
 let engineLoad = null;
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
+const shootUrl = assetUrl("audio/shoot.wav");
+let shootBuffer = null;
+let shootLoad = null;
+const shootWorldPos = new THREE.Vector3();
 const inputProfilesBase = "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/";
 const localControllerModelUrls = {
   left: assetUrl("controllers/meta-quest-touch-pro-left.glb?v=0.4.23"),
@@ -1244,7 +1248,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.23");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.24");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1588,6 +1592,7 @@ function spawnRemoteBullet(fire) {
     ? new THREE.Vector3(fire.vel.x, fire.vel.y, fire.vel.z)
     : null;
   spawnMuzzleSparks(shot.position, remoteFwd);
+  playSpatialShoot(shot.position);
 }
 
 function updateRemoteBullets(dt) {
@@ -2375,7 +2380,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.23`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.24`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2717,35 +2722,13 @@ function setAudioVector(node, xName, yName, zName, x, y, z, time) {
 }
 function updateSpatialEngineAudio(time) {
   if (!engineContext || !enginePanner || !planeRoot) return;
-  const listenerObject = engineListenerObject();
-  if (!listenerObject) return;
+  if (!engineListenerObject()) return;
   planeRoot.getWorldPosition(sourcePosition);
-  listenerObject.getWorldPosition(listenerPosition);
-  listenerObject.getWorldQuaternion(listenerQuaternion);
-  listenerForward.set(0, 0, -1).applyQuaternion(listenerQuaternion);
-  listenerUp.set(0, 1, 0).applyQuaternion(listenerQuaternion);
   if (!setAudioVector(enginePanner, "positionX", "positionY", "positionZ", sourcePosition.x, sourcePosition.y, sourcePosition.z, time)
     && enginePanner.setPosition) {
     enginePanner.setPosition(sourcePosition.x, sourcePosition.y, sourcePosition.z);
   }
-  const audioListener = engineContext.listener;
-  if (!setAudioVector(audioListener, "positionX", "positionY", "positionZ", listenerPosition.x, listenerPosition.y, listenerPosition.z, time)
-    && audioListener.setPosition) {
-    audioListener.setPosition(listenerPosition.x, listenerPosition.y, listenerPosition.z);
-  }
-  if (audioListener.forwardX?.setValueAtTime) {
-    audioListener.forwardX.setValueAtTime(listenerForward.x, time);
-    audioListener.forwardY.setValueAtTime(listenerForward.y, time);
-    audioListener.forwardZ.setValueAtTime(listenerForward.z, time);
-    audioListener.upX.setValueAtTime(listenerUp.x, time);
-    audioListener.upY.setValueAtTime(listenerUp.y, time);
-    audioListener.upZ.setValueAtTime(listenerUp.z, time);
-  } else if (audioListener.setOrientation) {
-    audioListener.setOrientation(
-      listenerForward.x, listenerForward.y, listenerForward.z,
-      listenerUp.x, listenerUp.y, listenerUp.z
-    );
-  }
+  updateSpatialListener(time);
 }
 function dopplerPitchScale() {
   // Lens GameControllerMovement.getDopplerPitchScale: airplane velocity dotted with
@@ -2781,23 +2764,112 @@ function createEnginePanner() {
   panner.coneOuterGain = 0;
   return panner;
 }
+function createShotPanner() {
+  const panner = engineContext.createPanner();
+  panner.panningModel = "HRTF";
+  panner.distanceModel = "inverse";
+  panner.refDistance = 2.5;
+  panner.maxDistance = 140;
+  panner.rolloffFactor = 1.1;
+  panner.coneInnerAngle = 360;
+  panner.coneOuterAngle = 360;
+  panner.coneOuterGain = 0;
+  return panner;
+}
+function ensureSharedAudioContext() {
+  if (!engineContext) {
+    engineContext = new AudioContext();
+    engineGain = engineContext.createGain();
+    engineGain.gain.value = .28;
+    enginePanner = createEnginePanner();
+    engineGain.connect(enginePanner);
+    enginePanner.connect(engineContext.destination);
+  }
+  if (engineContext.state !== "running") engineContext.resume().catch(() => {});
+  return engineContext;
+}
+function updateSpatialListener(time) {
+  const listenerObject = engineListenerObject();
+  if (!listenerObject || !engineContext) return;
+  listenerObject.getWorldPosition(listenerPosition);
+  listenerObject.getWorldQuaternion(listenerQuaternion);
+  listenerForward.set(0, 0, -1).applyQuaternion(listenerQuaternion);
+  listenerUp.set(0, 1, 0).applyQuaternion(listenerQuaternion);
+  const audioListener = engineContext.listener;
+  if (!setAudioVector(audioListener, "positionX", "positionY", "positionZ", listenerPosition.x, listenerPosition.y, listenerPosition.z, time)
+    && audioListener.setPosition) {
+    audioListener.setPosition(listenerPosition.x, listenerPosition.y, listenerPosition.z);
+  }
+  if (audioListener.forwardX?.setValueAtTime) {
+    audioListener.forwardX.setValueAtTime(listenerForward.x, time);
+    audioListener.forwardY.setValueAtTime(listenerForward.y, time);
+    audioListener.forwardZ.setValueAtTime(listenerForward.z, time);
+    audioListener.upX.setValueAtTime(listenerUp.x, time);
+    audioListener.upY.setValueAtTime(listenerUp.y, time);
+    audioListener.upZ.setValueAtTime(listenerUp.z, time);
+  } else if (audioListener.setOrientation) {
+    audioListener.setOrientation(
+      listenerForward.x, listenerForward.y, listenerForward.z,
+      listenerUp.x, listenerUp.y, listenerUp.z
+    );
+  }
+}
+async function ensureShootBuffer() {
+  ensureSharedAudioContext();
+  if (!shootLoad) {
+    shootLoad = fetch(shootUrl)
+      .then((response) => response.arrayBuffer())
+      .then((data) => engineContext.decodeAudioData(data));
+  }
+  shootBuffer = await shootLoad;
+  return shootBuffer;
+}
+/** Spatial gunshot at a play-space-local position (muzzle). */
+function playSpatialShoot(localPosition) {
+  playSpace.localToWorld(shootWorldPos.copy(localPosition));
+  playSpatialShootWorld(shootWorldPos);
+}
+function playSpatialShootWorld(worldPosition) {
+  // Fire-and-forget; overlap is fine for rapid fire.
+  ensureShootBuffer().then((buffer) => {
+    if (!buffer || !engineContext) return;
+    const time = engineContext.currentTime;
+    updateSpatialListener(time);
+    const source = engineContext.createBufferSource();
+    const gain = engineContext.createGain();
+    const panner = createShotPanner();
+    source.buffer = buffer;
+    gain.gain.value = 0.8 * gameSettings.masterVolume;
+    source.connect(gain);
+    gain.connect(panner);
+    panner.connect(engineContext.destination);
+    if (!setAudioVector(panner, "positionX", "positionY", "positionZ", worldPosition.x, worldPosition.y, worldPosition.z, time)
+      && panner.setPosition) {
+      panner.setPosition(worldPosition.x, worldPosition.y, worldPosition.z);
+    }
+    source.start();
+    source.onended = () => {
+      try {
+        source.disconnect();
+        gain.disconnect();
+        panner.disconnect();
+      } catch (_) { /* already torn down */ }
+    };
+  }).catch((error) => {
+    console.warn("[WebXR] shoot sound failed", error);
+  });
+}
 async function startEngineSound() {
   try {
-    if (!engineContext) {
-      engineContext = new AudioContext();
-      engineGain = engineContext.createGain();
-      engineGain.gain.value = .28;
-      enginePanner = createEnginePanner();
-      engineGain.connect(enginePanner);
-      enginePanner.connect(engineContext.destination);
-    }
+    ensureSharedAudioContext();
     // Resume immediately while this call still originates from a controller/button action.
     // Waiting for the fetch first can cause headset browsers to reject audio playback.
-    if (engineContext.state !== "running") engineContext.resume().catch(() => {});
     if (!engineLoad) engineLoad = fetch(assetUrl("audio/PlaneEngineNoise.wav"))
       .then((response) => response.arrayBuffer())
       .then((data) => engineContext.decodeAudioData(data));
     engineBuffer = await engineLoad;
+    // Prefetch gunshot so the first shot isn't delayed by decode.
+    ensureShootBuffer().catch(() => {});
     await engineContext.resume();
     if (!engineSource) {
       engineSource = engineContext.createBufferSource();
@@ -3017,6 +3089,7 @@ function fire() {
   playSpace.add(shot);
   bullets.push(shot);
   spawnMuzzleSparks(shot.position, shot.userData.velocity);
+  playSpatialShoot(shot.position);
   vibrateFireController();
   if (net.active) {
     nextNetBulletId += 1;
