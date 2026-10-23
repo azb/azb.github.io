@@ -2,9 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.16";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.16";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.16";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.17";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.17";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.17";
+import { createAiFleet } from "./ai-planes.js?v=0.5.17";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1243,7 +1244,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.16");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.17");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1868,6 +1869,28 @@ const bulletGeom = new THREE.SphereGeometry(0.5, 8, 8);
 const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
 const fireHapticIntensity = 20 / 255;
 const fireHapticDurationMs = 10;
+/** Local AI dogfighters — chase/shoot you; you can shoot them back. */
+let aiFleet = null;
+function ensureAiFleet() {
+  if (aiFleet) return aiFleet;
+  if (!bulletSpawnLocal?.length) return null;
+  aiFleet = createAiFleet({
+    playSpace,
+    createMesh: createRemotePlaneMesh,
+    findPropeller: findNamedPropeller,
+    worldSpeedScale,
+    bulletGeom,
+    bulletMat,
+    bulletMuzzleSpeed,
+    bulletLifetimeSec,
+    bulletSpawnLocal,
+  });
+  return aiFleet;
+}
+function onAiHitPlayer() {
+  flight.reset();
+  if (statusLabel) statusLabel.textContent = "Hit by AI — respawned";
+}
 
 // Lightweight Lens-style wingtip vapor: pooled InstancedMesh wisps (white elongated quads).
 const vortexGeom = new THREE.BoxGeometry(1, 1, 1);
@@ -2082,7 +2105,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.16`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.17`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2771,6 +2794,13 @@ renderer.setAnimationLoop((time, frame) => {
         bullets.splice(i, 1);
         continue;
       }
+      const fleet = ensureAiFleet();
+      if (fleet?.hitTestPlayerBullet(shot.position, bulletNextLocal, time / 1000)) {
+        playSpace.remove(shot);
+        bullets.splice(i, 1);
+        if (statusLabel) statusLabel.textContent = "AI down — respawning soon";
+        continue;
+      }
       const hit = bulletHitsEnvironment(shot, bulletNextLocal);
       if (hit) {
         spawnBulletImpact(hit.point);
@@ -2794,6 +2824,11 @@ renderer.setAnimationLoop((time, frame) => {
   broadcastLocalPlane(time);
   updateRemotePlanes(dt);
   updateRemoteBullets(dt);
+  ensureAiFleet()?.update(dt, flight.position, {
+    paused: simulationPaused,
+    nowSec: time / 1000,
+    onPlayerHit: onAiHitPlayer,
+  });
   updateBalloons();
   updateWingVortex(dt);
   applyDesktopCamera();
