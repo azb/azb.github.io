@@ -17,6 +17,10 @@ const FIRE_ALIGN_DOT = 0.88;
 const FIRE_COOLDOWN = 0.35;
 const PATROL_RADIUS = 18;
 const TURN_RATE = 1.8;
+/** Chance to pick chase when rolling a new mood (patrol otherwise). */
+const CHASE_MOOD_CHANCE = 0.2;
+const MOOD_MIN_SEC = 5;
+const MOOD_MAX_SEC = 12;
 
 const _fwd = new THREE.Vector3();
 const _to = new THREE.Vector3();
@@ -151,6 +155,8 @@ export function createAiFleet(opts) {
         lastFire: -Infinity,
         patrolAngle: Math.random() * Math.PI * 2,
         spawnIndex: 0,
+        chasing: Math.random() < CHASE_MOOD_CHANCE,
+        moodTimer: MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC),
       };
       lookRotation(new THREE.Vector3(Math.sin(bot.patrolAngle), 0, -Math.cos(bot.patrolAngle)), bot.rotation);
       root.quaternion.copy(bot.rotation);
@@ -177,9 +183,25 @@ export function createAiFleet(opts) {
     bot.throttle = 0.55 + Math.random() * 0.2;
     bot.alive = true;
     bot.respawnAt = -1;
+    bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
+    bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
     bot.root.visible = true;
     bot.root.position.copy(bot.position);
     bot.root.quaternion.copy(bot.rotation);
+  }
+
+  function rollMood(bot) {
+    bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
+    bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
+  }
+
+  function patrolAim(bot, dt, out) {
+    bot.patrolAngle += dt * 0.35;
+    return out.set(
+      Math.sin(bot.patrolAngle) * PATROL_RADIUS * 0.6,
+      3 + Math.sin(bot.patrolAngle * 0.7) * 2,
+      -10 + Math.cos(bot.patrolAngle) * PATROL_RADIUS * 0.4,
+    );
   }
 
   function fireFrom(bot, nowSec) {
@@ -220,26 +242,23 @@ export function createAiFleet(opts) {
     return dist;
   }
 
-  function updateBots(dt, nowSec, playerPos) {
+  function updateBots(dt, nowSec, playerPos, playerAirborne) {
     ensureBots();
     for (const bot of bots) {
       if (!bot.alive) {
         if (bot.respawnAt > 0 && nowSec >= bot.respawnAt) respawnBot(bot);
         continue;
       }
+      bot.moodTimer -= dt;
+      if (bot.moodTimer <= 0) rollMood(bot);
+
       const toPlayer = bot.position.distanceTo(playerPos);
-      let aim = null;
-      if (toPlayer < ENGAGE_RANGE) {
-        aim = playerPos;
-      } else {
-        bot.patrolAngle += dt * 0.35;
-        aim = _to.set(
-          Math.sin(bot.patrolAngle) * PATROL_RADIUS * 0.6,
-          3 + Math.sin(bot.patrolAngle * 0.7) * 2,
-          -10 + Math.cos(bot.patrolAngle) * PATROL_RADIUS * 0.4,
-        );
-      }
-      const dist = steerBot(bot, aim, dt);
+      // Chase only ~1/5 of moods, only after the player has taken off, and in range.
+      const shouldChase = playerAirborne
+        && bot.chasing
+        && toPlayer < ENGAGE_RANGE;
+      const aim = shouldChase ? playerPos : patrolAim(bot, dt, _to);
+      steerBot(bot, aim, dt);
       const speed = lerp(0, 100, bot.throttle) * opts.worldSpeedScale;
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
       bot.velocity.copy(_fwd).multiplyScalar(speed);
@@ -251,12 +270,11 @@ export function createAiFleet(opts) {
       if (bot.propeller) {
         bot.propeller.rotateY(-dt * (4 + bot.throttle * 38));
       }
-      if (toPlayer < FIRE_RANGE) {
+      if (shouldChase && toPlayer < FIRE_RANGE) {
         _fwd.set(0, 0, -1).applyQuaternion(bot.rotation);
         _to.subVectors(playerPos, bot.position).normalize();
         if (_fwd.dot(_to) >= FIRE_ALIGN_DOT) fireFrom(bot, nowSec);
       }
-      void dist;
     }
   }
 
@@ -298,9 +316,14 @@ export function createAiFleet(opts) {
   }
 
   return {
-    update(dt, playerPos, { paused = false, nowSec = performance.now() / 1000, onPlayerHit } = {}) {
+    update(dt, playerPos, {
+      paused = false,
+      nowSec = performance.now() / 1000,
+      onPlayerHit,
+      playerAirborne = false,
+    } = {}) {
       if (paused) return;
-      updateBots(dt, nowSec, playerPos);
+      updateBots(dt, nowSec, playerPos, playerAirborne);
       updateBullets(dt, playerPos, onPlayerHit);
     },
     hitTestPlayerBullet,
