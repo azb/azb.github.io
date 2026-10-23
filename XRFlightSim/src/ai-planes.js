@@ -174,14 +174,24 @@ export function createAiFleet(opts) {
     bot.crashing = true;
     bot.alive = true;
     bot.throttle = 0;
+    // Keep current travel direction; spin/dive ramp in over time.
+    const coast = bot.velocity.clone();
+    if (coast.lengthSq() < 1e-4) {
+      _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
+      coast.copy(_fwd).multiplyScalar(lerp(0, 100, 0.55) * opts.worldSpeedScale);
+    }
     bot.crash = {
+      velocity: coast,
       tumble: new THREE.Vector3(
         Math.random() * 2 - 1,
-        Math.random() * 0.6 + 0.2,
+        Math.random() * 0.35 + 0.15,
         Math.random() * 2 - 1,
       ).normalize(),
-      tumbleRate: 7 + Math.random() * 5,
-      fallSpeed: 1.2 + Math.random() * 0.8,
+      tumbleRate: 0.4,
+      tumbleAccel: 2.2,
+      maxTumbleRate: 7.5,
+      gravity: 0.4,
+      gravityAccel: 3.2,
       smokeAcc: 0,
     };
     bot.root.visible = true;
@@ -280,16 +290,19 @@ export function createAiFleet(opts) {
     if (!c) return;
     const step = clamp(dt, 0, 0.1);
     bot.throttle = 0;
+    c.tumbleRate = Math.min(c.maxTumbleRate, c.tumbleRate + c.tumbleAccel * step);
     _tumbleQ.setFromAxisAngle(c.tumble, c.tumbleRate * step);
     bot.rotation.premultiply(_tumbleQ).normalize();
-    const speed = 100 * opts.worldSpeedScale * 0.35;
-    _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
-    bot.position.addScaledVector(_fwd, speed * step);
-    bot.position.y -= c.fallSpeed * step * (1 + c.smokeAcc * 0.15);
-    c.fallSpeed += 4.5 * step;
+    c.gravity += c.gravityAccel * step;
+    c.velocity.y -= c.gravity * step;
+    c.velocity.multiplyScalar(Math.exp(-0.12 * step));
+    bot.position.addScaledVector(c.velocity, step);
+    bot.velocity.copy(c.velocity);
     c.smokeAcc += step;
-    c.tumbleRate = Math.min(14, c.tumbleRate + 1.5 * step);
-    emitFx(bot.position, "flame");
+    if (c.smokeAcc >= 0.06) {
+      c.smokeAcc = 0;
+      emitFx(bot.position, "flame");
+    }
     bot.root.position.copy(bot.position);
     bot.root.quaternion.copy(bot.rotation);
     if (bot.position.y <= 0.12) {
