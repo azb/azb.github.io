@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.25";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.25";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.25";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.25";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.26";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.26";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.26";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.26";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -86,39 +86,52 @@ const OFFSCREEN_ARROW_EDGE_INSET = 0.58;
 const OFFSCREEN_ARROW_VISIBLE_INSET = 0.08;
 const OFFSCREEN_ARROW_LENGTH = 0.055;
 const OFFSCREEN_ARROW_THICKNESS = 0.007;
+const OFFSCREEN_OTHER_SIZE = 0.55;
+const OFFSCREEN_OTHER_POOL = 6;
 const OFFSCREEN_LOOK_Z = -1;
 const offScreenPlaneLocal = new THREE.Vector3();
+const offScreenTargetWorld = new THREE.Vector3();
 const offScreenArrowLocalPos = new THREE.Vector3();
 const offScreenArrowPointQuat = new THREE.Quaternion();
 const offScreenArrowEuler = new THREE.Euler();
 let offScreenArrowShowing = false;
+const offScreenOtherShowing = [];
 
-function createOffScreenPlaneArrow() {
+function createOffScreenPlaneArrow(color = 0xffe626, sizeScale = 1, name = "Off Screen Plane Arrow") {
   const root = new THREE.Group();
-  root.name = "Off Screen Plane Arrow";
+  root.name = name;
   root.visible = false;
   const material = new THREE.MeshBasicMaterial({
-    color: new THREE.Color(1, 0.9, 0.15),
+    color: new THREE.Color(color),
     depthTest: false,
     depthWrite: false,
     side: THREE.DoubleSide,
   });
   const geometry = new THREE.PlaneGeometry(1, 1);
   const spread = THREE.MathUtils.degToRad(28);
+  const length = OFFSCREEN_ARROW_LENGTH * sizeScale;
+  const thickness = OFFSCREEN_ARROW_THICKNESS * sizeScale;
   for (const angle of [spread, -spread]) {
     const stroke = new THREE.Mesh(geometry, material);
     stroke.renderOrder = 25;
     stroke.frustumCulled = false;
     stroke.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), angle);
-    offScreenArrowLocalPos.set(0, -OFFSCREEN_ARROW_LENGTH * 0.5, 0).applyQuaternion(stroke.quaternion);
+    offScreenArrowLocalPos.set(0, -length * 0.5, 0).applyQuaternion(stroke.quaternion);
     stroke.position.copy(offScreenArrowLocalPos);
-    stroke.scale.set(OFFSCREEN_ARROW_THICKNESS, OFFSCREEN_ARROW_LENGTH, 1);
+    stroke.scale.set(thickness, length, 1);
     root.add(stroke);
   }
   scene.add(root);
   return root;
 }
-const offScreenPlaneArrow = createOffScreenPlaneArrow();
+const offScreenPlaneArrow = createOffScreenPlaneArrow(0xffe626, 1, "Off Screen Player Arrow");
+const offScreenOtherArrows = [];
+for (let i = 0; i < OFFSCREEN_OTHER_POOL; i += 1) {
+  offScreenOtherArrows.push(
+    createOffScreenPlaneArrow(0xff2e1f, OFFSCREEN_OTHER_SIZE, `Off Screen Other Arrow ${i}`),
+  );
+  offScreenOtherShowing.push(false);
+}
 scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 3.2));
 const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 10); scene.add(sun);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
@@ -1248,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.25");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.26");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2383,7 +2396,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.25`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.26`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2641,16 +2654,25 @@ function engineListenerObject() {
   }
   return camera;
 }
-function updateOffScreenPlaneArrow() {
-  const viewCam = engineListenerObject();
-  if (!viewCam || !planeRoot) {
-    offScreenPlaneArrow.visible = false;
-    return;
+function getOffScreenHalfExtents(viewCam) {
+  const halfExtentsCam = viewCam.isArrayCamera ? viewCam.cameras?.[0] : viewCam;
+  const proj = halfExtentsCam?.projectionMatrix?.elements;
+  if (proj && Math.abs(proj[5]) > 1e-6 && Math.abs(proj[0]) > 1e-6) {
+    return {
+      halfHeight: OFFSCREEN_ARROW_DEPTH / proj[5],
+      halfWidth: OFFSCREEN_ARROW_DEPTH / proj[0],
+    };
   }
+  const halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * OFFSCREEN_ARROW_DEPTH;
+  return {
+    halfHeight,
+    halfWidth: halfHeight * Math.max(camera.aspect, 0.01),
+  };
+}
 
-  viewCam.updateMatrixWorld(true);
-  planeRoot.getWorldPosition(offScreenPlaneLocal);
-  viewCam.worldToLocal(offScreenPlaneLocal);
+/** @returns {boolean} true if arrow is shown */
+function placeOffScreenArrow(viewCam, worldPos, arrow, showingFlag, setShowing) {
+  viewCam.worldToLocal(offScreenPlaneLocal.copy(worldPos));
 
   const inFront = offScreenPlaneLocal.z * OFFSCREEN_LOOK_Z > 0.01;
   let dirX = offScreenPlaneLocal.x;
@@ -2664,18 +2686,8 @@ function updateOffScreenPlaneArrow() {
     dirY /= dirLength;
   }
 
-  const halfExtentsCam = viewCam.isArrayCamera ? viewCam.cameras?.[0] : viewCam;
-  let halfHeight;
-  let halfWidth;
-  const proj = halfExtentsCam?.projectionMatrix?.elements;
-  if (proj && Math.abs(proj[5]) > 1e-6 && Math.abs(proj[0]) > 1e-6) {
-    halfHeight = OFFSCREEN_ARROW_DEPTH / proj[5];
-    halfWidth = OFFSCREEN_ARROW_DEPTH / proj[0];
-  } else {
-    halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * OFFSCREEN_ARROW_DEPTH;
-    halfWidth = halfHeight * Math.max(camera.aspect, 0.01);
-  }
-  const inset = offScreenArrowShowing
+  const { halfHeight, halfWidth } = getOffScreenHalfExtents(viewCam);
+  const inset = showingFlag
     ? OFFSCREEN_ARROW_VISIBLE_INSET
     : OFFSCREEN_ARROW_VISIBLE_INSET + 0.04;
   const planeDepth = Math.max(offScreenPlaneLocal.z * OFFSCREEN_LOOK_Z, 0.01);
@@ -2685,13 +2697,13 @@ function updateOffScreenPlaneArrow() {
     && Math.abs(offScreenPlaneLocal.y) < halfHeight * (1 - inset) * depthScale;
 
   if (inView) {
-    offScreenPlaneArrow.visible = false;
-    offScreenArrowShowing = false;
-    return;
+    arrow.visible = false;
+    setShowing(false);
+    return false;
   }
 
-  offScreenArrowShowing = true;
-  offScreenPlaneArrow.visible = true;
+  setShowing(true);
+  arrow.visible = true;
 
   const maxX = halfWidth * (1 - OFFSCREEN_ARROW_EDGE_INSET);
   const maxY = halfHeight * (1 - OFFSCREEN_ARROW_EDGE_INSET);
@@ -2708,8 +2720,55 @@ function updateOffScreenPlaneArrow() {
   offScreenArrowPointQuat.setFromEuler(offScreenArrowEuler);
 
   offScreenArrowLocalPos.applyMatrix4(viewCam.matrixWorld);
-  offScreenPlaneArrow.position.copy(offScreenArrowLocalPos);
-  offScreenPlaneArrow.quaternion.copy(viewCam.quaternion).multiply(offScreenArrowPointQuat);
+  arrow.position.copy(offScreenArrowLocalPos);
+  arrow.quaternion.copy(viewCam.quaternion).multiply(offScreenArrowPointQuat);
+  return true;
+}
+
+function updateOffScreenPlaneArrow() {
+  const viewCam = engineListenerObject();
+  if (!viewCam || !planeRoot) {
+    offScreenPlaneArrow.visible = false;
+    for (const arrow of offScreenOtherArrows) arrow.visible = false;
+    return;
+  }
+
+  viewCam.updateMatrixWorld(true);
+  planeRoot.getWorldPosition(offScreenTargetWorld);
+  placeOffScreenArrow(
+    viewCam,
+    offScreenTargetWorld,
+    offScreenPlaneArrow,
+    offScreenArrowShowing,
+    (v) => { offScreenArrowShowing = v; },
+  );
+
+  const targets = [];
+  const fleet = ensureAiFleet();
+  if (fleet?.collectAliveWorldPositions) {
+    fleet.collectAliveWorldPositions(targets);
+  }
+  for (const entry of remotePlanes.values()) {
+    if (!entry?.root?.visible) continue;
+    targets.push(entry.root.getWorldPosition(new THREE.Vector3()));
+  }
+
+  for (let i = 0; i < offScreenOtherArrows.length; i += 1) {
+    const arrow = offScreenOtherArrows[i];
+    if (i < targets.length) {
+      const idx = i;
+      placeOffScreenArrow(
+        viewCam,
+        targets[i],
+        arrow,
+        offScreenOtherShowing[idx],
+        (v) => { offScreenOtherShowing[idx] = v; },
+      );
+    } else {
+      arrow.visible = false;
+      offScreenOtherShowing[i] = false;
+    }
+  }
 }
 function setAudioVector(node, xName, yName, zName, x, y, z, time) {
   const xParam = node[xName];

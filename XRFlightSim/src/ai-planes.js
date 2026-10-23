@@ -414,6 +414,13 @@ export function createAiFleet(opts) {
       updateBullets(dt, playerPos, onPlayerHit);
     },
     hitTestPlayerBullet,
+    collectAliveWorldPositions(out) {
+      for (const bot of bots) {
+        if (!bot.alive && !bot.crashing) continue;
+        if (!bot.root?.visible) continue;
+        out.push(bot.position.clone());
+      }
+    },
     aliveCount() {
       return bots.filter((b) => b.alive && !b.crashing).length;
     },
