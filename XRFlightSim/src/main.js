@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.21";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.21";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.21";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.21";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.22";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.22";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.22";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.22";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1244,7 +1244,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.21");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.22");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1584,6 +1584,10 @@ function spawnRemoteBullet(fire) {
   shot.userData.ownerId = fire.playerId;
   playSpace.add(shot);
   remoteBullets.push(shot);
+  const remoteFwd = fire.vel
+    ? new THREE.Vector3(fire.vel.x, fire.vel.y, fire.vel.z)
+    : null;
+  spawnMuzzleSparks(shot.position, remoteFwd);
 }
 
 function updateRemoteBullets(dt) {
@@ -1894,10 +1898,22 @@ const crashSmokeMat = new THREE.MeshBasicMaterial({
   opacity: 0.55,
   depthWrite: false,
 });
+const muzzleSparkMat = new THREE.MeshBasicMaterial({
+  color: 0xffe28a,
+  transparent: true,
+  opacity: 1,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
 const crashTumbleQuat = new THREE.Quaternion();
 const crashAxisScratch = new THREE.Vector3();
+const muzzleFwdScratch = new THREE.Vector3();
 
 function spawnPlaneFx(origin, kind = "flame") {
+  if (kind === "spark") {
+    spawnMuzzleSparks(origin);
+    return;
+  }
   const count = kind === "smoke" ? 2 : 4;
   for (let i = 0; i < count; i += 1) {
     const isSmoke = kind === "smoke" || i % 3 === 0;
@@ -1917,6 +1933,34 @@ function spawnPlaneFx(origin, kind = "flame") {
     spark.userData.lifetime = (isSmoke ? 0.55 : 0.35) + Math.random() * 0.45;
     spark.userData.isSmoke = isSmoke;
     spark.scale.setScalar(isSmoke ? 1.0 : 0.55);
+    playSpace.add(spark);
+    crashFlameParticles.push(spark);
+  }
+}
+
+/** Quick bright muzzle flash when a gun fires. */
+function spawnMuzzleSparks(origin, forward = null) {
+  const fwd = forward
+    ? muzzleFwdScratch.copy(forward).normalize()
+    : muzzleFwdScratch.set(0, 0, -1);
+  const count = 5;
+  for (let i = 0; i < count; i += 1) {
+    const mat = muzzleSparkMat.clone();
+    const spark = new THREE.Mesh(crashFlameGeom, mat);
+    spark.position.copy(origin).add(new THREE.Vector3(
+      (Math.random() - 0.5) * 0.06,
+      (Math.random() - 0.5) * 0.06,
+      (Math.random() - 0.5) * 0.06,
+    ));
+    spark.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 2.4,
+      (Math.random() - 0.5) * 2.0,
+      (Math.random() - 0.5) * 2.4,
+    ).addScaledVector(fwd, 3.5 + Math.random() * 4.5);
+    spark.userData.age = 0;
+    spark.userData.lifetime = 0.06 + Math.random() * 0.1;
+    spark.userData.isSmoke = false;
+    spark.scale.setScalar(0.28 + Math.random() * 0.22);
     playSpace.add(spark);
     crashFlameParticles.push(spark);
   }
@@ -2268,7 +2312,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.21`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.22`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2899,6 +2943,7 @@ function fire() {
   shot.userData.prevPosition = shot.position.clone();
   playSpace.add(shot);
   bullets.push(shot);
+  spawnMuzzleSparks(shot.position, shot.userData.velocity);
   vibrateFireController();
   if (net.active) {
     nextNetBulletId += 1;

@@ -271,6 +271,7 @@ export function createAiFleet(opts) {
     shot.userData.bulletId = `${bot.id}-${(nextBulletId += 1)}`;
     opts.playSpace.add(shot);
     bullets.push(shot);
+    emitFx(shot.position, "spark");
   }
 
   function steerBot(bot, targetPos, dt) {
