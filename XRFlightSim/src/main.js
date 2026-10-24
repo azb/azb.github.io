@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.35";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.35";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.35";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.35";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.36";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.36";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.36";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.36";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.35");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.36");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1797,9 +1797,20 @@ const flightAxisScratch = new THREE.Vector3();
 const flightQuatScratch = new THREE.Quaternion();
 const bulletNextLocal = new THREE.Vector3();
 const bulletFireVelocity = new THREE.Vector3();
+/** Stick/throttle can wiggle control surfaces below this; plane won't steer or move. */
+const TAKEOFF_THROTTLE = 0.25;
+/** How quickly airspeed eases toward the throttle target (higher = snappier). */
+const AIRSPEED_SMOOTH_RATE = 2.2;
 class FlightModel {
   constructor() { this.reset(); }
-  reset() { this.position = spawnPosition.clone(); this.rotation = new THREE.Quaternion(); this.throttle = 0; this.velocity = new THREE.Vector3(); }
+  reset() {
+    this.position = spawnPosition.clone();
+    this.rotation = new THREE.Quaternion();
+    this.throttle = 0;
+    this.velocity = new THREE.Vector3();
+    this.airspeed = 0;
+    this.throttleCommitted = false;
+  }
   forward(target = flightForwardScratch) {
     return target.set(0, 0, -1).applyQuaternion(this.rotation).normalize();
   }
@@ -1811,53 +1822,65 @@ class FlightModel {
     } else {
       this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
     }
-    // Match Lens Scene.scene GameControllerMovement: minSpeed 0, maxSpeed 500,
-    // turnSpeed 240, pitch/roll/yaw 70. Keep WebXR translation at 0..100 * scale
-    // (Lens cm-ish 500 ~ same feel after worldSpeedScale), but use the Lens
-    // authority curve: referenceSpeed = maxSpeed * 0.25 when minSpeed is 0.
-    const speed = lerp(0, 100, this.throttle);
+    if (!this.throttleCommitted && this.throttle >= TAKEOFF_THROTTLE) {
+      this.throttleCommitted = true;
+    }
+    if (this.throttleCommitted) {
+      this.throttle = clamp(this.throttle, TAKEOFF_THROTTLE, 1);
+    }
+
+    // Remap 25%?100% throttle onto the full speed curve once airborne.
+    const speedT = this.throttleCommitted
+      ? (this.throttle - TAKEOFF_THROTTLE) / (1 - TAKEOFF_THROTTLE)
+      : 0;
+    const targetSpeed = lerp(0, 100, clamp(speedT, 0, 1));
+    const blend = 1 - Math.exp(-AIRSPEED_SMOOTH_RATE * dt);
+    this.airspeed = lerp(this.airspeed, targetSpeed, blend);
+
     let handAiming = false;
-    if (input.aimDirection && input.aimDirection.lengthSq() > 1e-8) {
-      // Hand joystick: nose + velocity follow the pull (origin -> tip) immediately.
-      // Local forward is -Z; build a right-handed level basis for that.
-      handAimForward.copy(input.aimDirection).normalize();
-      handAimRight.crossVectors(handAimForward, handWorldUp);
-      if (handAimRight.lengthSq() < 1e-8) {
-        handAimRight.set(1, 0, 0).applyQuaternion(this.rotation);
+    // Below takeoff: control surfaces still animate (via animateAircraft), but
+    // the plane body does not rotate or translate.
+    if (this.throttleCommitted) {
+      if (input.aimDirection && input.aimDirection.lengthSq() > 1e-8) {
+        // Hand joystick: nose + velocity follow the pull (origin -> tip).
+        handAimForward.copy(input.aimDirection).normalize();
+        handAimRight.crossVectors(handAimForward, handWorldUp);
+        if (handAimRight.lengthSq() < 1e-8) {
+          handAimRight.set(1, 0, 0).applyQuaternion(this.rotation);
+        } else {
+          handAimRight.normalize();
+        }
+        handAimUp.crossVectors(handAimRight, handAimForward).normalize();
+        handJoystickDelta.copy(handAimForward).negate();
+        handAimMatrix.makeBasis(handAimRight, handAimUp, handJoystickDelta);
+        handAimQuat.setFromRotationMatrix(handAimMatrix);
+        this.rotation.copy(handAimQuat);
+        handAiming = true;
       } else {
-        handAimRight.normalize();
+        const controlAirspeed = lerp(0, 500, this.throttle);
+        const referenceSpeed = Math.max(500 * .25, 1);
+        const authority = clamp(controlAirspeed / referenceSpeed, .5, 1.25);
+        const controlScale = 240 / 120;
+        const rate = controlScale * authority * dt * Math.PI / 180;
+        this.rotation.multiply(
+          flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(0, 0, -1), input.roll * 70 * rate),
+        );
+        this.rotation.multiply(
+          flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(1, 0, 0), -input.pitch * 70 * rate),
+        );
+        this.rotation.multiply(
+          flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(0, 1, 0), -input.yaw * 70 * rate),
+        ).normalize();
       }
-      handAimUp.crossVectors(handAimRight, handAimForward).normalize();
-      // Local +Z column = -flightForward so (0,0,-1) maps to handAimForward.
-      handJoystickDelta.copy(handAimForward).negate();
-      handAimMatrix.makeBasis(handAimRight, handAimUp, handJoystickDelta);
-      handAimQuat.setFromRotationMatrix(handAimMatrix);
-      this.rotation.copy(handAimQuat);
-      handAiming = true;
-    } else {
-      const controlAirspeed = lerp(0, 500, this.throttle);
-      const referenceSpeed = Math.max(500 * .25, 1);
-      const authority = clamp(controlAirspeed / referenceSpeed, .5, 1.25);
-      const controlScale = 240 / 120;
-      const rate = controlScale * authority * dt * Math.PI / 180;
-      this.rotation.multiply(
-        flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(0, 0, -1), input.roll * 70 * rate),
-      );
-      this.rotation.multiply(
-        flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(1, 0, 0), -input.pitch * 70 * rate),
-      );
-      this.rotation.multiply(
-        flightQuatScratch.setFromAxisAngle(flightAxisScratch.set(0, 1, 0), -input.yaw * 70 * rate),
-      ).normalize();
     }
-    const worldSpeed = speed * worldSpeedScale;
-    // While hand-aiming, move along the pull vector (not a lagging nose heading).
+
+    const worldSpeed = this.airspeed * worldSpeedScale;
     if (handAiming) {
-      this.velocity.copy(handAimForward).multiplyScalar(speed > .01 ? worldSpeed : 0);
+      this.velocity.copy(handAimForward).multiplyScalar(this.airspeed > .01 ? worldSpeed : 0);
     } else {
-      this.velocity.copy(this.forward()).multiplyScalar(speed > .01 ? worldSpeed : 0);
+      this.velocity.copy(this.forward()).multiplyScalar(this.airspeed > .01 ? worldSpeed : 0);
     }
-    if (speed > .01) this.position.addScaledVector(this.velocity, dt);
+    if (this.airspeed > .01) this.position.addScaledVector(this.velocity, dt);
   }
 }
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true;
@@ -2425,7 +2448,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.35`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.36`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3285,7 +3308,7 @@ renderer.setAnimationLoop((time, frame) => {
     nowSec: time / 1000,
     onPlayerHit: playerCrash ? null : onAiHitPlayer,
     // Grounded at spawn / no throttle — AI patrols only until you take off.
-    playerAirborne: flight.throttle > 0.05
+    playerAirborne: flight.throttleCommitted
       || flight.position.distanceToSquared(spawnPosition) > 2.25,
   });
   if (!simulationPaused) updatePlayerDamageSmoke(dt);
@@ -3296,7 +3319,7 @@ renderer.setAnimationLoop((time, frame) => {
   updateOffScreenPlaneArrow();
   updateEnvironmentMeshes(frame);
   calibratePlaySpaceHeight(frame);
-  const speedValue = Math.round(lerp(0, 100, flight.throttle));
+  const speedValue = Math.round(flight.airspeed);
   const throttlePct = Math.round(flight.throttle * 100);
   const speedText = `Speed ${speedValue}${simulationPaused ? " - paused" : ""}`;
   if (speedLabel.textContent !== speedText) speedLabel.textContent = speedText;
