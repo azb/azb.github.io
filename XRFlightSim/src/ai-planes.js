@@ -208,9 +208,14 @@ export function createAiFleet(opts) {
       opts.playSpace.add(root);
       const pos = clampToPlayVolume(randomSpawn(new THREE.Vector3(), _playerPos));
       root.position.copy(pos);
+      const displayName = `Bandit ${i + 1}`;
+      const nameTag = opts.createNameTag?.(displayName) ?? null;
+      if (nameTag) root.add(nameTag);
       const bot = {
         id: `ai-${i + 1}`,
         root,
+        name: displayName,
+        nameTag,
         propeller: opts.findPropeller?.(mesh) ?? null,
         position: pos.clone(),
         rotation: new THREE.Quaternion(),
@@ -527,6 +532,13 @@ export function createAiFleet(opts) {
           velocity: bot.velocity,
           throttle: bot.throttle,
         });
+      }
+    },
+    forEachNameTag(fn) {
+      for (const bot of bots) {
+        if (!bot.nameTag) continue;
+        bot.nameTag.visible = Boolean(bot.alive || bot.crashing);
+        fn(bot.nameTag);
       }
     },
     aliveCount() {

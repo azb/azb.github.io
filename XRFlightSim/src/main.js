@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.48";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.48";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.48";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.48";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.49";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.49";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.49";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.49";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -277,9 +277,16 @@ async function loadInstructionControllerModels(session) {
   } catch (error) { console.warn("Controller profile lookup failed; using guide fallback", error); }
 }
 const gameSettings = loadSettings();
+if (!gameSettings.playerName) gameSettings.playerName = "Pilot";
 let returnToPauseAfterControls = false;
-/** @type {"controls" | "game" | "pause" | "settings" | "multiplayer"} */
+/** @type {"controls" | "game" | "pause" | "settings" | "multiplayer" | "scoreboard"} */
 let uiMode = "controls";
+/** Match length in seconds (dogfight round). */
+const MATCH_DURATION_SEC = 180;
+let matchActive = false;
+let matchEnded = false;
+let matchTimeLeft = MATCH_DURATION_SEC;
+let localNameTag = null;
 
 /** Controls board stays up while the plane still flies (try-before-OK). */
 function isFlightLiveUi() {
@@ -328,6 +335,7 @@ function showUiMode(mode) {
   const showPause = mode === "pause";
   const showSettings = mode === "settings";
   const showMultiplayer = mode === "multiplayer";
+  const showScoreboard = mode === "scoreboard";
   controlsVisible = showControls;
   if (controlsPanel) controlsPanel.visible = showControls;
   if (controlsOkButton) controlsOkButton.visible = showControls;
@@ -335,6 +343,7 @@ function showUiMode(mode) {
   if (pausePanel) pausePanel.visible = showPause;
   if (settingsPanel) settingsPanel.visible = showSettings;
   if (multiplayerPanel) multiplayerPanel.visible = showMultiplayer;
+  if (scoreboardPanel) scoreboardPanel.visible = showScoreboard;
   // Stay live on the controls board so players can test sticks/keys before OK.
   const shouldPause = mode !== "game" && mode !== "controls";
   simulationPaused = shouldPause;
@@ -344,7 +353,9 @@ function showUiMode(mode) {
       ? "Settings"
       : mode === "multiplayer"
         ? "Multiplayer"
-        : "Simulation paused";
+        : mode === "scoreboard"
+          ? "Match over · scoreboard"
+          : "Simulation paused";
   } else {
     startEngineSound();
     statusLabel.textContent = mode === "controls"
@@ -358,11 +369,18 @@ function showUiMode(mode) {
   if (showGame) {
     setUiButtonHovers(draggableUiPanels(), null);
     gamePanel?.userData.setThrottle?.(flight?.throttle ?? 0);
+    gamePanel?.userData.setScore?.(killScore);
+    gamePanel?.userData.setMatchTime?.(matchTimeLeft);
     ensureBalloonsSeeded();
+    if (!matchActive && !matchEnded) startMatch();
   }
   if (showMultiplayer) refreshMultiplayerUi();
+  if (showScoreboard) refreshScoreboardPanel();
   // Snap to hand height in front of the player whenever a menu/HUD opens.
-  if (mode === "controls" || mode === "pause" || mode === "settings" || mode === "game" || mode === "multiplayer") {
+  if (
+    mode === "controls" || mode === "pause" || mode === "settings"
+    || mode === "game" || mode === "multiplayer" || mode === "scoreboard"
+  ) {
     placeMenusInFrontOfPlayer();
   }
   applyGameSettings();
@@ -404,6 +422,7 @@ const settingsPanel = createSettingsMenu(gameSettings, {
   onBack: () => showUiMode("pause"),
   onChange: () => {
     applyGameSettings();
+    updateLocalNameTag();
     if (renderer.xr.isPresenting && xrSessionMode) {
       applySessionPresentation(xrSessionMode, xrSessionBlend);
       const canPassthrough = xrSessionMode === "immersive-ar" || isPassthroughBlend(xrSessionBlend);
@@ -434,6 +453,18 @@ const multiplayerPanel = createMultiplayerMenu({
 multiplayerPanel.position.set(0, 0.55, -1.4);
 multiplayerPanel.visible = false;
 playSpace.add(multiplayerPanel);
+
+const scoreboardPanel = createScoreboardMenu({
+  onPlayAgain: () => {
+    startMatch();
+    resetPlayerFlight({ keepScore: false });
+    showUiMode("game");
+  },
+  onMenu: () => showUiMode("pause"),
+});
+scoreboardPanel.position.set(0, 0.55, -1.4);
+scoreboardPanel.visible = false;
+playSpace.add(scoreboardPanel);
 
 const controlsOkButton = createUiButton("OK · A", 1.35, 0.32);
 controlsOkButton.position.set(0, -1.2, 0.06);
@@ -486,6 +517,7 @@ function activeMenuRoot() {
   if (uiMode === "pause") return pausePanel;
   if (uiMode === "settings") return settingsPanel;
   if (uiMode === "multiplayer") return multiplayerPanel;
+  if (uiMode === "scoreboard") return scoreboardPanel;
   if (uiMode === "controls") return controlsPanel;
   return null;
 }
@@ -1015,6 +1047,7 @@ function draggableUiPanels() {
   if (pausePanel?.visible) panels.push(pausePanel);
   if (settingsPanel?.visible) panels.push(settingsPanel);
   if (multiplayerPanel?.visible) panels.push(multiplayerPanel);
+  if (scoreboardPanel?.visible) panels.push(scoreboardPanel);
   return panels;
 }
 
@@ -1026,7 +1059,8 @@ function uiRootFromHit(object) {
       node === gamePanel ||
       node === pausePanel ||
       node === settingsPanel ||
-      node === multiplayerPanel
+      node === multiplayerPanel ||
+      node === scoreboardPanel
     ) {
       return node;
     }
@@ -1299,7 +1333,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.48");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.49");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1556,6 +1590,122 @@ function createRemotePlaneMesh() {
   return mesh;
 }
 
+function createNameTagSprite(label, color = "#eaf6ff") {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 128;
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  sprite.position.set(0, 1.15, 0);
+  sprite.scale.set(1.6, 0.4, 1);
+  sprite.renderOrder = 35;
+  sprite.userData.nameTagLabel = "";
+  sprite.userData.nameTagColor = color;
+  sprite.userData.nameTagCanvas = canvas;
+  setNameTagLabel(sprite, label || "Pilot");
+  return sprite;
+}
+
+function setNameTagLabel(sprite, label) {
+  if (!sprite?.userData?.nameTagCanvas) return;
+  const text = String(label || "Pilot").slice(0, 24);
+  if (sprite.userData.nameTagLabel === text) return;
+  sprite.userData.nameTagLabel = text;
+  const canvas = sprite.userData.nameTagCanvas;
+  const c = canvas.getContext("2d");
+  c.clearRect(0, 0, canvas.width, canvas.height);
+  c.fillStyle = sprite.userData.nameTagColor || "#eaf6ff";
+  c.font = "bold 64px system-ui, sans-serif";
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.fillText(text, canvas.width / 2, canvas.height / 2);
+  sprite.material.map.needsUpdate = true;
+}
+
+function disposeNameTag(sprite) {
+  if (!sprite) return;
+  sprite.parent?.remove(sprite);
+  sprite.material?.map?.dispose();
+  sprite.material?.dispose();
+}
+
+function updateLocalNameTag() {
+  if (!planeRoot) return;
+  if (!localNameTag) {
+    localNameTag = createNameTagSprite(gameSettings.playerName || "Pilot", "#7fd4ff");
+    planeRoot.add(localNameTag);
+  } else {
+    setNameTagLabel(localNameTag, gameSettings.playerName || "Pilot");
+  }
+}
+
+function billboardNameTags(viewCam) {
+  if (!viewCam) return;
+  if (localNameTag) localNameTag.quaternion.copy(viewCam.quaternion);
+  for (const entry of remotePlanes.values()) {
+    if (entry.nameTag) entry.nameTag.quaternion.copy(viewCam.quaternion);
+  }
+  const fleet = typeof ensureAiFleet === "function" ? ensureAiFleet() : null;
+  fleet?.forEachNameTag?.((tag) => {
+    tag.quaternion.copy(viewCam.quaternion);
+  });
+}
+
+function startMatch() {
+  matchActive = true;
+  matchEnded = false;
+  matchTimeLeft = MATCH_DURATION_SEC;
+  killScore = 0;
+  gamePanel?.userData.setScore?.(0);
+  gamePanel?.userData.setMatchTime?.(matchTimeLeft);
+  for (const entry of remotePlanes.values()) entry.score = 0;
+}
+
+function endMatch() {
+  if (matchEnded) return;
+  matchActive = false;
+  matchEnded = true;
+  matchTimeLeft = 0;
+  gamePanel?.userData.setMatchTime?.(0);
+  refreshScoreboardPanel();
+  showUiMode("scoreboard");
+}
+
+function refreshScoreboardPanel() {
+  const entries = [
+    {
+      name: gameSettings.playerName || "Pilot",
+      score: killScore,
+      isLocal: true,
+    },
+  ];
+  for (const entry of remotePlanes.values()) {
+    entries.push({
+      name: entry.name || "Pilot",
+      score: entry.score || 0,
+      isLocal: false,
+    });
+  }
+  entries.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  scoreboardPanel?.userData.setEntries?.(entries);
+}
+
+function tickMatchTimer(dt) {
+  if (!matchActive || matchEnded || simulationPaused) return;
+  if (uiMode !== "game" && uiMode !== "controls") return;
+  matchTimeLeft = Math.max(0, matchTimeLeft - dt);
+  gamePanel?.userData.setMatchTime?.(matchTimeLeft);
+  if (matchTimeLeft <= 0) endMatch();
+}
+
 function ensureRemotePlane(playerId) {
   let entry = remotePlanes.get(playerId);
   if (entry) return entry;
@@ -1570,7 +1720,12 @@ function ensureRemotePlane(playerId) {
     targetQuat: new THREE.Quaternion(),
     throttle: 0,
     propeller: findNamedPropeller(mesh),
+    name: `Pilot`,
+    score: 0,
+    nameTag: null,
   };
+  entry.nameTag = createNameTagSprite(entry.name);
+  root.add(entry.nameTag);
   remotePlanes.set(playerId, entry);
   return entry;
 }
@@ -1578,6 +1733,7 @@ function ensureRemotePlane(playerId) {
 function removeRemotePlane(playerId) {
   const entry = remotePlanes.get(playerId);
   if (!entry) return;
+  disposeNameTag(entry.nameTag);
   playSpace.remove(entry.root);
   remotePlanes.delete(playerId);
 }
@@ -1595,6 +1751,13 @@ function applyRemotePlanePose(playerId, plane) {
   entry.targetPos.set(plane.pos.x, plane.pos.y, plane.pos.z);
   entry.targetQuat.set(plane.rot.x, plane.rot.y, plane.rot.z, plane.rot.w).normalize();
   entry.throttle = clamp(Number(plane.throttle) || 0, 0, 1);
+  if (plane.name) entry.name = String(plane.name).slice(0, 24);
+  else {
+    const rosterHit = net.roster?.find((p) => p.uid === playerId);
+    if (rosterHit?.name) entry.name = rosterHit.name;
+  }
+  if (Number.isFinite(plane.score)) entry.score = Math.max(0, plane.score | 0);
+  setNameTagLabel(entry.nameTag, entry.name);
   if (!entry.root.userData.placed) {
     entry.root.position.copy(entry.targetPos);
     entry.root.quaternion.copy(entry.targetQuat);
@@ -1680,6 +1843,8 @@ function broadcastLocalPlane(time) {
     position: flight.position,
     rotation: flight.rotation,
     throttle: flight.throttle,
+    name: gameSettings.playerName || "Pilot",
+    score: killScore,
   });
 }
 
@@ -1777,7 +1942,7 @@ async function leaveMultiplayerRoom() {
 }
 
 net.on({
-  playerName: () => "Pilot",
+  playerName: () => gameSettings.playerName || "Pilot",
   presenting: () => renderer.xr.isPresenting,
   getBalloonSync: () => getBalloonSyncPayload(),
   onRoster: () => refreshMultiplayerUi(),
@@ -2196,6 +2361,7 @@ function ensureAiFleet() {
     bulletSpawnLocal,
     boundsMin: playVolumeMin,
     boundsMax: playVolumeMax,
+    createNameTag: (label) => createNameTagSprite(label, "#ff8a80"),
     spawnFx: (origin, kind) => {
       spawnPlaneFx(origin, kind);
       if (kind === "spark") playSpatialShoot(origin);
@@ -2560,7 +2726,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.48`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.49`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3534,6 +3700,9 @@ renderer.setAnimationLoop((time, frame) => {
   updateWingVortex(dt);
   applyDesktopCamera();
   updateOffScreenPlaneArrow();
+  tickMatchTimer(dt);
+  updateLocalNameTag();
+  billboardNameTags(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   updateEnvironmentMeshes(frame);
   calibratePlaySpaceHeight(frame);
   const speedValue = Math.round(flight.airspeed);
@@ -3545,12 +3714,14 @@ renderer.setAnimationLoop((time, frame) => {
   if (uiMode === "game") {
     gamePanel?.userData.setThrottle?.(flight.throttle);
     gamePanel?.userData.setScore?.(killScore);
+    gamePanel?.userData.setMatchTime?.(matchTimeLeft);
   }
   updateKillPopups(time);
   if (!simulationPaused) updateEngineSound();
   renderer.render(scene, camera);
 });
 function registerKill(atPosition) {
+  if (matchEnded) return;
   killScore += 1;
   gamePanel?.userData.setScore?.(killScore);
   spawnKillPopup(atPosition);
@@ -3613,15 +3784,18 @@ function clearKillPopups() {
   }
   killPopups.length = 0;
 }
-function resetPlayerFlight() {
+function resetPlayerFlight({ keepScore = true } = {}) {
   flight.reset();
   playerCrash = null;
   playerHealth = PLANE_MAX_HEALTH;
-  killScore = 0;
-  gamePanel?.userData.setScore?.(0);
+  if (!keepScore) {
+    killScore = 0;
+    gamePanel?.userData.setScore?.(0);
+  }
   playerDamageSmokeAcc = 0;
   clearCrashFlames();
   clearKillPopups();
+  updateLocalNameTag();
 }
 resetButton.addEventListener("click", () => resetPlayerFlight());
 function xrOptionalFeatures() {

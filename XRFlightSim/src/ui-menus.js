@@ -4,8 +4,13 @@ import * as THREE from "three";
 const SETTINGS_KEY = "xrflightsim-settings-v3";
 const VOLUME_STEPS = [0, 0.25, 0.5, 0.75, 1];
 const SENSITIVITY_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
+/** Cycle list for the in-headset Name setting (no keyboard). */
+export const PLAYER_NAME_OPTIONS = [
+  "Pilot", "Ace", "Sparrow", "Viper", "Rogue", "Falcon", "Nova", "Blaze", "Ghost", "Hawk",
+];
 
 export const defaultSettings = () => ({
+  playerName: "Pilot",
   passthrough: true,
   meshCollision: false,
   meshVisual: false,
@@ -13,6 +18,11 @@ export const defaultSettings = () => ({
   engineVolume: 1,
   stickSensitivity: 1,
 });
+
+export function nextPlayerName(current) {
+  const index = PLAYER_NAME_OPTIONS.indexOf(current);
+  return PLAYER_NAME_OPTIONS[(Math.max(index, 0) + 1) % PLAYER_NAME_OPTIONS.length];
+}
 
 export function loadSettings() {
   try {
@@ -311,19 +321,24 @@ export function createMultiplayerMenu({ onHost, onJoin, onLeave, onBack }) {
   return root;
 }
 
-/** In-flight HUD matching Lens Game Panel: score, throttle + Menu → pause. */
+/** In-flight HUD matching Lens Game Panel: score, timer, throttle + Menu → pause. */
 export function createGamePanel({ onMenu }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Flight", 2.1 * s, 1.55 * s);
+  const root = createMenuPanel("Flight", 2.1 * s, 1.85 * s);
   root.name = "Game Panel";
 
-  const scoreReadout = createUiButton("Score: 0", 1.7 * s, 0.3 * s);
-  scoreReadout.position.set(0, 0.36 * s, 0.02 * s);
+  const scoreReadout = createUiButton("Score: 0", 1.7 * s, 0.28 * s);
+  scoreReadout.position.set(0, 0.52 * s, 0.02 * s);
   scoreReadout.userData.uiButton.onClick = null;
   root.add(scoreReadout);
 
-  const throttleReadout = createUiButton("Throttle: 0%", 1.7 * s, 0.3 * s);
-  throttleReadout.position.set(0, 0.06 * s, 0.02 * s);
+  const timerReadout = createUiButton("Time: 3:00", 1.7 * s, 0.28 * s);
+  timerReadout.position.set(0, 0.22 * s, 0.02 * s);
+  timerReadout.userData.uiButton.onClick = null;
+  root.add(timerReadout);
+
+  const throttleReadout = createUiButton("Throttle: 0%", 1.7 * s, 0.28 * s);
+  throttleReadout.position.set(0, -0.05 * s, 0.02 * s);
   // Label only — findUiButton requires onClick, so leave it null.
   throttleReadout.userData.uiButton.onClick = null;
   root.add(throttleReadout);
@@ -340,7 +355,7 @@ export function createGamePanel({ onMenu }) {
       side: THREE.DoubleSide,
     }),
   );
-  barBg.position.set(0, -0.22 * s, 0.015 * s);
+  barBg.position.set(0, -0.32 * s, 0.015 * s);
   barBg.renderOrder = 7;
   root.add(barBg);
 
@@ -354,23 +369,33 @@ export function createGamePanel({ onMenu }) {
       side: THREE.DoubleSide,
     }),
   );
-  barFill.position.set(0, -0.22 * s, 0.02 * s);
+  barFill.position.set(0, -0.32 * s, 0.02 * s);
   barFill.renderOrder = 8;
   root.add(barFill);
 
   // Rays are off while flying — label the pause hint (left X), not a click target.
-  const menu = createUiButton("Press X for Menu", 1.85 * s, 0.3 * s);
-  menu.position.set(0, -0.52 * s, 0.02 * s);
+  const menu = createUiButton("Press X for Menu", 1.85 * s, 0.28 * s);
+  menu.position.set(0, -0.62 * s, 0.02 * s);
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);
 
   root.userData._throttlePercent = -1;
   root.userData._killScore = -1;
+  root.userData._matchLabel = "";
   root.userData.setScore = (score) => {
     const n = Math.max(0, Math.floor(Number(score) || 0));
     if (root.userData._killScore === n) return;
     root.userData._killScore = n;
     scoreReadout.userData.uiButton.setLabel(`Score: ${n}`);
+  };
+  root.userData.setMatchTime = (secondsLeft) => {
+    const sec = Math.max(0, Math.ceil(Number(secondsLeft) || 0));
+    const m = Math.floor(sec / 60);
+    const r = sec % 60;
+    const label = `Time: ${m}:${r.toString().padStart(2, "0")}`;
+    if (root.userData._matchLabel === label) return;
+    root.userData._matchLabel = label;
+    timerReadout.userData.uiButton.setLabel(label);
   };
   root.userData.setThrottle = (throttle) => {
     const clamped = Math.max(0, Math.min(1, throttle));
@@ -391,15 +416,64 @@ export function createGamePanel({ onMenu }) {
   return root;
 }
 
+/** End-of-match ranking panel. entries: [{ name, score, isLocal? }] already sorted. */
+export function createScoreboardMenu({ onPlayAgain, onMenu }) {
+  const s = UI_MENU_SCALE;
+  const root = createMenuPanel("Scoreboard", 2.6 * s, 3.1 * s);
+  root.name = "Scoreboard Panel";
+  const rows = [];
+  for (let i = 0; i < 6; i += 1) {
+    const row = createUiButton("—", 2.2 * s, 0.28 * s);
+    row.position.set(0, (0.85 - i * 0.35) * s, 0.02 * s);
+    row.userData.uiButton.onClick = null;
+    root.add(row);
+    rows.push(row);
+  }
+  const again = createUiButton("Play Again", 1.9 * s, 0.34 * s);
+  again.position.set(0, -1.15 * s, 0.02 * s);
+  again.userData.uiButton.onClick = onPlayAgain;
+  root.add(again);
+  const menu = createUiButton("Menu", 1.4 * s, 0.32 * s);
+  menu.position.set(0, -1.55 * s, 0.02 * s);
+  menu.userData.uiButton.onClick = onMenu;
+  root.add(menu);
+
+  root.userData.setEntries = (entries) => {
+    const list = Array.isArray(entries) ? entries : [];
+    for (let i = 0; i < rows.length; i += 1) {
+      const entry = list[i];
+      if (!entry) {
+        rows[i].visible = false;
+        continue;
+      }
+      rows[i].visible = true;
+      const rank = i + 1;
+      const mark = entry.isLocal ? " ★" : "";
+      rows[i].userData.uiButton.setLabel(
+        `${rank}. ${entry.name || "Pilot"} — ${Math.max(0, entry.score | 0)}${mark}`,
+      );
+    }
+  };
+  return root;
+}
+
 export function createSettingsMenu(settings, { onBack, onChange }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Settings", 2.6 * s, 3.25 * s);
+  const root = createMenuPanel("Settings", 2.6 * s, 3.7 * s);
   root.userData.settingsButtons = {};
 
   const rows = [
     {
+      key: "playerName",
+      y: 1.15 * s,
+      label: () => `Name: ${settings.playerName || "Pilot"}`,
+      click: () => {
+        settings.playerName = nextPlayerName(settings.playerName || "Pilot");
+      },
+    },
+    {
       key: "passthrough",
-      y: 0.95 * s,
+      y: 0.75 * s,
       label: () => `Passthrough: ${settings.passthrough ? "On" : "Off"}`,
       click: () => {
         settings.passthrough = !settings.passthrough;
@@ -407,7 +481,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshVisual",
-      y: 0.55 * s,
+      y: 0.35 * s,
       label: () => `Mesh Visual: ${settings.meshVisual ? "On" : "Off"}`,
       click: () => {
         settings.meshVisual = !settings.meshVisual;
@@ -415,7 +489,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshCollision",
-      y: 0.15 * s,
+      y: -0.05 * s,
       label: () => `Mesh Collision: ${settings.meshCollision ? "On" : "Off"}`,
       click: () => {
         settings.meshCollision = !settings.meshCollision;
@@ -423,7 +497,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "masterVolume",
-      y: -0.25 * s,
+      y: -0.45 * s,
       label: () => `Master Volume: ${formatPercent(settings.masterVolume)}`,
       click: () => {
         settings.masterVolume = nextStep(VOLUME_STEPS, settings.masterVolume);
@@ -431,7 +505,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "engineVolume",
-      y: -0.65 * s,
+      y: -0.85 * s,
       label: () => `Engine Volume: ${formatPercent(settings.engineVolume)}`,
       click: () => {
         settings.engineVolume = nextStep(VOLUME_STEPS, settings.engineVolume);
@@ -439,7 +513,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "stickSensitivity",
-      y: -1.05 * s,
+      y: -1.25 * s,
       label: () => `Stick Sensitivity: ${settings.stickSensitivity.toFixed(2)}x`,
       click: () => {
         settings.stickSensitivity = nextStep(SENSITIVITY_STEPS, settings.stickSensitivity);
@@ -461,7 +535,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
   }
 
   const back = createUiButton("Back", 1.4 * s, 0.32 * s);
-  back.position.set(0, -1.45 * s, 0.02 * s);
+  back.position.set(0, -1.7 * s, 0.02 * s);
   back.userData.uiButton.onClick = onBack;
   root.add(back);
 

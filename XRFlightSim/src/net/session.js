@@ -321,19 +321,23 @@ export class FlightMultiplayerSession {
     await fs.setDoc(fs.doc(db, "rooms", this.roomId, "players", this.uid), doc, { merge: true });
   }
 
-  broadcastPlane({ position, rotation, throttle }) {
+  broadcastPlane({ position, rotation, throttle, name = "", score = 0 }) {
     if (!this.active || !this.uid) return;
     this._localPose = {
       t: performance.now(),
       pos: [position.x, position.y, position.z],
       rot: [rotation.x, rotation.y, rotation.z, rotation.w],
       throttle: Number(throttle) || 0,
+      name: String(name || "").slice(0, 24),
+      score: Math.max(0, Math.floor(Number(score) || 0)),
     };
     const msg = makePlaneMessage({
       playerId: this.uid,
       position,
       rotation,
       throttle,
+      name,
+      score,
     });
     this._ws?.send(msg);
     this._rtc?.broadcast(msg);

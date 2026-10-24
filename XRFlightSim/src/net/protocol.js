@@ -1,5 +1,13 @@
 /** Peer plane pose snapshot (WebRTC JSON). */
-export function makePlaneMessage({ playerId, position, rotation, throttle, t = performance.now() }) {
+export function makePlaneMessage({
+  playerId,
+  position,
+  rotation,
+  throttle,
+  name = "",
+  score = 0,
+  t = performance.now(),
+}) {
   return {
     type: "plane",
     playerId,
@@ -7,6 +15,8 @@ export function makePlaneMessage({ playerId, position, rotation, throttle, t = p
     pos: [position.x, position.y, position.z],
     rot: [rotation.x, rotation.y, rotation.z, rotation.w],
     throttle: Number(throttle) || 0,
+    name: String(name || "").slice(0, 24),
+    score: Math.max(0, Math.floor(Number(score) || 0)),
   };
 }
 
@@ -62,6 +72,8 @@ export function parsePlaneMessage(msg) {
       w: Number(msg.rot[3]) || 1,
     },
     throttle: clamp01(Number(msg.throttle) || 0),
+    name: String(msg.name || "").slice(0, 24),
+    score: Math.max(0, Math.floor(Number(msg.score) || 0)),
   };
 }
 
