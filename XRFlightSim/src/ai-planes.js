@@ -23,10 +23,10 @@ const CHASE_MOOD_CHANCE = 0.2;
 const MOOD_MIN_SEC = 5;
 const MOOD_MAX_SEC = 12;
 /** Keep AI in a shallow cone ahead of the player (comfort / less head-turning). */
-const FRONT_DIST_MIN = 8;
-const FRONT_DIST_MAX = 26;
-const FRONT_HALF_WIDTH = 9;
-const FRONT_VERT = 3;
+const FRONT_DIST_MIN = 4;
+const FRONT_DIST_MAX = 12;
+const FRONT_HALF_WIDTH = 5;
+const FRONT_VERT = 2;
 /** Fixed play-space forward — cone does not rotate with head or plane. */
 const WORLD_FORWARD = new THREE.Vector3(0, 0, -1);
 
@@ -386,7 +386,7 @@ export function createAiFleet(opts) {
       let aim;
       if (shouldChase) {
         // Attack from world-ahead — don't orbit behind the player.
-        aim = _frontal.copy(playerPos).addScaledVector(_worldFwd, 2.5);
+        aim = _frontal.copy(playerPos).addScaledVector(_worldFwd, 1.2);
       } else {
         aim = frontalPoint(playerPos, bot, dt, _frontal);
       }
