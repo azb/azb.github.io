@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.44";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.44";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.44";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.44";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.45";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.45";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.45";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.45";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1282,7 +1282,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.44");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.45");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1825,6 +1825,8 @@ const TAKEOFF_THROTTLE = 0.25;
 const AIRSPEED_SMOOTH_RATE = 2.2;
 /** Fixed cubic flight area ahead of spawn (meters). */
 const PLAY_VOLUME_SIZE = 15;
+/** How much of the cube sits behind spawn so the runway is inside. */
+const PLAY_VOLUME_BEHIND = 3.5;
 const PLAY_VOLUME_RETURN_RATE = 1.8;
 const playVolumeMin = new THREE.Vector3();
 const playVolumeMax = new THREE.Vector3();
@@ -1834,7 +1836,8 @@ let playVolumeMesh = null;
 function setupPlayVolume() {
   const half = PLAY_VOLUME_SIZE * 0.5;
   const forward = new THREE.Vector3(0, 0, -1);
-  playVolumeCenter.copy(spawnPosition).addScaledVector(forward, half);
+  // Near face used to sit exactly on spawn — pull the cube back so takeoff works.
+  playVolumeCenter.copy(spawnPosition).addScaledVector(forward, half - PLAY_VOLUME_BEHIND);
   playVolumeCenter.y = spawnPosition.y + half * 0.35;
   playVolumeMin.set(
     playVolumeCenter.x - half,
@@ -2536,7 +2539,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.44`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.45`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
