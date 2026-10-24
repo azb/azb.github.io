@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.37";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.37";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.37";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.37";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.38";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.38";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.38";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.38";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.37");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.38");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1989,7 +1989,7 @@ function spawnPlaneFx(origin, kind = "flame") {
 function spawnCrashExplosion(origin) {
   playExplosionSound();
   // Bright core flash
-  for (let i = 0; i < 4; i += 1) {
+  for (let i = 0; i < 5; i += 1) {
     const mat = muzzleSparkMat.clone();
     const flash = new THREE.Mesh(crashFlameGeom, mat);
     flash.position.copy(origin).add(new THREE.Vector3(
@@ -2003,16 +2003,16 @@ function spawnCrashExplosion(origin) {
       (Math.random() - 0.5) * 1.5,
     );
     flash.userData.age = 0;
-    flash.userData.lifetime = 0.18 + Math.random() * 0.12;
+    flash.userData.lifetime = 0.45 + Math.random() * 0.35;
     flash.userData.isSmoke = false;
     flash.userData.baseScale = 2.2 + Math.random() * 1.4;
     flash.scale.setScalar(flash.userData.baseScale);
     playSpace.add(flash);
     crashFlameParticles.push(flash);
   }
-  // Fireball debris
-  for (let i = 0; i < 28; i += 1) {
-    const isSmoke = i % 4 === 0;
+  // Fireball + lingering smoke column
+  for (let i = 0; i < 36; i += 1) {
+    const isSmoke = i % 3 === 0;
     const mat = (isSmoke ? crashSmokeMat : crashFlameMat).clone();
     const spark = new THREE.Mesh(crashFlameGeom, mat);
     spark.position.copy(origin).add(new THREE.Vector3(
@@ -2026,12 +2026,12 @@ function spawnCrashExplosion(origin) {
       Math.random() * 2 - 1,
     ).normalize();
     spark.userData.velocity = dir.multiplyScalar(
-      (isSmoke ? 2.5 : 4.5) + Math.random() * (isSmoke ? 3.5 : 6.5),
+      (isSmoke ? 1.8 : 4.5) + Math.random() * (isSmoke ? 2.5 : 6.5),
     );
     spark.userData.age = 0;
-    spark.userData.lifetime = (isSmoke ? 0.9 : 0.45) + Math.random() * (isSmoke ? 0.7 : 0.45);
+    spark.userData.lifetime = (isSmoke ? 2.4 : 1.1) + Math.random() * (isSmoke ? 1.6 : 0.9);
     spark.userData.isSmoke = isSmoke;
-    spark.userData.baseScale = isSmoke ? 1.8 + Math.random() * 1.4 : 0.7 + Math.random() * 1.1;
+    spark.userData.baseScale = isSmoke ? 2.0 + Math.random() * 1.6 : 0.7 + Math.random() * 1.1;
     spark.scale.setScalar(spark.userData.baseScale);
     playSpace.add(spark);
     crashFlameParticles.push(spark);
@@ -2445,7 +2445,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.37`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.38`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
