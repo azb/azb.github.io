@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.38";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.38";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.38";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.38";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.39";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.39";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.39";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.39";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.38");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.39");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2445,7 +2445,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.38`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.39`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2547,8 +2547,10 @@ function applyBrowserGamepad(value, pad) {
   value.yaw = stick(pad.axes[0] || 0);
   value.roll = stick(pad.axes[2] || 0);
   value.pitch = -stick(pad.axes[3] || 0);
-  value.throttle = (pad.buttons[5]?.value || 0) - (pad.buttons[4]?.value || 0);
-  value.fire = Boolean(pad.buttons[7]?.pressed || pad.buttons[0]?.pressed);
+  // Standard mapping: 6/7 = L2/R2 analog triggers, 4/5 = L1/R1 bumpers.
+  // Vision Pro DualSense was previously reversed (bumpers throttle, triggers fire).
+  value.throttle = (pad.buttons[7]?.value || 0) - (pad.buttons[6]?.value || 0);
+  value.fire = Boolean(pad.buttons[5]?.pressed || pad.buttons[0]?.pressed);
   // Options / Start-style buttons when present.
   value.pause ||= Boolean(pad.buttons[9]?.pressed || pad.buttons[8]?.pressed);
 }
