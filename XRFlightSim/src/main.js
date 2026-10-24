@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.26";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.26";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.26";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.26";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.27";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.27";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.27";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.27";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.26");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.27");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2079,14 +2079,12 @@ function beginPlayerCrash() {
   }
   playerCrash = {
     velocity: coast,
-    tumble: new THREE.Vector3(
-      Math.random() * 2 - 1,
-      Math.random() * 0.35 + 0.15,
-      Math.random() * 2 - 1,
-    ).normalize(),
-    tumbleRate: 0.4,
-    tumbleAccel: 2.2,
-    maxTumbleRate: 7.5,
+    // Roll around the nose; tip gradually toward world-down.
+    spinSign: Math.random() < 0.5 ? -1 : 1,
+    spinRate: 1.2,
+    spinAccel: 3.5,
+    maxSpinRate: 9,
+    noseDownRate: 0.55,
     gravity: 0.4,
     gravityAccel: 3.2,
     smokeAcc: 0,
@@ -2145,16 +2143,43 @@ function clearCrashFlames() {
   crashFlameParticles.length = 0;
 }
 
+/** Tip nose toward world-down, then spin around local forward (−Z). */
+function applyCrashAttitude(rotation, c, step) {
+  flightForwardScratch.set(0, 0, -1).applyQuaternion(rotation).normalize();
+  // forward · down = −forward.y; 1 means already pointed straight down.
+  const alignDot = -flightForwardScratch.y;
+  if (alignDot < 0.95) {
+    // forward × world-down (0,-1,0)
+    crashAxisScratch.set(
+      -flightForwardScratch.z,
+      0,
+      flightForwardScratch.x,
+    );
+    if (crashAxisScratch.lengthSq() < 1e-8) {
+      crashAxisScratch.set(1, 0, 0).applyQuaternion(rotation).normalize();
+    } else {
+      crashAxisScratch.normalize();
+    }
+    const angle = Math.acos(clamp(alignDot, -1, 1));
+    const pitchStep = Math.min(angle, c.noseDownRate * step);
+    crashTumbleQuat.setFromAxisAngle(crashAxisScratch, pitchStep);
+    rotation.premultiply(crashTumbleQuat);
+  }
+  c.spinRate = Math.min(c.maxSpinRate, c.spinRate + c.spinAccel * step);
+  crashTumbleQuat.setFromAxisAngle(
+    crashAxisScratch.set(0, 0, -1),
+    c.spinRate * step * c.spinSign,
+  );
+  rotation.multiply(crashTumbleQuat).normalize();
+}
+
 /** @returns {boolean} true while crash is active (caller should skip normal flight.step) */
 function updatePlayerCrash(dt) {
   if (!playerCrash) return false;
   const step = clamp(dt, 0, 0.1);
   const c = playerCrash;
   flight.throttle = 0;
-  // Spin builds gradually — nose no longer drives motion (inertia does).
-  c.tumbleRate = Math.min(c.maxTumbleRate, c.tumbleRate + c.tumbleAccel * step);
-  crashTumbleQuat.setFromAxisAngle(crashAxisScratch.copy(c.tumble), c.tumbleRate * step);
-  flight.rotation.premultiply(crashTumbleQuat).normalize();
+  applyCrashAttitude(flight.rotation, c, step);
   // Keep coasting in the crash-start direction; gravity ramps in over time.
   c.gravity += c.gravityAccel * step;
   c.velocity.y -= c.gravity * step;
@@ -2396,7 +2421,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.26`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.27`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;

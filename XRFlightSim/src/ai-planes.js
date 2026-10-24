@@ -34,6 +34,7 @@ const _quat = new THREE.Quaternion();
 const _seg = new THREE.Vector3();
 const _closest = new THREE.Vector3();
 const _tumbleQ = new THREE.Quaternion();
+const _down = new THREE.Vector3(0, -1, 0);
 
 function distPointToSegment(point, a, b) {
   _seg.subVectors(b, a);
@@ -182,14 +183,11 @@ export function createAiFleet(opts) {
     }
     bot.crash = {
       velocity: coast,
-      tumble: new THREE.Vector3(
-        Math.random() * 2 - 1,
-        Math.random() * 0.35 + 0.15,
-        Math.random() * 2 - 1,
-      ).normalize(),
-      tumbleRate: 0.4,
-      tumbleAccel: 2.2,
-      maxTumbleRate: 7.5,
+      spinSign: Math.random() < 0.5 ? -1 : 1,
+      spinRate: 1.2,
+      spinAccel: 3.5,
+      maxSpinRate: 9,
+      noseDownRate: 0.55,
       gravity: 0.4,
       gravityAccel: 3.2,
       smokeAcc: 0,
@@ -287,14 +285,32 @@ export function createAiFleet(opts) {
     return dist;
   }
 
+  function applyCrashAttitude(rotation, c, step) {
+    _fwd.set(0, 0, -1).applyQuaternion(rotation).normalize();
+    const alignDot = -_fwd.y; // 1 = nose already down
+    if (alignDot < 0.95) {
+      _right.crossVectors(_fwd, _down);
+      if (_right.lengthSq() < 1e-8) {
+        _right.set(1, 0, 0).applyQuaternion(rotation).normalize();
+      } else {
+        _right.normalize();
+      }
+      const angle = Math.acos(clamp(alignDot, -1, 1));
+      const pitchStep = Math.min(angle, c.noseDownRate * step);
+      _tumbleQ.setFromAxisAngle(_right, pitchStep);
+      rotation.premultiply(_tumbleQ);
+    }
+    c.spinRate = Math.min(c.maxSpinRate, c.spinRate + c.spinAccel * step);
+    _tumbleQ.setFromAxisAngle(_fwd.set(0, 0, -1), c.spinRate * step * c.spinSign);
+    rotation.multiply(_tumbleQ).normalize();
+  }
+
   function updateCrash(bot, dt, nowSec) {
     const c = bot.crash;
     if (!c) return;
     const step = clamp(dt, 0, 0.1);
     bot.throttle = 0;
-    c.tumbleRate = Math.min(c.maxTumbleRate, c.tumbleRate + c.tumbleAccel * step);
-    _tumbleQ.setFromAxisAngle(c.tumble, c.tumbleRate * step);
-    bot.rotation.premultiply(_tumbleQ).normalize();
+    applyCrashAttitude(bot.rotation, c, step);
     c.gravity += c.gravityAccel * step;
     c.velocity.y -= c.gravity * step;
     c.velocity.multiplyScalar(Math.exp(-0.12 * step));
