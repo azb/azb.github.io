@@ -28,8 +28,12 @@ const FRONT_DIST_MAX = 6;
 const FRONT_HALF_WIDTH = 5;
 const FRONT_VERT = 1.2;
 /** Absolute world altitude band — do not track player Y as a rising floor. */
-const MIN_FLY_ALT = 0.9;
+/** Matches player GROUND_CONTACT_Y / runway deck after strip lowered 1m. */
+const GROUND_CONTACT_Y = 0.5;
+const MIN_FLY_ALT = GROUND_CONTACT_Y;
 const MAX_FLY_ALT = 45;
+const GROUND_BOUNCE_RESTITUTION = 0.55;
+const GROUND_HIT_COOLDOWN_SEC = 0.45;
 /** Max |y| of unit look dir (~20°) — avoids nose-down sliding on the floor clamp. */
 const MAX_LOOK_PITCH = 0.35;
 /** Fixed play-space forward — cone does not rotate with head or plane. */
@@ -222,6 +226,7 @@ export function createAiFleet(opts) {
         throttle: 0.55 + Math.random() * 0.2,
         velocity: new THREE.Vector3(),
         health: PLANE_MAX_HEALTH,
+        groundHitCooldown: 0,
         alive: true,
         crashing: false,
         crash: null,
@@ -380,9 +385,19 @@ export function createAiFleet(opts) {
     }
     bot.root.position.copy(bot.position);
     bot.root.quaternion.copy(bot.rotation);
-    if (bot.position.y <= 0.12) {
+    if (bot.position.y <= GROUND_CONTACT_Y) {
       finishCrash(bot, nowSec);
     }
+  }
+
+  function bounceOffGround(bot) {
+    _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
+    _fwd.y = Math.max(-_fwd.y * GROUND_BOUNCE_RESTITUTION, 0.18);
+    _fwd.normalize();
+    lookRotation(_fwd, bot.rotation);
+    const speed = bot.velocity.length();
+    bot.velocity.copy(_fwd).multiplyScalar(speed > 1e-3 ? speed : lerp(0, 100, bot.throttle) * opts.worldSpeedScale);
+    bot.position.y = GROUND_CONTACT_Y;
   }
 
   function updateBots(dt, nowSec, playerPos, playerAirborne) {
@@ -433,7 +448,26 @@ export function createAiFleet(opts) {
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
       bot.velocity.copy(_fwd).multiplyScalar(speed);
       bot.position.addScaledVector(bot.velocity, dt);
-      bot.position.y = clamp(bot.position.y, MIN_FLY_ALT, MAX_FLY_ALT);
+      bot.groundHitCooldown = Math.max(0, (bot.groundHitCooldown || 0) - dt);
+      if (bot.position.y <= GROUND_CONTACT_Y) {
+        const diving = _fwd.y < -0.02 || bot.velocity.y < -0.05;
+        bot.position.y = GROUND_CONTACT_Y;
+        if (diving) {
+          bounceOffGround(bot);
+          if (bot.groundHitCooldown <= 0) {
+            bot.groundHitCooldown = GROUND_HIT_COOLDOWN_SEC;
+            bot.health -= 1;
+            emitFx(bot.position, "smoke");
+            if (bot.health <= 0) {
+              bot.health = 0;
+              beginCrash(bot);
+            }
+          }
+        }
+      } else {
+        bot.position.y = clamp(bot.position.y, MIN_FLY_ALT, MAX_FLY_ALT);
+      }
+      if (bot.crashing) continue;
       clampToPlayVolume(bot.position);
       bot.root.position.copy(bot.position);
       bot.root.quaternion.copy(bot.rotation);

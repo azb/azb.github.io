@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.49";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.49";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.49";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.49";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.50";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.50";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.50";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.50";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -144,9 +144,15 @@ for (let i = 0; i < OFFSCREEN_OTHER_POOL; i += 1) {
 }
 scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 3.2));
 const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 10); scene.add(sun);
+/** Runway / ground deck height in play-space meters (matches LandingStrip). */
+const RUNWAY_Y = 0.3865;
+/** Plane origin sits slightly above the strip when parked. */
+const GROUND_CONTACT_Y = 0.5;
+const GROUND_BOUNCE_RESTITUTION = 0.55;
+const GROUND_HIT_COOLDOWN_SEC = 0.45;
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
-ground.rotation.x = -Math.PI / 2; ground.position.y = -3; virtualEnvironment.add(ground);
-const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a); grid.position.y = -2.98; virtualEnvironment.add(grid);
+ground.rotation.x = -Math.PI / 2; ground.position.y = RUNWAY_Y; virtualEnvironment.add(ground);
+const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a); grid.position.y = RUNWAY_Y + 0.02; virtualEnvironment.add(grid);
 // Opaque sky fill for passthrough-off. Clear color alone is ignored in AR alpha-blend
 // sessions, so the upper hemisphere stays see-through without a real mesh.
 const SKY_COLOR = 0x8ac5ee;
@@ -1333,7 +1339,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.49");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.50");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1995,7 +2001,7 @@ if (bootRoom) {
 refreshMultiplayerUi();
 
 /** Matches flight-sim-scene FighterPlane; rebuilt again in useSpawn when the scene loads. */
-const spawnPosition = new THREE.Vector3(0, 1.5, -3.2323);
+const spawnPosition = new THREE.Vector3(0, GROUND_CONTACT_Y, -3.2323);
 const flightForwardScratch = new THREE.Vector3();
 const flightAxisScratch = new THREE.Vector3();
 const flightQuatScratch = new THREE.Quaternion();
@@ -2068,6 +2074,8 @@ class FlightModel {
     this.airspeed = 0;
     this.throttleCommitted = false;
     this.outsidePlayVolume = false;
+    this.groundHitCooldown = 0;
+    this.groundHitThisFrame = false;
   }
   forward(target = flightForwardScratch) {
     return target.set(0, 0, -1).applyQuaternion(this.rotation).normalize();
@@ -2152,7 +2160,39 @@ class FlightModel {
       this.velocity.copy(this.forward()).multiplyScalar(this.airspeed > .01 ? worldSpeed : 0);
     }
     if (this.airspeed > .01) this.position.addScaledVector(this.velocity, dt);
+    this.groundHitThisFrame = false;
+    this.groundHitCooldown = Math.max(0, this.groundHitCooldown - dt);
+    this.resolveGroundContact(dt);
     this.outsidePlayVolume = !isInsidePlayVolume(this.position);
+  }
+  resolveGroundContact(dt) {
+    // Parked / taxiing: stay on the deck without bounce damage.
+    if (!this.throttleCommitted) {
+      if (this.position.y < GROUND_CONTACT_Y) this.position.y = GROUND_CONTACT_Y;
+      return;
+    }
+    const fwd = this.forward(flightForwardScratch);
+    const hitting = this.position.y <= GROUND_CONTACT_Y && (fwd.y < -0.02 || this.velocity.y < -0.05);
+    if (!hitting) {
+      if (this.position.y < GROUND_CONTACT_Y) this.position.y = GROUND_CONTACT_Y;
+      return;
+    }
+    this.position.y = GROUND_CONTACT_Y;
+    // Reflect dive into a bounce and re-aim along the new flight path.
+    fwd.y = Math.max(-fwd.y * GROUND_BOUNCE_RESTITUTION, 0.18);
+    fwd.normalize();
+    handAimRight.crossVectors(fwd, handWorldUp);
+    if (handAimRight.lengthSq() < 1e-8) handAimRight.set(1, 0, 0);
+    else handAimRight.normalize();
+    handAimUp.crossVectors(handAimRight, fwd).normalize();
+    handJoystickDelta.copy(fwd).negate();
+    handAimMatrix.makeBasis(handAimRight, handAimUp, handJoystickDelta);
+    this.rotation.setFromRotationMatrix(handAimMatrix);
+    this.velocity.copy(fwd).multiplyScalar(this.airspeed * worldSpeedScale);
+    if (this.groundHitCooldown <= 0) {
+      this.groundHitThisFrame = true;
+      this.groundHitCooldown = GROUND_HIT_COOLDOWN_SEC;
+    }
   }
 }
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true;
@@ -2409,6 +2449,20 @@ function onAiHitPlayer() {
   }
 }
 
+function onPlayerGroundHit() {
+  if (playerCrash) return;
+  playerHealth -= 1;
+  spawnPlaneFx(flight.position, "smoke");
+  if (playerHealth <= 0) {
+    playerHealth = 0;
+    beginPlayerCrash();
+    return;
+  }
+  if (statusLabel) {
+    statusLabel.textContent = `Ground hit! Health ${playerHealth}/${PLANE_MAX_HEALTH}`;
+  }
+}
+
 function spawnCrashFlameBurst() {
   spawnPlaneFx(flight.position, "flame");
 }
@@ -2493,7 +2547,7 @@ function updatePlayerCrash(dt) {
     c.smokeAcc = 0;
     spawnCrashFlameBurst();
   }
-  if (flight.position.y <= 0.12) {
+  if (flight.position.y <= GROUND_CONTACT_Y) {
     const boomAt = flight.position.clone();
     flight.reset();
     playerCrash = null;
@@ -2726,7 +2780,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.49`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.50`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3614,6 +3668,7 @@ renderer.setAnimationLoop((time, frame) => {
     const crashing = updatePlayerCrash(dt);
     if (!crashing) {
       flight.step(input, dt);
+      if (flight.groundHitThisFrame) onPlayerGroundHit();
       const surfaceInput = flight.outsidePlayVolume
         ? { pitch: 0, roll: 0, yaw: 0, throttle: flight.throttle }
         : input;
