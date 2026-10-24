@@ -27,6 +27,9 @@ const FRONT_DIST_MIN = 4;
 const FRONT_DIST_MAX = 12;
 const FRONT_HALF_WIDTH = 5;
 const FRONT_VERT = 2;
+const MIN_FLY_ALT = 0.9;
+/** Max |y| of unit look dir (~20°) — avoids nose-down sliding on the floor clamp. */
+const MAX_LOOK_PITCH = 0.35;
 /** Fixed play-space forward — cone does not rotate with head or plane. */
 const WORLD_FORWARD = new THREE.Vector3(0, 0, -1);
 
@@ -64,6 +67,10 @@ function lookRotation(forward, outQuat) {
     outQuat.identity();
     return outQuat;
   }
+  // Cap pitch so altitude clamps don't turn into "sliding while nose-down".
+  _fwd.y = clamp(_fwd.y, -MAX_LOOK_PITCH, MAX_LOOK_PITCH);
+  if (_fwd.lengthSq() < 1e-8) _fwd.copy(WORLD_FORWARD);
+  else _fwd.normalize();
   _right.crossVectors(_fwd, _up);
   if (_right.lengthSq() < 1e-8) {
     _right.set(1, 0, 0);
@@ -94,7 +101,8 @@ function frontalPoint(playerPos, bot, dt, out) {
   return out.copy(playerPos)
     .addScaledVector(_worldFwd, ahead)
     .addScaledVector(_right, side)
-    .addScaledVector(_aimUp, lift);
+    .addScaledVector(_aimUp, lift)
+    .setY(Math.max(out.y, MIN_FLY_ALT));
 }
 
 function randomSpawn(out, playerPos) {
@@ -105,7 +113,8 @@ function randomSpawn(out, playerPos) {
   return out.copy(playerPos)
     .addScaledVector(_worldFwd, ahead)
     .addScaledVector(_right, side)
-    .addScaledVector(_aimUp, lift);
+    .addScaledVector(_aimUp, lift)
+    .setY(Math.max(out.y, MIN_FLY_ALT));
 }
 
 /**
@@ -390,12 +399,16 @@ export function createAiFleet(opts) {
       } else {
         aim = frontalPoint(playerPos, bot, dt, _frontal);
       }
+      const cruiseY = Math.max(playerPos.y, MIN_FLY_ALT);
+      aim.y = clamp(aim.y, cruiseY - 1.8, cruiseY + 5);
       steerBot(bot, aim, dt);
       const speed = lerp(0, 100, bot.throttle) * opts.worldSpeedScale;
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
       bot.velocity.copy(_fwd).multiplyScalar(speed);
       bot.position.addScaledVector(bot.velocity, dt);
-      bot.position.y = clamp(bot.position.y, 0.8, 16);
+      const minY = Math.max(MIN_FLY_ALT, playerPos.y - 2.2);
+      const maxY = Math.max(minY + 2, playerPos.y + 7);
+      bot.position.y = clamp(bot.position.y, minY, maxY);
       bot.root.position.copy(bot.position);
       bot.root.quaternion.copy(bot.rotation);
       if (bot.propeller) {
