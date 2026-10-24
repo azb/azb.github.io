@@ -517,6 +517,18 @@ export function createAiFleet(opts) {
         out.push(bot.position.clone());
       }
     },
+    /** Roots + throttle/velocity for spatial engine loops. */
+    collectEngineSources(out) {
+      for (const bot of bots) {
+        if (!bot.alive && !bot.crashing) continue;
+        if (!bot.root?.visible) continue;
+        out.push({
+          root: bot.root,
+          velocity: bot.velocity,
+          throttle: bot.throttle,
+        });
+      }
+    },
     aliveCount() {
       return bots.filter((b) => b.alive && !b.crashing).length;
     },

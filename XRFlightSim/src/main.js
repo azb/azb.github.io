@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.43";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.43";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.43";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.43";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.44";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.44";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.44";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.44";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -37,6 +37,16 @@ let enginePanner = null;
 let engineSource = null;
 let engineBuffer = null;
 let engineLoad = null;
+/** Shared spatial engine loops for AI + remote planes (not the local player). */
+const OTHER_ENGINE_MAX = 8;
+/** Relative loudness vs the local player engine at the same distance. */
+const OTHER_ENGINE_LEVEL = 0.62;
+/** @type {{ source: AudioBufferSourceNode, gain: GainNode, panner: PannerNode }[]} */
+const otherEngineVoices = [];
+const otherEnginePos = new THREE.Vector3();
+const otherEngineToListener = new THREE.Vector3();
+/** @type {{ root: THREE.Object3D, velocity?: THREE.Vector3, throttle: number }[]} */
+const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const shootUrl = assetUrl("audio/shoot.wav");
 let shootBuffer = null;
@@ -1272,7 +1282,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.43");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.44");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2526,7 +2536,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.43`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.44`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2924,26 +2934,115 @@ function updateSpatialEngineAudio(time) {
   }
   updateSpatialListener(time);
 }
-function dopplerPitchScale() {
+function dopplerPitchScaleFor(velocity, worldPos) {
   // Lens GameControllerMovement.getDopplerPitchScale: airplane velocity dotted with
   // the direction from the plane to the listener, divided by max speed.
-  if (dopplerAmount <= 0 || !flight.velocity) return 1;
+  if (dopplerAmount <= 0 || !velocity) return 1;
   const listener = engineListenerObject();
-  if (!listener || !planeRoot) return 1;
+  if (!listener || !worldPos) return 1;
   listener.getWorldPosition(listenerPosition);
-  planeRoot.getWorldPosition(sourcePosition);
-  toListener.copy(listenerPosition).sub(sourcePosition);
-  const distance = toListener.length();
+  otherEngineToListener.copy(listenerPosition).sub(worldPos);
+  const distance = otherEngineToListener.length();
   if (distance < 1) return 1;
-  toListener.multiplyScalar(1 / distance);
-  const closingSpeed = flight.velocity.dot(toListener);
+  otherEngineToListener.multiplyScalar(1 / distance);
+  const closingSpeed = velocity.dot(otherEngineToListener);
   const closingRatio = clamp(closingSpeed / Math.max(Math.abs(maxPlaneSpeed), 1), -1, 1);
   return clamp(1 + closingRatio * dopplerAmount, .55, 1.6);
 }
-function enginePlaybackRate() {
-  const speedRatio = clamp(flight.throttle, 0, 1);
+function dopplerPitchScale() {
+  if (!planeRoot || !flight.velocity) return 1;
+  planeRoot.getWorldPosition(sourcePosition);
+  return dopplerPitchScaleFor(flight.velocity, sourcePosition);
+}
+function enginePlaybackRateFor(throttle, velocity, worldPos, detune = 0) {
+  const speedRatio = clamp(throttle, 0, 1);
   const throttlePitch = lerp(minEnginePitch, maxEnginePitch, speedRatio);
-  return clamp(throttlePitch * dopplerPitchScale(), .25, 3);
+  return clamp(throttlePitch * dopplerPitchScaleFor(velocity, worldPos) * (1 + detune), .25, 3);
+}
+function enginePlaybackRate() {
+  if (!planeRoot) {
+    const speedRatio = clamp(flight.throttle, 0, 1);
+    return clamp(lerp(minEnginePitch, maxEnginePitch, speedRatio), .25, 3);
+  }
+  planeRoot.getWorldPosition(sourcePosition);
+  return enginePlaybackRateFor(flight.throttle, flight.velocity, sourcePosition);
+}
+function ensureOtherEngineVoices() {
+  if (!engineContext || !engineBuffer) return;
+  while (otherEngineVoices.length < OTHER_ENGINE_MAX) {
+    const gain = engineContext.createGain();
+    gain.gain.value = 0;
+    const panner = createEnginePanner();
+    const source = engineContext.createBufferSource();
+    source.buffer = engineBuffer;
+    source.loop = true;
+    // Slight detune so stacked loops don't phase-lock into one tone.
+    source.playbackRate.value = 1 + (otherEngineVoices.length % 5) * 0.015;
+    source.connect(gain);
+    gain.connect(panner);
+    panner.connect(engineContext.destination);
+    source.start();
+    otherEngineVoices.push({ source, gain, panner });
+  }
+}
+function collectOtherEngineTargets() {
+  otherEngineTargets.length = 0;
+  const fleet = ensureAiFleet();
+  fleet?.collectEngineSources?.(otherEngineTargets);
+  for (const entry of remotePlanes.values()) {
+    if (!entry?.root?.visible) continue;
+    otherEngineTargets.push({
+      root: entry.root,
+      throttle: entry.throttle ?? 0.55,
+    });
+  }
+  return otherEngineTargets;
+}
+function updateOtherEngineSounds(time) {
+  if (!engineContext || !engineBuffer) return;
+  if (simulationPaused) {
+    for (const voice of otherEngineVoices) {
+      voice.gain.gain.setTargetAtTime(0, time, 0.04);
+    }
+    return;
+  }
+  ensureOtherEngineVoices();
+  const targets = collectOtherEngineTargets();
+  const volumeScale = gameSettings.engineVolume * gameSettings.masterVolume * OTHER_ENGINE_LEVEL;
+  for (let i = 0; i < otherEngineVoices.length; i += 1) {
+    const voice = otherEngineVoices[i];
+    const target = targets[i];
+    if (!target?.root) {
+      voice.gain.gain.setTargetAtTime(0, time, 0.05);
+      continue;
+    }
+    target.root.getWorldPosition(otherEnginePos);
+    if (!setAudioVector(
+      voice.panner,
+      "positionX",
+      "positionY",
+      "positionZ",
+      otherEnginePos.x,
+      otherEnginePos.y,
+      otherEnginePos.z,
+      time,
+    ) && voice.panner.setPosition) {
+      voice.panner.setPosition(otherEnginePos.x, otherEnginePos.y, otherEnginePos.z);
+    }
+    const detune = (i % 5) * 0.015;
+    const rate = enginePlaybackRateFor(
+      target.throttle,
+      target.velocity,
+      otherEnginePos,
+      detune,
+    );
+    voice.source.playbackRate.setTargetAtTime(rate, time, 0.125);
+    voice.gain.gain.setTargetAtTime(
+      lerp(0.22, 0.9, clamp(target.throttle, 0, 1)) * volumeScale,
+      time,
+      0.04,
+    );
+  }
 }
 function createEnginePanner() {
   const panner = engineContext.createPanner();
@@ -3073,7 +3172,9 @@ async function startEngineSound() {
       engineSource.connect(engineGain);
       engineSource.start();
     }
+    ensureOtherEngineVoices();
     updateSpatialEngineAudio(engineContext.currentTime);
+    updateOtherEngineSounds(engineContext.currentTime);
   } catch (error) { console.warn("Engine audio could not start", error); }
 }
 function pauseEngineSound() {
@@ -3094,6 +3195,7 @@ function updateEngineSound() {
     .04,
   );
   updateSpatialEngineAudio(time);
+  updateOtherEngineSounds(time);
 }
 function playBalloonPop() {
   const pop = new Audio(balloonPopUrl);
