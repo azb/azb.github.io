@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.50";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.50";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.50";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.50";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.51";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.51";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.51";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.51";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1339,7 +1339,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.50");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.51");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1596,6 +1596,10 @@ function createRemotePlaneMesh() {
   return mesh;
 }
 
+/** World-space height of nametags above the plane origin (meters). */
+const NAME_TAG_WORLD_HEIGHT = 1.15;
+const nameTagWorldPos = new THREE.Vector3();
+
 function createNameTagSprite(label, color = "#eaf6ff") {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
@@ -1610,7 +1614,7 @@ function createNameTagSprite(label, color = "#eaf6ff") {
       depthWrite: false,
     }),
   );
-  sprite.position.set(0, 1.15, 0);
+  sprite.position.set(0, NAME_TAG_WORLD_HEIGHT, 0);
   sprite.scale.set(1.6, 0.4, 1);
   sprite.renderOrder = 35;
   sprite.userData.nameTagLabel = "";
@@ -1618,6 +1622,19 @@ function createNameTagSprite(label, color = "#eaf6ff") {
   sprite.userData.nameTagCanvas = canvas;
   setNameTagLabel(sprite, label || "Pilot");
   return sprite;
+}
+
+/** Keep the tag directly above the plane in world-up, not plane-local up. */
+function placeNameTagAboveWorld(tag, anchorObject) {
+  if (!tag || !anchorObject) return;
+  anchorObject.getWorldPosition(nameTagWorldPos);
+  nameTagWorldPos.y += NAME_TAG_WORLD_HEIGHT;
+  if (tag.parent) {
+    tag.parent.worldToLocal(nameTagWorldPos);
+    tag.position.copy(nameTagWorldPos);
+  } else {
+    tag.position.copy(nameTagWorldPos);
+  }
 }
 
 function setNameTagLabel(sprite, label) {
@@ -1653,15 +1670,15 @@ function updateLocalNameTag() {
   }
 }
 
-function billboardNameTags(viewCam) {
-  if (!viewCam) return;
-  if (localNameTag) localNameTag.quaternion.copy(viewCam.quaternion);
+function billboardNameTags(_viewCam) {
+  // Sprites already face the camera; only pin position to world-up above each plane.
+  if (localNameTag && planeRoot) placeNameTagAboveWorld(localNameTag, planeRoot);
   for (const entry of remotePlanes.values()) {
-    if (entry.nameTag) entry.nameTag.quaternion.copy(viewCam.quaternion);
+    if (entry.nameTag && entry.root) placeNameTagAboveWorld(entry.nameTag, entry.root);
   }
   const fleet = typeof ensureAiFleet === "function" ? ensureAiFleet() : null;
-  fleet?.forEachNameTag?.((tag) => {
-    tag.quaternion.copy(viewCam.quaternion);
+  fleet?.forEachNameTag?.((tag, root) => {
+    placeNameTagAboveWorld(tag, root);
   });
 }
 
@@ -2780,7 +2797,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.50`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.51`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
