@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.51";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.51";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.51";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.51";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.52";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.52";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.52";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.52";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -333,8 +333,21 @@ const UI_BELOW_HEAD_MAX = 0.9;
 const UI_HEAD_READY_MIN_Y = 0.35;
 /** Re-place once hands/controllers report a pose after XR starts / play-space shifts. */
 let uiAwaitingHandAnchor = false;
+/** Pause-menu world yaw recenter (align playSpace to headset facing). */
+let worldRecenterActive = false;
+let worldRecenterEndsAt = 0;
+const WORLD_RECENTER_SEC = 5;
+const recenterCamFwd = new THREE.Vector3();
+const recenterContentFwd = new THREE.Vector3();
+const recenterPivot = new THREE.Vector3();
+const recenterRel = new THREE.Vector3();
+const recenterYawQ = new THREE.Quaternion();
+const recenterWorldPos = new THREE.Vector3();
+const recenterWorldQuat = new THREE.Quaternion();
+const recenterUp = new THREE.Vector3(0, 1, 0);
 
 function showUiMode(mode) {
+  if (worldRecenterActive && mode !== "pause") return;
   uiMode = mode;
   const showControls = mode === "controls";
   const showGame = mode === "game";
@@ -392,18 +405,84 @@ function showUiMode(mode) {
   applyGameSettings();
 }
 
+function beginWorldRecenter() {
+  if (worldRecenterActive || !playSpace) return;
+  worldRecenterActive = true;
+  worldRecenterEndsAt = performance.now() / 1000 + WORLD_RECENTER_SEC;
+  showUiMode("pause");
+  pausePanel?.userData.setPauseRecentering?.(true, WORLD_RECENTER_SEC);
+  applyPlaySpaceRecenterToFacing();
+}
+
+function tickWorldRecenter() {
+  if (!worldRecenterActive) return;
+  const left = Math.max(0, worldRecenterEndsAt - performance.now() / 1000);
+  pausePanel?.userData.setPauseRecentering?.(true, left);
+  applyPlaySpaceRecenterToFacing();
+  if (left > 0) return;
+  worldRecenterActive = false;
+  pausePanel?.userData.setPauseRecentering?.(false);
+  showUiMode("pause");
+}
+
+/** Yaw-rotate playSpace around the headset so content forward matches look. */
+function applyPlaySpaceRecenterToFacing() {
+  if (!playSpace) return;
+  const viewCam = typeof engineListenerObject === "function" ? engineListenerObject() : camera;
+  if (!viewCam) return;
+  viewCam.updateMatrixWorld(true);
+  viewCam.getWorldPosition(recenterPivot);
+  viewCam.getWorldQuaternion(recenterWorldQuat);
+  recenterCamFwd.set(0, 0, -1).applyQuaternion(recenterWorldQuat);
+  recenterCamFwd.y = 0;
+  if (recenterCamFwd.lengthSq() < 1e-6) return;
+  recenterCamFwd.normalize();
+
+  const contentRoot = typeof planeRoot !== "undefined" && planeRoot ? planeRoot : playSpace;
+  contentRoot.getWorldQuaternion(recenterWorldQuat);
+  recenterContentFwd.set(0, 0, -1).applyQuaternion(recenterWorldQuat);
+  recenterContentFwd.y = 0;
+  if (recenterContentFwd.lengthSq() < 1e-6) recenterContentFwd.set(0, 0, -1);
+  else recenterContentFwd.normalize();
+
+  const crossY = recenterContentFwd.x * recenterCamFwd.z - recenterContentFwd.z * recenterCamFwd.x;
+  const dot = THREE.MathUtils.clamp(recenterContentFwd.dot(recenterCamFwd), -1, 1);
+  const angle = Math.atan2(crossY, dot);
+  if (Math.abs(angle) < 0.002) return;
+
+  recenterYawQ.setFromAxisAngle(recenterUp, angle);
+  playSpace.getWorldPosition(recenterWorldPos);
+  playSpace.getWorldQuaternion(recenterWorldQuat);
+  recenterRel.subVectors(recenterWorldPos, recenterPivot).applyQuaternion(recenterYawQ);
+  recenterWorldPos.copy(recenterPivot).add(recenterRel);
+  recenterWorldQuat.premultiply(recenterYawQ);
+  playSpace.position.copy(recenterWorldPos);
+  playSpace.quaternion.copy(recenterWorldQuat);
+  placeMenusInFrontOfPlayer();
+}
+
 let pausePanel = createPauseMenu({
-  onResume: () => showUiMode("game"),
+  onResume: () => {
+    if (worldRecenterActive) return;
+    showUiMode("game");
+  },
+  onRecenterView: () => beginWorldRecenter(),
   onControls: () => {
+    if (worldRecenterActive) return;
     returnToPauseAfterControls = true;
     showUiMode("controls");
   },
   onSettings: () => {
+    if (worldRecenterActive) return;
     settingsPanel.userData.refreshSettingsLabels?.();
     showUiMode("settings");
   },
-  onMultiplayer: () => showUiMode("multiplayer"),
+  onMultiplayer: () => {
+    if (worldRecenterActive) return;
+    showUiMode("multiplayer");
+  },
   onRestart: () => {
+    if (worldRecenterActive) return;
     resetPlayerFlight();
     showUiMode("game");
   },
@@ -1339,7 +1418,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.51");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.52");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2797,7 +2876,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.51`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.52`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3773,6 +3852,7 @@ renderer.setAnimationLoop((time, frame) => {
   applyDesktopCamera();
   updateOffScreenPlaneArrow();
   tickMatchTimer(dt);
+  tickWorldRecenter();
   updateLocalNameTag();
   billboardNameTags(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   updateEnvironmentMeshes(frame);

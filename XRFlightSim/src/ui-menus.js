@@ -245,19 +245,30 @@ function createMenuPanel(title, width, height) {
   canvas.width = 1536;
   canvas.height = 1024;
   const context = canvas.getContext("2d");
-  context.fillStyle = "rgba(4, 20, 34, 0.92)";
-  context.strokeStyle = "#82cfff";
-  context.lineWidth = 8;
-  context.beginPath();
-  context.roundRect(18, 18, canvas.width - 36, canvas.height - 36, 40);
-  context.fill();
-  context.stroke();
-  context.fillStyle = "#a9dbff";
-  context.font = "bold 92px system-ui, sans-serif";
-  context.textAlign = "center";
-  context.fillText(title, canvas.width / 2, 150);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  const drawTitle = (nextTitle) => {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "rgba(4, 20, 34, 0.92)";
+    context.strokeStyle = "#82cfff";
+    context.lineWidth = 8;
+    context.beginPath();
+    context.roundRect(18, 18, canvas.width - 36, canvas.height - 36, 40);
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#a9dbff";
+    context.font = "bold 92px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    const lines = String(nextTitle).split("\n");
+    const lineH = 100;
+    const startY = 150 - ((lines.length - 1) * lineH) * 0.5;
+    for (let i = 0; i < lines.length; i++) {
+      context.fillText(lines[i], canvas.width / 2, startY + i * lineH);
+    }
+    texture.needsUpdate = true;
+  };
+  drawTitle(title);
   const backing = new THREE.Mesh(
     new THREE.PlaneGeometry(width, height),
     new THREE.MeshBasicMaterial({
@@ -271,25 +282,40 @@ function createMenuPanel(title, width, height) {
   backing.renderOrder = 6;
   root.add(backing);
   root.userData.menuBacking = backing;
+  root.userData.setMenuTitle = drawTitle;
   return root;
 }
 
-export function createPauseMenu({ onResume, onControls, onSettings, onMultiplayer, onRestart }) {
+export function createPauseMenu({
+  onResume, onRecenterView, onControls, onSettings, onMultiplayer, onRestart,
+}) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Simulation Paused", 2.4 * s, 2.85 * s);
-  const buttons = [
-    { label: "Resume", y: 0.75 * s, onClick: onResume },
-    { label: "Controls", y: 0.35 * s, onClick: onControls },
-    { label: "Settings", y: -0.05 * s, onClick: onSettings },
-    { label: "Multiplayer", y: -0.45 * s, onClick: onMultiplayer },
-    { label: "Restart", y: -0.85 * s, onClick: onRestart },
+  const root = createMenuPanel("Simulation Paused", 2.4 * s, 3.25 * s);
+  const buttonSpecs = [
+    { label: "Resume", y: 0.95 * s, onClick: onResume },
+    { label: "Recenter View", y: 0.55 * s, onClick: onRecenterView },
+    { label: "Controls", y: 0.15 * s, onClick: onControls },
+    { label: "Settings", y: -0.25 * s, onClick: onSettings },
+    { label: "Multiplayer", y: -0.65 * s, onClick: onMultiplayer },
+    { label: "Restart", y: -1.05 * s, onClick: onRestart },
   ];
-  for (const spec of buttons) {
+  const actionButtons = [];
+  for (const spec of buttonSpecs) {
     const button = createUiButton(spec.label, 1.7 * s, 0.34 * s);
     button.position.set(0, spec.y, 0.02 * s);
     button.userData.uiButton.onClick = spec.onClick;
     root.add(button);
+    actionButtons.push(button);
   }
+  root.userData.setPauseRecentering = (active, secondsLeft = 0) => {
+    for (const button of actionButtons) button.visible = !active;
+    if (active) {
+      const n = Math.max(0, Math.ceil(secondsLeft));
+      root.userData.setMenuTitle?.(`Recentering\n${n}`);
+    } else {
+      root.userData.setMenuTitle?.("Simulation Paused");
+    }
+  };
   return root;
 }
 
