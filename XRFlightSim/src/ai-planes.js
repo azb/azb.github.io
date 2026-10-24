@@ -25,7 +25,7 @@ const MOOD_MAX_SEC = 12;
 /** Keep AI in a shallow cone ahead of the player (comfort / less head-turning). */
 const FRONT_DIST_MIN = 2.5;
 const FRONT_DIST_MAX = 6;
-const FRONT_HALF_WIDTH = 2.5;
+const FRONT_HALF_WIDTH = 5;
 const FRONT_VERT = 1.2;
 const MIN_FLY_ALT = 0.9;
 /** Max |y| of unit look dir (~20°) — avoids nose-down sliding on the floor clamp. */
@@ -179,7 +179,12 @@ export function createAiFleet(opts) {
         const mats = Array.isArray(node.material) ? node.material : [node.material];
         const next = mats.map((mat) => {
           const copy = mat.clone();
-          if (copy.color) copy.color.offsetHSL(-0.02, 0.35, -0.05);
+          // Player uses blue "teamcolor" accents — AI get red.
+          const name = String(mat.name || copy.name || "").toLowerCase();
+          if (name.includes("teamcolor") && copy.color) {
+            copy.color.setRGB(0.84, 0.12, 0.14);
+            copy.needsUpdate = true;
+          }
           return copy;
         });
         node.material = Array.isArray(node.material) ? next : next[0];
