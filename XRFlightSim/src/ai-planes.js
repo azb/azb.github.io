@@ -100,6 +100,7 @@ function frontalPoint(playerPos, bot, dt, out) {
   const ahead = lerp(FRONT_DIST_MIN, FRONT_DIST_MAX, 0.4 + 0.6 * (0.5 + 0.5 * Math.cos(t)));
   const side = Math.sin(t) * FRONT_HALF_WIDTH;
   const lift = Math.sin(t * 0.65) * FRONT_VERT;
+  // Note: play-volume clamp applied by caller after frontalPoint/randomSpawn.
   return out.copy(playerPos)
     .addScaledVector(_worldFwd, ahead)
     .addScaledVector(_right, side)
@@ -140,6 +141,18 @@ export function createAiFleet(opts) {
   const bullets = [];
   let nextBulletId = 0;
   let meshReady = false;
+  /** @type {THREE.Vector3 | null} */
+  let boundsMin = opts.boundsMin ? opts.boundsMin.clone() : null;
+  /** @type {THREE.Vector3 | null} */
+  let boundsMax = opts.boundsMax ? opts.boundsMax.clone() : null;
+
+  function clampToPlayVolume(pos) {
+    if (!boundsMin || !boundsMax) return pos;
+    pos.x = clamp(pos.x, boundsMin.x, boundsMax.x);
+    pos.y = clamp(pos.y, boundsMin.y, boundsMax.y);
+    pos.z = clamp(pos.z, boundsMin.z, boundsMax.z);
+    return pos;
+  }
 
   function disposeBots() {
     for (const bot of bots) {
@@ -193,7 +206,7 @@ export function createAiFleet(opts) {
       });
       root.add(mesh);
       opts.playSpace.add(root);
-      const pos = randomSpawn(new THREE.Vector3(), _playerPos);
+      const pos = clampToPlayVolume(randomSpawn(new THREE.Vector3(), _playerPos));
       root.position.copy(pos);
       const bot = {
         id: `ai-${i + 1}`,
@@ -258,6 +271,7 @@ export function createAiFleet(opts) {
 
   function respawnBot(bot) {
     randomSpawn(bot.position, _playerPos);
+    clampToPlayVolume(bot.position);
     bot.rotation.identity();
     bot.patrolAngle = Math.random() * Math.PI * 2;
     lookRotation(_to.subVectors(_playerPos, bot.position).normalize(), bot.rotation);
@@ -408,12 +422,14 @@ export function createAiFleet(opts) {
       }
       // Absolute altitude only — don't shove bots up when the player climbs.
       aim.y = clamp(aim.y, MIN_FLY_ALT, MAX_FLY_ALT);
+      clampToPlayVolume(aim);
       steerBot(bot, aim, dt);
       const speed = lerp(0, 100, bot.throttle) * opts.worldSpeedScale;
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
       bot.velocity.copy(_fwd).multiplyScalar(speed);
       bot.position.addScaledVector(bot.velocity, dt);
       bot.position.y = clamp(bot.position.y, MIN_FLY_ALT, MAX_FLY_ALT);
+      clampToPlayVolume(bot.position);
       bot.root.position.copy(bot.position);
       bot.root.quaternion.copy(bot.rotation);
       if (bot.propeller) {
@@ -476,6 +492,13 @@ export function createAiFleet(opts) {
   }
 
   return {
+    setPlayBounds(min, max) {
+      boundsMin = min ? min.clone() : null;
+      boundsMax = max ? max.clone() : null;
+      for (const bot of bots) {
+        if (bot.alive || bot.crashing) clampToPlayVolume(bot.position);
+      }
+    },
     update(dt, playerPos, {
       paused = false,
       nowSec = performance.now() / 1000,

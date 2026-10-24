@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.41";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.41";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.41";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.41";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.42";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.42";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.42";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.42";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.41");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.42");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1797,10 +1797,60 @@ const flightAxisScratch = new THREE.Vector3();
 const flightQuatScratch = new THREE.Quaternion();
 const bulletNextLocal = new THREE.Vector3();
 const bulletFireVelocity = new THREE.Vector3();
+const playVolumeReturnDir = new THREE.Vector3();
 /** Stick/throttle can wiggle control surfaces below this; plane won't steer or move. */
 const TAKEOFF_THROTTLE = 0.25;
 /** How quickly airspeed eases toward the throttle target (higher = snappier). */
 const AIRSPEED_SMOOTH_RATE = 2.2;
+/** Fixed cubic flight area ahead of spawn (meters). */
+const PLAY_VOLUME_SIZE = 15;
+const PLAY_VOLUME_RETURN_RATE = 1.8;
+const playVolumeMin = new THREE.Vector3();
+const playVolumeMax = new THREE.Vector3();
+const playVolumeCenter = new THREE.Vector3();
+let playVolumeMesh = null;
+
+function setupPlayVolume() {
+  const half = PLAY_VOLUME_SIZE * 0.5;
+  const forward = new THREE.Vector3(0, 0, -1);
+  playVolumeCenter.copy(spawnPosition).addScaledVector(forward, half);
+  playVolumeCenter.y = spawnPosition.y + half * 0.35;
+  playVolumeMin.set(
+    playVolumeCenter.x - half,
+    playVolumeCenter.y - half,
+    playVolumeCenter.z - half,
+  );
+  playVolumeMax.set(
+    playVolumeCenter.x + half,
+    playVolumeCenter.y + half,
+    playVolumeCenter.z + half,
+  );
+  if (playVolumeMesh) playSpace.remove(playVolumeMesh);
+  const box = new THREE.BoxGeometry(PLAY_VOLUME_SIZE, PLAY_VOLUME_SIZE, PLAY_VOLUME_SIZE);
+  const edges = new THREE.EdgesGeometry(box);
+  playVolumeMesh = new THREE.LineSegments(
+    edges,
+    new THREE.LineBasicMaterial({
+      color: 0x7fd4ff,
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+    }),
+  );
+  playVolumeMesh.position.copy(playVolumeCenter);
+  playVolumeMesh.renderOrder = 2;
+  playSpace.add(playVolumeMesh);
+  box.dispose();
+}
+
+function isInsidePlayVolume(pos) {
+  return pos.x >= playVolumeMin.x && pos.x <= playVolumeMax.x
+    && pos.y >= playVolumeMin.y && pos.y <= playVolumeMax.y
+    && pos.z >= playVolumeMin.z && pos.z <= playVolumeMax.z;
+}
+
+setupPlayVolume();
+
 class FlightModel {
   constructor() { this.reset(); }
   reset() {
@@ -1810,23 +1860,28 @@ class FlightModel {
     this.velocity = new THREE.Vector3();
     this.airspeed = 0;
     this.throttleCommitted = false;
+    this.outsidePlayVolume = false;
   }
   forward(target = flightForwardScratch) {
     return target.set(0, 0, -1).applyQuaternion(this.rotation).normalize();
   }
   step(input, seconds) {
     const dt = clamp(seconds, 0, .1);
-    if (typeof input.throttleAbsolute === "number") {
-      // Hand pinch: distance from origin sets throttle directly.
-      this.throttle = clamp(input.throttleAbsolute, 0, 1);
-    } else {
-      this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
-    }
-    if (!this.throttleCommitted && this.throttle >= TAKEOFF_THROTTLE) {
-      this.throttleCommitted = true;
-    }
-    if (this.throttleCommitted) {
-      this.throttle = clamp(this.throttle, TAKEOFF_THROTTLE, 1);
+    this.outsidePlayVolume = !isInsidePlayVolume(this.position);
+
+    if (!this.outsidePlayVolume) {
+      if (typeof input.throttleAbsolute === "number") {
+        // Hand pinch: distance from origin sets throttle directly.
+        this.throttle = clamp(input.throttleAbsolute, 0, 1);
+      } else {
+        this.throttle = clamp(this.throttle + input.throttle * .5 * dt, 0, 1);
+      }
+      if (!this.throttleCommitted && this.throttle >= TAKEOFF_THROTTLE) {
+        this.throttleCommitted = true;
+      }
+      if (this.throttleCommitted) {
+        this.throttle = clamp(this.throttle, TAKEOFF_THROTTLE, 1);
+      }
     }
 
     // Once airborne, throttle maps directly to speed (25% throttle ? 25% speed).
@@ -1835,11 +1890,23 @@ class FlightModel {
     this.airspeed = lerp(this.airspeed, targetSpeed, blend);
 
     let handAiming = false;
-    // Below takeoff: control surfaces still animate (via animateAircraft), but
-    // the plane body does not rotate or translate.
-    if (this.throttleCommitted) {
+    if (this.outsidePlayVolume) {
+      // Controls locked — yaw/pitch the nose back toward the play cube.
+      playVolumeReturnDir.subVectors(playVolumeCenter, this.position);
+      if (playVolumeReturnDir.lengthSq() > 1e-6) {
+        playVolumeReturnDir.normalize();
+        handAimRight.crossVectors(playVolumeReturnDir, handWorldUp);
+        if (handAimRight.lengthSq() < 1e-8) handAimRight.set(1, 0, 0);
+        else handAimRight.normalize();
+        handAimUp.crossVectors(handAimRight, playVolumeReturnDir).normalize();
+        handJoystickDelta.copy(playVolumeReturnDir).negate();
+        handAimMatrix.makeBasis(handAimRight, handAimUp, handJoystickDelta);
+        handAimQuat.setFromRotationMatrix(handAimMatrix);
+        this.rotation.slerp(handAimQuat, clamp(PLAY_VOLUME_RETURN_RATE * dt, 0, 1));
+      }
+    } else if (this.throttleCommitted) {
+      // Below takeoff: control surfaces still animate, but body does not rotate.
       if (input.aimDirection && input.aimDirection.lengthSq() > 1e-8) {
-        // Hand joystick: nose + velocity follow the pull (origin -> tip).
         handAimForward.copy(input.aimDirection).normalize();
         handAimRight.crossVectors(handAimForward, handWorldUp);
         if (handAimRight.lengthSq() < 1e-8) {
@@ -1878,6 +1945,7 @@ class FlightModel {
       this.velocity.copy(this.forward()).multiplyScalar(this.airspeed > .01 ? worldSpeed : 0);
     }
     if (this.airspeed > .01) this.position.addScaledVector(this.velocity, dt);
+    this.outsidePlayVolume = !isInsidePlayVolume(this.position);
   }
 }
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true;
@@ -2084,6 +2152,8 @@ function ensureAiFleet() {
     bulletMuzzleSpeed,
     bulletLifetimeSec,
     bulletSpawnLocal,
+    boundsMin: playVolumeMin,
+    boundsMax: playVolumeMax,
     spawnFx: (origin, kind) => {
       spawnPlaneFx(origin, kind);
       if (kind === "spark") playSpatialShoot(origin);
@@ -2445,7 +2515,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.41`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.42`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3241,10 +3311,21 @@ renderer.setAnimationLoop((time, frame) => {
     const crashing = updatePlayerCrash(dt);
     if (!crashing) {
       flight.step(input, dt);
-      animateAircraft(input, dt);
-      if (input.fire && !uiPointerBlocksFire && time - lastFire > fireCooldownMs) {
+      const surfaceInput = flight.outsidePlayVolume
+        ? { pitch: 0, roll: 0, yaw: 0, throttle: flight.throttle }
+        : input;
+      animateAircraft(surfaceInput, dt);
+      if (
+        !flight.outsidePlayVolume
+        && input.fire
+        && !uiPointerBlocksFire
+        && time - lastFire > fireCooldownMs
+      ) {
         fire();
         lastFire = time;
+      }
+      if (flight.outsidePlayVolume && statusLabel) {
+        statusLabel.textContent = "Return to play space";
       }
     } else {
       animateAircraft({ pitch: 0, roll: 0, yaw: 0, throttle: 0 }, dt);
