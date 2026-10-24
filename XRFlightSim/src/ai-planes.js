@@ -450,7 +450,7 @@ export function createAiFleet(opts) {
   }
 
   /**
-   * @returns {{ hit: boolean, health: number, destroyed: boolean } | null}
+   * @returns {{ hit: boolean, health: number, destroyed: boolean, position?: THREE.Vector3 } | null}
    */
   function hitTestPlayerBullet(prev, next, _nowSec) {
     for (const bot of bots) {
@@ -459,11 +459,17 @@ export function createAiFleet(opts) {
         bot.health -= 1;
         if (bot.health <= 0) {
           bot.health = 0;
+          const at = bot.position.clone();
           beginCrash(bot);
-          return { hit: true, health: 0, destroyed: true };
+          return { hit: true, health: 0, destroyed: true, position: at };
         }
         emitFx(bot.position, "smoke");
-        return { hit: true, health: bot.health, destroyed: false };
+        return {
+          hit: true,
+          health: bot.health,
+          destroyed: false,
+          position: bot.position.clone(),
+        };
       }
     }
     return null;

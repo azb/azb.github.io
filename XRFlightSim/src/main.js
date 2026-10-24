@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.34";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.34";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.34";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.34";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.35";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.35";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.35";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.35";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.34");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.35");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1898,6 +1898,10 @@ const fireHapticDurationMs = 10;
 /** Local AI dogfighters — chase/shoot you; you can shoot them back. */
 let aiFleet = null;
 let playerHealth = PLANE_MAX_HEALTH;
+let killScore = 0;
+/** @type {{ sprite: THREE.Sprite, expiresAt: number }[]} */
+const killPopups = [];
+const KILL_POPUP_MS = 2800;
 let playerDamageSmokeAcc = 0;
 /** @type {{ tumble: THREE.Vector3, tumbleRate: number, fallSpeed: number, smokeAcc: number } | null} */
 let playerCrash = null;
@@ -2421,7 +2425,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.34`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.35`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3245,10 +3249,11 @@ renderer.setAnimationLoop((time, frame) => {
       if (aiHit?.hit) {
         playSpace.remove(shot);
         bullets.splice(i, 1);
-        if (statusLabel) {
-          statusLabel.textContent = aiHit.destroyed
-            ? "AI spinning out!"
-            : `AI hit — ${aiHit.health}/${PLANE_MAX_HEALTH}`;
+        if (aiHit.destroyed) {
+          registerKill(aiHit.position);
+          if (statusLabel) statusLabel.textContent = "AI spinning out!";
+        } else if (statusLabel) {
+          statusLabel.textContent = `AI hit — ${aiHit.health}/${PLANE_MAX_HEALTH}`;
         }
         continue;
       }
@@ -3299,16 +3304,87 @@ renderer.setAnimationLoop((time, frame) => {
   if (throttleLabel.textContent !== throttleText) throttleLabel.textContent = throttleText;
   if (uiMode === "game") {
     gamePanel?.userData.setThrottle?.(flight.throttle);
+    gamePanel?.userData.setScore?.(killScore);
   }
+  updateKillPopups(time);
   if (!simulationPaused) updateEngineSound();
   renderer.render(scene, camera);
 });
+function registerKill(atPosition) {
+  killScore += 1;
+  gamePanel?.userData.setScore?.(killScore);
+  spawnKillPopup(atPosition);
+}
+function spawnKillPopup(atPosition) {
+  if (!atPosition) return;
+  const pos = atPosition.clone
+    ? atPosition.clone()
+    : new THREE.Vector3(atPosition.x, atPosition.y, atPosition.z);
+  pos.y += 0.85;
+  const canvas = document.createElement("canvas");
+  canvas.width = 768;
+  canvas.height = 192;
+  const c = canvas.getContext("2d");
+  c.clearRect(0, 0, canvas.width, canvas.height);
+  c.fillStyle = "rgba(8, 16, 27, 0.55)";
+  c.beginPath();
+  c.roundRect(24, 28, canvas.width - 48, canvas.height - 56, 28);
+  c.fill();
+  c.fillStyle = "#ffe626";
+  c.font = "bold 92px system-ui, sans-serif";
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.fillText("+1 Kill", canvas.width / 2, canvas.height / 2);
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  sprite.position.copy(pos);
+  sprite.scale.set(1.9, 0.48, 1);
+  sprite.renderOrder = 40;
+  playSpace.add(sprite);
+  killPopups.push({ sprite, expiresAt: performance.now() + KILL_POPUP_MS });
+}
+function updateKillPopups(nowMs) {
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  for (let i = killPopups.length - 1; i >= 0; i -= 1) {
+    const entry = killPopups[i];
+    const life = entry.expiresAt - nowMs;
+    if (life <= 0) {
+      playSpace.remove(entry.sprite);
+      entry.sprite.material.map?.dispose();
+      entry.sprite.material.dispose();
+      killPopups.splice(i, 1);
+      continue;
+    }
+    // Billboard toward the view; stay fixed in world (do not follow the wreck).
+    if (cam) entry.sprite.quaternion.copy(cam.quaternion);
+    entry.sprite.material.opacity = Math.min(1, life / 450);
+  }
+}
+function clearKillPopups() {
+  for (const entry of killPopups) {
+    playSpace.remove(entry.sprite);
+    entry.sprite.material.map?.dispose();
+    entry.sprite.material.dispose();
+  }
+  killPopups.length = 0;
+}
 function resetPlayerFlight() {
   flight.reset();
   playerCrash = null;
   playerHealth = PLANE_MAX_HEALTH;
+  killScore = 0;
+  gamePanel?.userData.setScore?.(0);
   playerDamageSmokeAcc = 0;
   clearCrashFlames();
+  clearKillPopups();
 }
 resetButton.addEventListener("click", () => resetPlayerFlight());
 function xrOptionalFeatures() {

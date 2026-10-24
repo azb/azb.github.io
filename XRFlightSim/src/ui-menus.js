@@ -310,14 +310,19 @@ export function createMultiplayerMenu({ onHost, onJoin, onLeave, onBack }) {
   return root;
 }
 
-/** In-flight HUD matching Lens Game Panel: throttle readout + Menu → pause. */
+/** In-flight HUD matching Lens Game Panel: score, throttle + Menu → pause. */
 export function createGamePanel({ onMenu }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Flight", 2.1 * s, 1.35 * s);
+  const root = createMenuPanel("Flight", 2.1 * s, 1.55 * s);
   root.name = "Game Panel";
 
-  const throttleReadout = createUiButton("Throttle: 0%", 1.7 * s, 0.34 * s);
-  throttleReadout.position.set(0, 0.12 * s, 0.02 * s);
+  const scoreReadout = createUiButton("Score: 0", 1.7 * s, 0.3 * s);
+  scoreReadout.position.set(0, 0.36 * s, 0.02 * s);
+  scoreReadout.userData.uiButton.onClick = null;
+  root.add(scoreReadout);
+
+  const throttleReadout = createUiButton("Throttle: 0%", 1.7 * s, 0.3 * s);
+  throttleReadout.position.set(0, 0.06 * s, 0.02 * s);
   // Label only — findUiButton requires onClick, so leave it null.
   throttleReadout.userData.uiButton.onClick = null;
   root.add(throttleReadout);
@@ -334,7 +339,7 @@ export function createGamePanel({ onMenu }) {
       side: THREE.DoubleSide,
     }),
   );
-  barBg.position.set(0, -0.18 * s, 0.015 * s);
+  barBg.position.set(0, -0.22 * s, 0.015 * s);
   barBg.renderOrder = 7;
   root.add(barBg);
 
@@ -348,17 +353,24 @@ export function createGamePanel({ onMenu }) {
       side: THREE.DoubleSide,
     }),
   );
-  barFill.position.set(0, -0.18 * s, 0.02 * s);
+  barFill.position.set(0, -0.22 * s, 0.02 * s);
   barFill.renderOrder = 8;
   root.add(barFill);
 
   // Rays are off while flying — label the pause hint (left X), not a click target.
-  const menu = createUiButton("Press X for Menu", 1.85 * s, 0.32 * s);
-  menu.position.set(0, -0.48 * s, 0.02 * s);
+  const menu = createUiButton("Press X for Menu", 1.85 * s, 0.3 * s);
+  menu.position.set(0, -0.52 * s, 0.02 * s);
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);
 
   root.userData._throttlePercent = -1;
+  root.userData._killScore = -1;
+  root.userData.setScore = (score) => {
+    const n = Math.max(0, Math.floor(Number(score) || 0));
+    if (root.userData._killScore === n) return;
+    root.userData._killScore = n;
+    scoreReadout.userData.uiButton.setLabel(`Score: ${n}`);
+  };
   root.userData.setThrottle = (throttle) => {
     const clamped = Math.max(0, Math.min(1, throttle));
     const percent = Math.round(clamped * 100);
@@ -372,6 +384,7 @@ export function createGamePanel({ onMenu }) {
     barFill.position.x = -barWidth * 0.5 + fillWidth * 0.5;
     barFill.visible = clamped > 0.001;
   };
+  root.userData.setScore(0);
   root.userData.setThrottle(0);
 
   return root;
