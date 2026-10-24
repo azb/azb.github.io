@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.42";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.42";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.42";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.42";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.43";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.43";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.43";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.43";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -369,10 +369,21 @@ gamePanel.visible = false;
 playSpace.add(gamePanel);
 
 let xrSessionHasMeshDetection = false;
+/** @type {string | null} */
+let xrSessionMode = null;
+/** @type {string | null | undefined} */
+let xrSessionBlend = null;
 const settingsPanel = createSettingsMenu(gameSettings, {
   onBack: () => showUiMode("pause"),
   onChange: () => {
     applyGameSettings();
+    if (renderer.xr.isPresenting && xrSessionMode) {
+      applySessionPresentation(xrSessionMode, xrSessionBlend);
+      const canPassthrough = xrSessionMode === "immersive-ar" || isPassthroughBlend(xrSessionBlend);
+      if (gameSettings.passthrough && !canPassthrough) {
+        statusLabel.textContent = "Passthrough on · re-enter XR for camera";
+      }
+    }
     // mesh-detection is only requested at session start.
     if (
       renderer.xr.isPresenting
@@ -1261,7 +1272,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.42");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.43");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2515,7 +2526,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.42`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.43`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3718,28 +3729,31 @@ function applyOpaqueXrPresentation() {
   virtualEnvironment.visible = true;
 }
 function applySessionPresentation(mode, blend) {
-  const passthroughSession = mode === "immersive-ar" || isPassthroughBlend(blend);
-  console.info(`[WebXR] mode=${mode} environmentBlendMode=${blend ?? "unknown"}`);
-  if (passthroughSession && blend === "opaque") {
+  const canPassthrough = mode === "immersive-ar" || isPassthroughBlend(blend);
+  const wantPassthrough = Boolean(gameSettings.passthrough) && canPassthrough;
+  console.info(`[WebXR] mode=${mode} environmentBlendMode=${blend ?? "unknown"} passthrough=${wantPassthrough ? "on" : "off"}`);
+  if (wantPassthrough && blend === "opaque") {
     // Granted AR (or claimed AR) but compositing opaque — keep a visible world.
     console.warn("[WebXR] session granted opaque blend; passthrough unavailable on this device/browser");
     applyOpaqueXrPresentation();
     statusLabel.textContent = "AR session · opaque blend (no passthrough)";
     return;
   }
-  if (passthroughSession && blend === "additive") {
+  if (wantPassthrough && blend === "additive") {
     applyPassthroughPresentation();
     renderer.setClearColor(0x000000, 1);
     statusLabel.textContent = "Passthrough · third-person RC flight";
     return;
   }
-  if (passthroughSession) {
+  if (wantPassthrough) {
     applyPassthroughPresentation();
     statusLabel.textContent = "Passthrough · third-person RC flight";
     return;
   }
   applyOpaqueXrPresentation();
-  statusLabel.textContent = "VR · third-person RC flight";
+  statusLabel.textContent = canPassthrough && !gameSettings.passthrough
+    ? "VR sky · passthrough off"
+    : "VR · third-person RC flight";
 }
 async function configureVR() {
   if (!navigator.xr) { vrButton.textContent = "WebXR unavailable"; vrButton.disabled = true; return; }
@@ -3752,11 +3766,13 @@ async function configureVR() {
   ]);
   // Prefer real AR when advertised (Quest). On Vision Pro, immersive-ar is usually
   // false — still offer a passthrough path (try AR on click, else VR + blend check).
-  const offerPassthrough = arSupported || appleVision;
+  const canOfferPassthrough = arSupported || appleVision;
   let preferredMode = arSupported ? "immersive-ar" : "immersive-vr";
-  const labelFor = () => (offerPassthrough ? "Start passthrough" : "Enter VR");
+  const labelFor = () => (
+    canOfferPassthrough && gameSettings.passthrough ? "Start passthrough" : "Enter VR"
+  );
   vrButton.textContent = labelFor();
-  statusLabel.textContent = offerPassthrough
+  statusLabel.textContent = canOfferPassthrough && gameSettings.passthrough
     ? "Passthrough ready · the aircraft stays in your room"
     : vrSupported
       ? "Quest Link VR · third-person RC flight"
@@ -3768,7 +3784,8 @@ async function configureVR() {
       vrButton.textContent = "Starting…";
       let session = null;
       let mode = preferredMode;
-      if (offerPassthrough) {
+      const wantPassthrough = canOfferPassthrough && gameSettings.passthrough;
+      if (wantPassthrough) {
         // Always attempt AR first when passthrough is the intended UX (Quest + AVP).
         // Skip isSessionSupported gating — it false-negatives on Vision Pro.
         try {
@@ -3785,7 +3802,7 @@ async function configureVR() {
       }
       preferredMode = mode;
       // Optimistic clear for AR / known blend passthrough; refined after setSession.
-      if (mode === "immersive-ar") applyPassthroughPresentation();
+      if (mode === "immersive-ar" && gameSettings.passthrough) applyPassthroughPresentation();
       else applyOpaqueXrPresentation();
       await renderer.xr.setSession(session);
       xrSessionHasMeshDetection = gameSettings.meshVisual || gameSettings.meshCollision;
@@ -3793,6 +3810,8 @@ async function configureVR() {
       resetPlaySpaceHeight();
       await ensureXrReferenceSpace(session);
       const blend = session.environmentBlendMode ?? renderer.xr.getEnvironmentBlendMode?.();
+      xrSessionMode = mode;
+      xrSessionBlend = blend;
       applySessionPresentation(mode, blend);
       uiAwaitingHandAnchor = true;
       placeMenusInFrontOfPlayer();
@@ -3803,6 +3822,8 @@ async function configureVR() {
         resetPlaySpaceHeight();
         uiAwaitingHandAnchor = false;
         xrSessionHasMeshDetection = false;
+        xrSessionMode = null;
+        xrSessionBlend = null;
         restoreDesktopPresentation();
         syncRendererResolution();
         vrButton.disabled = false;
@@ -3811,7 +3832,9 @@ async function configureVR() {
       });
     } catch (error) {
       vrButton.disabled = false;
-      vrButton.textContent = offerPassthrough ? "Start passthrough" : "Retry VR";
+      vrButton.textContent = canOfferPassthrough && gameSettings.passthrough
+        ? "Start passthrough"
+        : "Retry VR";
       statusLabel.textContent = error.message === "XR session timed out"
         ? "XR session did not start · wait a moment, then retry"
         : error.name === "InvalidStateError"

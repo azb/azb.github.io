@@ -6,6 +6,7 @@ const VOLUME_STEPS = [0, 0.25, 0.5, 0.75, 1];
 const SENSITIVITY_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
 
 export const defaultSettings = () => ({
+  passthrough: true,
   meshCollision: false,
   meshVisual: false,
   masterVolume: 1,
@@ -392,13 +393,21 @@ export function createGamePanel({ onMenu }) {
 
 export function createSettingsMenu(settings, { onBack, onChange }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Settings", 2.6 * s, 2.85 * s);
+  const root = createMenuPanel("Settings", 2.6 * s, 3.25 * s);
   root.userData.settingsButtons = {};
 
   const rows = [
     {
+      key: "passthrough",
+      y: 0.95 * s,
+      label: () => `Passthrough: ${settings.passthrough ? "On" : "Off"}`,
+      click: () => {
+        settings.passthrough = !settings.passthrough;
+      },
+    },
+    {
       key: "meshVisual",
-      y: 0.7 * s,
+      y: 0.55 * s,
       label: () => `Mesh Visual: ${settings.meshVisual ? "On" : "Off"}`,
       click: () => {
         settings.meshVisual = !settings.meshVisual;
@@ -406,7 +415,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshCollision",
-      y: 0.3 * s,
+      y: 0.15 * s,
       label: () => `Mesh Collision: ${settings.meshCollision ? "On" : "Off"}`,
       click: () => {
         settings.meshCollision = !settings.meshCollision;
@@ -414,7 +423,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "masterVolume",
-      y: -0.1 * s,
+      y: -0.25 * s,
       label: () => `Master Volume: ${formatPercent(settings.masterVolume)}`,
       click: () => {
         settings.masterVolume = nextStep(VOLUME_STEPS, settings.masterVolume);
@@ -422,7 +431,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "engineVolume",
-      y: -0.5 * s,
+      y: -0.65 * s,
       label: () => `Engine Volume: ${formatPercent(settings.engineVolume)}`,
       click: () => {
         settings.engineVolume = nextStep(VOLUME_STEPS, settings.engineVolume);
@@ -430,7 +439,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "stickSensitivity",
-      y: -0.9 * s,
+      y: -1.05 * s,
       label: () => `Stick Sensitivity: ${settings.stickSensitivity.toFixed(2)}x`,
       click: () => {
         settings.stickSensitivity = nextStep(SENSITIVITY_STEPS, settings.stickSensitivity);
@@ -452,7 +461,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
   }
 
   const back = createUiButton("Back", 1.4 * s, 0.32 * s);
-  back.position.set(0, -1.25 * s, 0.02 * s);
+  back.position.set(0, -1.45 * s, 0.02 * s);
   back.userData.uiButton.onClick = onBack;
   root.add(back);
 
