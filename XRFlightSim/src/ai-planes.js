@@ -27,7 +27,9 @@ const FRONT_DIST_MIN = 2.5;
 const FRONT_DIST_MAX = 6;
 const FRONT_HALF_WIDTH = 5;
 const FRONT_VERT = 1.2;
+/** Absolute world altitude band — do not track player Y as a rising floor. */
 const MIN_FLY_ALT = 0.9;
+const MAX_FLY_ALT = 45;
 /** Max |y| of unit look dir (~20°) — avoids nose-down sliding on the floor clamp. */
 const MAX_LOOK_PITCH = 0.35;
 /** Fixed play-space forward — cone does not rotate with head or plane. */
@@ -404,16 +406,14 @@ export function createAiFleet(opts) {
       } else {
         aim = frontalPoint(playerPos, bot, dt, _frontal);
       }
-      const cruiseY = Math.max(playerPos.y, MIN_FLY_ALT);
-      aim.y = clamp(aim.y, cruiseY - 1.8, cruiseY + 5);
+      // Absolute altitude only — don't shove bots up when the player climbs.
+      aim.y = clamp(aim.y, MIN_FLY_ALT, MAX_FLY_ALT);
       steerBot(bot, aim, dt);
       const speed = lerp(0, 100, bot.throttle) * opts.worldSpeedScale;
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
       bot.velocity.copy(_fwd).multiplyScalar(speed);
       bot.position.addScaledVector(bot.velocity, dt);
-      const minY = Math.max(MIN_FLY_ALT, playerPos.y - 2.2);
-      const maxY = Math.max(minY + 2, playerPos.y + 7);
-      bot.position.y = clamp(bot.position.y, minY, maxY);
+      bot.position.y = clamp(bot.position.y, MIN_FLY_ALT, MAX_FLY_ALT);
       bot.root.position.copy(bot.position);
       bot.root.quaternion.copy(bot.rotation);
       if (bot.propeller) {
