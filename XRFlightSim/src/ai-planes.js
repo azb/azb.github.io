@@ -23,10 +23,10 @@ const CHASE_MOOD_CHANCE = 0.2;
 const MOOD_MIN_SEC = 5;
 const MOOD_MAX_SEC = 12;
 /** Keep AI in a shallow cone ahead of the player (comfort / less head-turning). */
-const FRONT_DIST_MIN = 4;
-const FRONT_DIST_MAX = 12;
-const FRONT_HALF_WIDTH = 5;
-const FRONT_VERT = 2;
+const FRONT_DIST_MIN = 2.5;
+const FRONT_DIST_MAX = 6;
+const FRONT_HALF_WIDTH = 2.5;
+const FRONT_VERT = 1.2;
 const MIN_FLY_ALT = 0.9;
 /** Max |y| of unit look dir (~20°) — avoids nose-down sliding on the floor clamp. */
 const MAX_LOOK_PITCH = 0.35;
