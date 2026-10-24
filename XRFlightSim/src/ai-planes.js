@@ -17,12 +17,16 @@ const ENGAGE_RANGE = 45;
 const FIRE_RANGE = 28;
 const FIRE_ALIGN_DOT = 0.88;
 const FIRE_COOLDOWN = 0.35;
-const PATROL_RADIUS = 18;
 const TURN_RATE = 1.8;
 /** Chance to pick chase when rolling a new mood (patrol otherwise). */
 const CHASE_MOOD_CHANCE = 0.2;
 const MOOD_MIN_SEC = 5;
 const MOOD_MAX_SEC = 12;
+/** Keep AI in a shallow cone ahead of the player (comfort / less head-turning). */
+const FRONT_DIST_MIN = 8;
+const FRONT_DIST_MAX = 26;
+const FRONT_HALF_WIDTH = 9;
+const FRONT_VERT = 3;
 
 const _fwd = new THREE.Vector3();
 const _to = new THREE.Vector3();
@@ -35,6 +39,9 @@ const _seg = new THREE.Vector3();
 const _closest = new THREE.Vector3();
 const _tumbleQ = new THREE.Quaternion();
 const _down = new THREE.Vector3(0, -1, 0);
+const _playerFwd = new THREE.Vector3(0, 0, -1);
+const _playerPos = new THREE.Vector3();
+const _frontal = new THREE.Vector3();
 
 function distPointToSegment(point, a, b) {
   _seg.subVectors(b, a);
@@ -66,12 +73,39 @@ function lookRotation(forward, outQuat) {
   return outQuat.setFromRotationMatrix(_mat);
 }
 
-function randomSpawn(out) {
-  return out.set(
-    (Math.random() * 2 - 1) * PATROL_RADIUS,
-    2 + Math.random() * 8,
-    -6 - Math.random() * 22,
-  );
+function buildPlayerBasis(playerFwd) {
+  _playerFwd.copy(playerFwd);
+  if (_playerFwd.lengthSq() < 1e-8) _playerFwd.set(0, 0, -1);
+  else _playerFwd.normalize();
+  _right.crossVectors(_playerFwd, _up);
+  if (_right.lengthSq() < 1e-8) _right.set(1, 0, 0);
+  else _right.normalize();
+  _aimUp.crossVectors(_right, _playerFwd).normalize();
+}
+
+/** Point ahead of the player with a gentle side/height weave (stays in FOV cone). */
+function frontalPoint(playerPos, playerFwd, bot, dt, out) {
+  buildPlayerBasis(playerFwd);
+  bot.patrolAngle += dt * 0.4;
+  const t = bot.patrolAngle;
+  const ahead = lerp(FRONT_DIST_MIN, FRONT_DIST_MAX, 0.4 + 0.6 * (0.5 + 0.5 * Math.cos(t)));
+  const side = Math.sin(t) * FRONT_HALF_WIDTH;
+  const lift = Math.sin(t * 0.65) * FRONT_VERT;
+  return out.copy(playerPos)
+    .addScaledVector(_playerFwd, ahead)
+    .addScaledVector(_right, side)
+    .addScaledVector(_aimUp, lift);
+}
+
+function randomSpawn(out, playerPos, playerFwd) {
+  buildPlayerBasis(playerFwd);
+  const ahead = FRONT_DIST_MIN + Math.random() * (FRONT_DIST_MAX - FRONT_DIST_MIN);
+  const side = (Math.random() * 2 - 1) * FRONT_HALF_WIDTH * 0.85;
+  const lift = (Math.random() * 2 - 1) * FRONT_VERT;
+  return out.copy(playerPos)
+    .addScaledVector(_playerFwd, ahead)
+    .addScaledVector(_right, side)
+    .addScaledVector(_aimUp, lift);
 }
 
 /**
@@ -143,7 +177,7 @@ export function createAiFleet(opts) {
       });
       root.add(mesh);
       opts.playSpace.add(root);
-      const pos = randomSpawn(new THREE.Vector3());
+      const pos = randomSpawn(new THREE.Vector3(), _playerPos, _playerFwd);
       root.position.copy(pos);
       const bot = {
         id: `ai-${i + 1}`,
@@ -165,7 +199,7 @@ export function createAiFleet(opts) {
         chasing: Math.random() < CHASE_MOOD_CHANCE,
         moodTimer: MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC),
       };
-      lookRotation(new THREE.Vector3(Math.sin(bot.patrolAngle), 0, -Math.cos(bot.patrolAngle)), bot.rotation);
+      lookRotation(_to.subVectors(_playerPos, pos).normalize(), bot.rotation);
       root.quaternion.copy(bot.rotation);
       bots.push(bot);
     }
@@ -207,13 +241,10 @@ export function createAiFleet(opts) {
   }
 
   function respawnBot(bot) {
-    randomSpawn(bot.position);
+    randomSpawn(bot.position, _playerPos, _playerFwd);
     bot.rotation.identity();
     bot.patrolAngle = Math.random() * Math.PI * 2;
-    lookRotation(
-      new THREE.Vector3(Math.sin(bot.patrolAngle), 0, -Math.cos(bot.patrolAngle)),
-      bot.rotation,
-    );
+    lookRotation(_to.subVectors(_playerPos, bot.position).normalize(), bot.rotation);
     bot.throttle = 0.55 + Math.random() * 0.2;
     bot.health = PLANE_MAX_HEALTH;
     bot.alive = true;
@@ -231,15 +262,6 @@ export function createAiFleet(opts) {
   function rollMood(bot) {
     bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
     bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
-  }
-
-  function patrolAim(bot, dt, out) {
-    bot.patrolAngle += dt * 0.35;
-    return out.set(
-      Math.sin(bot.patrolAngle) * PATROL_RADIUS * 0.6,
-      3 + Math.sin(bot.patrolAngle * 0.7) * 2,
-      -10 + Math.cos(bot.patrolAngle) * PATROL_RADIUS * 0.4,
-    );
   }
 
   function emitFx(origin, kind) {
@@ -328,7 +350,9 @@ export function createAiFleet(opts) {
     }
   }
 
-  function updateBots(dt, nowSec, playerPos, playerAirborne) {
+  function updateBots(dt, nowSec, playerPos, playerFwd, playerAirborne) {
+    _playerPos.copy(playerPos);
+    buildPlayerBasis(playerFwd);
     ensureBots();
     for (const bot of bots) {
       if (!bot.alive && !bot.crashing) {
@@ -353,10 +377,19 @@ export function createAiFleet(opts) {
       }
 
       const toPlayer = bot.position.distanceTo(playerPos);
+      const aheadDot = _to.subVectors(bot.position, playerPos).dot(_playerFwd);
+      const inFront = aheadDot > FRONT_DIST_MIN * 0.35;
       const shouldChase = playerAirborne
         && bot.chasing
-        && toPlayer < ENGAGE_RANGE;
-      const aim = shouldChase ? playerPos : patrolAim(bot, dt, _to);
+        && toPlayer < ENGAGE_RANGE
+        && inFront;
+      let aim;
+      if (shouldChase) {
+        // Attack from the front — aim slightly ahead of the player so we don't orbit behind.
+        aim = _frontal.copy(playerPos).addScaledVector(_playerFwd, 2.5);
+      } else {
+        aim = frontalPoint(playerPos, _playerFwd, bot, dt, _frontal);
+      }
       steerBot(bot, aim, dt);
       const speed = lerp(0, 100, bot.throttle) * opts.worldSpeedScale;
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
@@ -424,9 +457,11 @@ export function createAiFleet(opts) {
       nowSec = performance.now() / 1000,
       onPlayerHit,
       playerAirborne = false,
+      playerForward = null,
     } = {}) {
       if (paused) return;
-      updateBots(dt, nowSec, playerPos, playerAirborne);
+      const fwd = playerForward || _playerFwd;
+      updateBots(dt, nowSec, playerPos, fwd, playerAirborne);
       updateBullets(dt, playerPos, onPlayerHit);
     },
     hitTestPlayerBullet,

@@ -1,11 +1,11 @@
-ï»¿import * as THREE from "three";
+import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.27";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.27";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.27";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.27";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.28";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.28";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.28";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.28";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -28,7 +28,7 @@ const mpHudLabel = document.querySelector("#mp-hud");
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
 const assetUrl = (path) => new URL(`../assets/${path}`, import.meta.url).href;
-// Spectacles world wingspan (m): mesh 2.84433 Ã— Player 0.296423 Ã— Model 0.005933 Ã— FBXÃ—100
+// Spectacles world wingspan (m): mesh 2.84433 × Player 0.296423 × Model 0.005933 × FBX×100
 const lensWingspan = 0.500226;
 const worldSpeedScale = .05;
 let engineContext = null;
@@ -79,7 +79,7 @@ playSpace.add(roomContent);
 const planeRoot = new THREE.Group();
 playSpace.add(planeRoot);
 
-// Lens OffScreenPlaneArrow â€” camera-edge chevron when the plane leaves the FOV.
+// Lens OffScreenPlaneArrow — camera-edge chevron when the plane leaves the FOV.
 // Lens units are ~cm (depth 70); WebXR uses meters.
 const OFFSCREEN_ARROW_DEPTH = 0.7;
 const OFFSCREEN_ARROW_EDGE_INSET = 0.58;
@@ -218,7 +218,7 @@ function createControlsPanel() {
   callout(panel, "INCREASE THROTTLE", new THREE.Vector3(1.04, .55, .13), R(right.grip));
   callout(panel, "FIRE", new THREE.Vector3(.94, .79, .13), R(right.trigger));
   callout(panel, "ROLL / PITCH", new THREE.Vector3(1.04, -.53, .13), R(right.stick));
-  panel.add(worldText("OK Â· A OR POINT + TRIGGER", new THREE.Vector3(0, -.9, .13), .22));
+  panel.add(worldText("OK · A OR POINT + TRIGGER", new THREE.Vector3(0, -.9, .13), .22));
   return panel;
 }
 let controlsPanel = createControlsPanel(); controlsPanel.position.set(0, 0.55, -1.4); playSpace.add(controlsPanel);
@@ -322,11 +322,11 @@ function showUiMode(mode) {
     startEngineSound();
     statusLabel.textContent = mode === "controls"
       ? (renderer.xr.isPresenting
-        ? "Try controls Â· OK when ready Â· X pauses"
-        : "Try controls Â· arrows/WASD Â· X/Z throttle Â· OK when ready")
+        ? "Try controls · OK when ready · X pauses"
+        : "Try controls · arrows/WASD · X/Z throttle · OK when ready")
       : (renderer.xr.isPresenting
-        ? "Flying Â· R pinch steer Â· L pinch fire Â· menu pauses"
-        : "Desktop preview Â· arrows/WASD Â· X/Z throttle");
+        ? "Flying · R pinch steer · L pinch fire · menu pauses"
+        : "Desktop preview · arrows/WASD · X/Z throttle");
   }
   if (showGame) {
     setUiButtonHovers(draggableUiPanels(), null);
@@ -397,7 +397,7 @@ multiplayerPanel.position.set(0, 0.55, -1.4);
 multiplayerPanel.visible = false;
 playSpace.add(multiplayerPanel);
 
-const controlsOkButton = createUiButton("OK Â· A", 1.35, 0.32);
+const controlsOkButton = createUiButton("OK · A", 1.35, 0.32);
 controlsOkButton.position.set(0, -1.2, 0.06);
 controlsOkButton.userData.uiButton.onClick = () => {
   if (returnToPauseAfterControls) {
@@ -523,7 +523,7 @@ function pollGamepadMenuNavigation() {
   const focused = buttons[gamepadMenuFocusIndex];
   gamepadMenuFocusedButton = focused;
 
-  // A / Cross â€” press on down, click on release (same as ray UX).
+  // A / Cross — press on down, click on release (same as ray UX).
   const confirm = Boolean(pad.buttons[0]?.pressed);
   if (confirm && !gamepadMenuConfirmHeld) {
     gamepadMenuPressedButton = focused;
@@ -542,7 +542,7 @@ function pollGamepadMenuNavigation() {
     );
   }
 
-  // B / Circle â€” back from settings (or controls opened from pause).
+  // B / Circle — back from settings (or controls opened from pause).
   const back = Boolean(pad.buttons[1]?.pressed);
   if (back && !gamepadMenuBackHeld) {
     if (uiMode === "settings") {
@@ -604,7 +604,7 @@ function sampleTrackedHandHeight(headY) {
   let sumY = 0;
   let count = 0;
   for (let i = 0; i < 2; i += 1) {
-    // Prefer grip; fall back to target-ray. Do not require inputSource â€” Quest
+    // Prefer grip; fall back to target-ray. Do not require inputSource — Quest
     // often has a pose a frame or two before the connected event lands.
     const grip = renderer.xr.getControllerGrip?.(i) ?? renderer.xr.getController(i);
     if (grip) {
@@ -644,7 +644,7 @@ function placeMenusInFrontOfPlayer() {
   else uiRayDir.normalize();
 
   const headY = uiPanelWorld.y;
-  // Wait for a real viewer pose â€” placing against the pre-XR origin puts menus underground.
+  // Wait for a real viewer pose — placing against the pre-XR origin puts menus underground.
   if (renderer.xr.isPresenting && headY < UI_HEAD_READY_MIN_Y) {
     uiAwaitingHandAnchor = true;
     return;
@@ -711,7 +711,7 @@ const uiControllerEntries = [0, 1].map((index) => {
     }),
   );
   laser.name = "UiLaser";
-  // Draw after UI panels (renderOrder 6â€“8) so the ray isn't hidden behind them.
+  // Draw after UI panels (renderOrder 6–8) so the ray isn't hidden behind them.
   laser.renderOrder = 100;
   laser.scale.z = 3;
   laser.visible = false;
@@ -730,7 +730,7 @@ const uiControllerEntries = [0, 1].map((index) => {
   // Three.js dispatches these on the target-ray group; inputSource is NOT auto-copied to userData.
   controller.addEventListener("connected", (event) => {
     controller.userData.inputSource = event.data ?? null;
-    // Controllers often connect after the first menu place â€” re-anchor to hand height.
+    // Controllers often connect after the first menu place — re-anchor to hand height.
     if (uiMode !== "game") placeMenusInFrontOfPlayer();
   });
   controller.addEventListener("disconnected", () => {
@@ -742,9 +742,9 @@ const uiControllerEntries = [0, 1].map((index) => {
   });
   controller.addEventListener("selectstart", () => {
     entry.selectHeld = true;
-    // In-flight: no UI rays/clicks â€” use the controller menu button to pause.
+    // In-flight: no UI rays/clicks — use the controller menu button to pause.
     if (uiMode === "game") return;
-    // Bluetooth pad owns menus â€” ignore hand/controller ray clicks.
+    // Bluetooth pad owns menus — ignore hand/controller ray clicks.
     if (findBrowserGamepad(renderer.xr.getSession()?.inputSources ?? [])) return;
     // Press on down; click action runs on selectend if still aimed at the button.
     if (tryUiButtonPress(controller, entry)) return;
@@ -774,7 +774,7 @@ const handSteer = {
   origin: new THREE.Vector3(),
   pitch: 0,
   roll: 0,
-  /** Absolute 0â€“1 throttle from pinch distance (null when inactive). */
+  /** Absolute 0–1 throttle from pinch distance (null when inactive). */
   throttle: null,
   /** World-space aim direction from pinch origin ? tip (null near origin). */
   aimDirection: null,
@@ -920,7 +920,7 @@ function updateHandSteerAxes() {
   handSteer.throttle = stick(clamp(distance / HAND_JOYSTICK_RADIUS, 0, 1));
   handSteer.pitch = 0;
   handSteer.roll = 0;
-  // Near the origin there is no clear aim â€” keep current heading.
+  // Near the origin there is no clear aim — keep current heading.
   if (distance < HAND_JOYSTICK_RADIUS * 0.08) {
     handSteer.aimDirection = null;
     return;
@@ -935,7 +935,7 @@ function applyHandControls(value, readout) {
   updateHandJoystickVisual();
   if (handSteer.active) {
     if (handSteer.aimDirection) {
-      // Stable vector on controlState â€” avoid per-frame allocation.
+      // Stable vector on controlState — avoid per-frame allocation.
       value.aimDirection = controlAimDirection.copy(handSteer.aimDirection);
     }
     if (handSteer.throttle != null) {
@@ -1101,7 +1101,7 @@ function updateUiPanelInteraction() {
     return;
   }
 
-  // Session often starts before hand poses exist â€” re-anchor when they appear.
+  // Session often starts before hand poses exist — re-anchor when they appear.
   if (uiAwaitingHandAnchor && uiMode !== "game") {
     placeMenusInFrontOfPlayer();
   }
@@ -1117,7 +1117,7 @@ function updateUiPanelInteraction() {
     return;
   }
 
-  // Gamepad menu nav â€” hide hand/controller pointer rays.
+  // Gamepad menu nav — hide hand/controller pointer rays.
   const usingBrowserPad = Boolean(
     findBrowserGamepad(renderer.xr.getSession()?.inputSources ?? []),
   );
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.27");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.28");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1283,7 +1283,7 @@ let balloonsSeeded = false;
 let balloonsSeeding = false;
 
 function randomBalloonPosition(target = new THREE.Vector3()) {
-  // Flight-area field in playSpace meters â€” new spot each respawn.
+  // Flight-area field in playSpace meters — new spot each respawn.
   return target.set(
     (Math.random() * 2 - 1) * 14,
     1.5 + Math.random() * 8,
@@ -1650,7 +1650,7 @@ function multiplayerStatusText() {
   const links = net.linkCount();
   const peers = Math.max(0, net.roster.length - 1);
   const path = links > 0 ? "webrtc" : "relay";
-  return `MP ${net.roomId}${net.isHost ? " (host)" : ""} Â· ${peers} peer${peers === 1 ? "" : "s"} Â· ${path}`;
+  return `MP ${net.roomId}${net.isHost ? " (host)" : ""} · ${peers} peer${peers === 1 ? "" : "s"} · ${path}`;
 }
 
 function refreshMultiplayerUi() {
@@ -1861,7 +1861,7 @@ class FlightModel {
   }
 }
 const flight = new FlightModel(); const keys = new Set(); const bullets = []; let lastFire = -Infinity; let nextBulletSpawnIndex = 0; let simulationPaused = false; let pauseButtonWasPressed = false; let controlsVisible = true;
-// Controls board is live from the start â€” fly while reading the diagram, then OK.
+// Controls board is live from the start — fly while reading the diagram, then OK.
 showUiMode("controls");
 // Lens BulletSpawnPoint1/2 under Player (scale 0.296423). Scene units are cm ? meters; flip Z for THREE -forward.
 const lensPlayerScale = 0.296423;
@@ -1895,7 +1895,7 @@ const bulletGeom = new THREE.SphereGeometry(0.5, 8, 8);
 const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
 const fireHapticIntensity = 20 / 255;
 const fireHapticDurationMs = 10;
-/** Local AI dogfighters â€” chase/shoot you; you can shoot them back. */
+/** Local AI dogfighters — chase/shoot you; you can shoot them back. */
 let aiFleet = null;
 let playerHealth = PLANE_MAX_HEALTH;
 let playerDamageSmokeAcc = 0;
@@ -2044,7 +2044,7 @@ function spawnMuzzleSparks(origin, forward = null) {
 }
 
 function ensureAiFleet() {
-  // Only spawn after the real fighter GLB is hooked â€” placeholder mesh is huge.
+  // Only spawn after the real fighter GLB is hooked — placeholder mesh is huge.
   if (!fighterHooked) return null;
   if (aiFleet) return aiFleet;
   if (!bulletSpawnLocal?.length) return null;
@@ -2090,7 +2090,7 @@ function beginPlayerCrash() {
     smokeAcc: 0,
   };
   flight.throttle = 0;
-  if (statusLabel) statusLabel.textContent = "Critical! Spinning outâ€¦";
+  if (statusLabel) statusLabel.textContent = "Critical! Spinning out…";
 }
 
 function onAiHitPlayer() {
@@ -2143,13 +2143,13 @@ function clearCrashFlames() {
   crashFlameParticles.length = 0;
 }
 
-/** Tip nose toward world-down, then spin around local forward (âˆ’Z). */
+/** Tip nose toward world-down, then spin around local forward (-Z). */
 function applyCrashAttitude(rotation, c, step) {
   flightForwardScratch.set(0, 0, -1).applyQuaternion(rotation).normalize();
-  // forward Â· down = âˆ’forward.y; 1 means already pointed straight down.
+  // forward · down = -forward.y; 1 means already pointed straight down.
   const alignDot = -flightForwardScratch.y;
   if (alignDot < 0.95) {
-    // forward Ã— world-down (0,-1,0)
+    // forward × world-down (0,-1,0)
     crashAxisScratch.set(
       -flightForwardScratch.z,
       0,
@@ -2199,7 +2199,7 @@ function updatePlayerCrash(dt) {
     playerDamageSmokeAcc = 0;
     clearCrashFlames();
     spawnCrashExplosion(boomAt);
-    if (statusLabel) statusLabel.textContent = "Crashed â€” ready to fly";
+    if (statusLabel) statusLabel.textContent = "Crashed — ready to fly";
   }
   return true;
 }
@@ -2366,7 +2366,7 @@ function hookFighterModel(model, item, statusText) {
   if (Array.isArray(item?.scale)) model.scale.multiply(new THREE.Vector3(item.scale[0] ?? 1, item.scale[1] ?? 1, item.scale[2] ?? 1));
   model.traverse((node) => {
     if (!node.isMesh) return;
-    // Shadows are unused â€” keep draw cheap on headset GPUs.
+    // Shadows are unused — keep draw cheap on headset GPUs.
     node.castShadow = false;
     node.receiveShadow = false;
   });
@@ -2384,15 +2384,15 @@ function hookFighterModel(model, item, statusText) {
 function loadFallbackFighter() {
   if (fighterHooked || fallbackStarted) return;
   fallbackStarted = true;
-  modelLabel.textContent = "Fighter model: loading GLBâ€¦";
+  modelLabel.textContent = "Fighter model: loading GLB…";
   const item = { type: "asset", name: "FighterPlane", url: fighterModelUrl, wingspan: lensWingspan, scale: [1, 1, 1] };
   createSceneObject(item, {
-    onAssetLoaded: (_wrapper, model) => hookFighterModel(model, item, "Lens fighter model loaded Â· third-person RC view"),
+    onAssetLoaded: (_wrapper, model) => hookFighterModel(model, item, "Lens fighter model loaded · third-person RC view"),
     onAssetError: (error) => {
       console.error("Fighter GLB failed to load", error);
       const detail = String(error?.message ?? error).replace(/\s+/g, " ").slice(0, 90);
-      modelLabel.textContent = `Fighter model: load failed â€” ${detail}`;
-      notePreviewStatus("Fighter model could not load Â· using the backup aircraft");
+      modelLabel.textContent = `Fighter model: load failed — ${detail}`;
+      notePreviewStatus("Fighter model could not load · using the backup aircraft");
     },
   });
 }
@@ -2419,9 +2419,9 @@ function clearRoomContent() {
 }
 let desktopCameraRig = null;
 async function mountFlightScene() {
-  modelLabel.textContent = "Fighter model: loading sceneâ€¦";
+  modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.27`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.28`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2447,9 +2447,9 @@ async function mountFlightScene() {
       if (role === "fighter") {
         fighterFromScene = true;
         useSpawn(item.position);
-        modelLabel.textContent = "Fighter model: loading GLBâ€¦";
+        modelLabel.textContent = "Fighter model: loading GLB…";
         createSceneObject(item, {
-          onAssetLoaded: (_wrapper, model) => hookFighterModel(model, item, "Flight scene loaded Â· third-person RC flight"),
+          onAssetLoaded: (_wrapper, model) => hookFighterModel(model, item, "Flight scene loaded · third-person RC flight"),
           onAssetError: (error) => {
             console.error("Scene fighter failed to load", error);
             loadFallbackFighter();
@@ -2472,8 +2472,8 @@ async function mountFlightScene() {
     if (!fighterFromScene) loadFallbackFighter();
   } catch (error) {
     console.error("Flight scene failed to load", error);
-    modelLabel.textContent = "Fighter model: loading GLBâ€¦";
-    notePreviewStatus("Scene file unavailable Â· built-in layout");
+    modelLabel.textContent = "Fighter model: loading GLB…";
+    notePreviewStatus("Scene file unavailable · built-in layout");
     loadFallbackFighter();
   }
 }
@@ -2583,7 +2583,7 @@ function controls() {
     controllerReadout.push(`${gamepadLabel(browserPad)} pad`);
   } else {
     for (const source of xrSources) {
-      // Hands use pinch joystick / fire below â€” skip emulated hand gamepads here.
+      // Hands use pinch joystick / fire below — skip emulated hand gamepads here.
       if (source.hand) continue;
       const gamepad = source.gamepad;
       if (!isXrStandardGamepad(gamepad)) continue;
@@ -2598,7 +2598,7 @@ function controls() {
         value.yaw += x;
         value.throttle -= grip;
         value.fire ||= indexTrigger > .55;
-        // Pause on left X only (digital .pressed). Do not scan buttons[6+] â€” on Quest
+        // Pause on left X only (digital .pressed). Do not scan buttons[6+] — on Quest
         // that is the thumbrest and it fires while using the trigger/grip.
         value.pause ||= Boolean(gamepad.buttons[4]?.pressed);
       }
@@ -2624,12 +2624,12 @@ function controls() {
     keys.has("KeyZ") || keys.has("PageDown") || keys.has("Minus") || keys.has("NumpadSubtract") ? 1 : 0
   );
   value.fire ||= keys.has("Space");
-  // DOM HUD updates are relatively expensive in XR â€” refresh stick readout ~8 Hz.
+  // DOM HUD updates are relatively expensive in XR — refresh stick readout ~8 Hz.
   const now = performance.now();
   if (now - lastControllerHudMs > 120) {
     lastControllerHudMs = now;
     const next = controllerReadout.length
-      ? `Sticks ${controllerReadout.join(" Â· ")}`
+      ? `Sticks ${controllerReadout.join(" · ")}`
       : "Sticks: waiting for controller";
     if (next !== lastControllerHudText) {
       lastControllerHudText = next;
@@ -3164,7 +3164,7 @@ function fire() {
   shot.scale.set(0.03, 0.03, 0.12);
   shot.position.copy(flight.position).add(offset);
   shot.quaternion.copy(flight.rotation);
-  // Own vector â€” do not alias the shared forward scratch.
+  // Own vector — do not alias the shared forward scratch.
   shot.userData.velocity = bulletFireVelocity
     .copy(flight.forward())
     .multiplyScalar(bulletMuzzleSpeed)
@@ -3248,7 +3248,7 @@ renderer.setAnimationLoop((time, frame) => {
         if (statusLabel) {
           statusLabel.textContent = aiHit.destroyed
             ? "AI spinning out!"
-            : `AI hit â€” ${aiHit.health}/${PLANE_MAX_HEALTH}`;
+            : `AI hit — ${aiHit.health}/${PLANE_MAX_HEALTH}`;
         }
         continue;
       }
@@ -3279,9 +3279,10 @@ renderer.setAnimationLoop((time, frame) => {
     paused: simulationPaused,
     nowSec: time / 1000,
     onPlayerHit: playerCrash ? null : onAiHitPlayer,
-    // Grounded at spawn / no throttle â€” AI patrols only until you take off.
+    // Grounded at spawn / no throttle — AI patrols only until you take off.
     playerAirborne: flight.throttle > 0.05
       || flight.position.distanceToSquared(spawnPosition) > 2.25,
+    playerForward: flight.forward(),
   });
   if (!simulationPaused) updatePlayerDamageSmoke(dt);
   updateCrashFlames(dt);
@@ -3320,7 +3321,7 @@ function xrOptionalFeatures() {
   return features;
 }
 
-/** Scene Y of the controls panel / strip â€” authored for Quest local-floor standing. */
+/** Scene Y of the controls panel / strip — authored for Quest local-floor standing. */
 const playSpaceAnchorY = 1.48;
 let playSpaceHeightReady = false;
 let playSpaceEyeSamples = [];
@@ -3333,7 +3334,7 @@ function resetPlaySpaceHeight() {
 
 async function ensureXrReferenceSpace(session) {
   // Three.js requests local-floor by default; on some AVP paths it can end up with
-  // local (yËœ0 at the head). Force local-floor, or emulate floor from local.
+  // local (y˜0 at the head). Force local-floor, or emulate floor from local.
   try {
     const floor = await session.requestReferenceSpace("local-floor");
     renderer.xr.setReferenceSpace(floor);
@@ -3375,7 +3376,7 @@ function calibratePlaySpaceHeight(frame) {
     playSpace.position.y = 0;
   }
   playSpaceHeightReady = true;
-  // Play-space Y shift moves every child â€” re-anchor menus to hand/head height.
+  // Play-space Y shift moves every child — re-anchor menus to hand/head height.
   uiAwaitingHandAnchor = true;
   if (uiMode !== "game") placeMenusInFrontOfPlayer();
 }
@@ -3545,56 +3546,56 @@ function applySessionPresentation(mode, blend) {
   const passthroughSession = mode === "immersive-ar" || isPassthroughBlend(blend);
   console.info(`[WebXR] mode=${mode} environmentBlendMode=${blend ?? "unknown"}`);
   if (passthroughSession && blend === "opaque") {
-    // Granted AR (or claimed AR) but compositing opaque â€” keep a visible world.
+    // Granted AR (or claimed AR) but compositing opaque — keep a visible world.
     console.warn("[WebXR] session granted opaque blend; passthrough unavailable on this device/browser");
     applyOpaqueXrPresentation();
-    statusLabel.textContent = "AR session Â· opaque blend (no passthrough)";
+    statusLabel.textContent = "AR session · opaque blend (no passthrough)";
     return;
   }
   if (passthroughSession && blend === "additive") {
     applyPassthroughPresentation();
     renderer.setClearColor(0x000000, 1);
-    statusLabel.textContent = "Passthrough Â· third-person RC flight";
+    statusLabel.textContent = "Passthrough · third-person RC flight";
     return;
   }
   if (passthroughSession) {
     applyPassthroughPresentation();
-    statusLabel.textContent = "Passthrough Â· third-person RC flight";
+    statusLabel.textContent = "Passthrough · third-person RC flight";
     return;
   }
   applyOpaqueXrPresentation();
-  statusLabel.textContent = "VR Â· third-person RC flight";
+  statusLabel.textContent = "VR · third-person RC flight";
 }
 async function configureVR() {
   if (!navigator.xr) { vrButton.textContent = "WebXR unavailable"; vrButton.disabled = true; return; }
   const appleVision = isLikelyAppleVision();
-  // Avoid the old 4â€“5s AR race that false-negatived on slow Safari. Use a long
+  // Avoid the old 4–5s AR race that false-negatived on slow Safari. Use a long
   // safety timeout only; Apple still reports immersive-ar=false on Vision Pro.
   const [arSupported, vrSupported] = await Promise.all([
     probeSessionSupport("immersive-ar", 20000),
     probeSessionSupport("immersive-vr", appleVision ? 0 : 5000),
   ]);
   // Prefer real AR when advertised (Quest). On Vision Pro, immersive-ar is usually
-  // false â€” still offer a passthrough path (try AR on click, else VR + blend check).
+  // false — still offer a passthrough path (try AR on click, else VR + blend check).
   const offerPassthrough = arSupported || appleVision;
   let preferredMode = arSupported ? "immersive-ar" : "immersive-vr";
   const labelFor = () => (offerPassthrough ? "Start passthrough" : "Enter VR");
   vrButton.textContent = labelFor();
   statusLabel.textContent = offerPassthrough
-    ? "Passthrough ready Â· the aircraft stays in your room"
+    ? "Passthrough ready · the aircraft stays in your room"
     : vrSupported
-      ? "Quest Link VR Â· third-person RC flight"
-      : "Quest Link is restarting Â· you can still retry VR";
+      ? "Quest Link VR · third-person RC flight"
+      : "Quest Link is restarting · you can still retry VR";
   vrButton.addEventListener("click", async () => {
     try {
       startEngineSound();
       vrButton.disabled = true;
-      vrButton.textContent = "Startingâ€¦";
+      vrButton.textContent = "Starting…";
       let session = null;
       let mode = preferredMode;
       if (offerPassthrough) {
         // Always attempt AR first when passthrough is the intended UX (Quest + AVP).
-        // Skip isSessionSupported gating â€” it false-negatives on Vision Pro.
+        // Skip isSessionSupported gating — it false-negatives on Vision Pro.
         try {
           session = await requestXrSession("immersive-ar");
           mode = "immersive-ar";
@@ -3637,10 +3638,10 @@ async function configureVR() {
       vrButton.disabled = false;
       vrButton.textContent = offerPassthrough ? "Start passthrough" : "Retry VR";
       statusLabel.textContent = error.message === "XR session timed out"
-        ? "XR session did not start Â· wait a moment, then retry"
+        ? "XR session did not start · wait a moment, then retry"
         : error.name === "InvalidStateError"
-          ? "An immersive session is already active Â· exit it from the headset first"
-          : "Could not start XR Â· wait a moment, then retry";
+          ? "An immersive session is already active · exit it from the headset first"
+          : "Could not start XR · wait a moment, then retry";
     }
   });
 }
