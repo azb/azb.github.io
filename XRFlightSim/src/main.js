@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.36";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.36";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.36";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.36";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.37";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.37";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.37";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.37";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1261,7 +1261,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.36");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.37");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1829,11 +1829,8 @@ class FlightModel {
       this.throttle = clamp(this.throttle, TAKEOFF_THROTTLE, 1);
     }
 
-    // Remap 25%?100% throttle onto the full speed curve once airborne.
-    const speedT = this.throttleCommitted
-      ? (this.throttle - TAKEOFF_THROTTLE) / (1 - TAKEOFF_THROTTLE)
-      : 0;
-    const targetSpeed = lerp(0, 100, clamp(speedT, 0, 1));
+    // Once airborne, throttle maps directly to speed (25% throttle ? 25% speed).
+    const targetSpeed = this.throttleCommitted ? lerp(0, 100, this.throttle) : 0;
     const blend = 1 - Math.exp(-AIRSPEED_SMOOTH_RATE * dt);
     this.airspeed = lerp(this.airspeed, targetSpeed, blend);
 
@@ -2448,7 +2445,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.36`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.37`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
