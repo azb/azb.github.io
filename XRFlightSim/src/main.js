@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.47";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.47";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.47";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.47";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.48";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.48";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.48";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.48";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -147,6 +147,23 @@ const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -3; virtualEnvironment.add(ground);
 const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a); grid.position.y = -2.98; virtualEnvironment.add(grid);
+// Opaque sky fill for passthrough-off. Clear color alone is ignored in AR alpha-blend
+// sessions, so the upper hemisphere stays see-through without a real mesh.
+const SKY_COLOR = 0x8ac5ee;
+const opaqueSky = new THREE.Mesh(
+  new THREE.SphereGeometry(450, 24, 16),
+  new THREE.MeshBasicMaterial({
+    color: SKY_COLOR,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  }),
+);
+opaqueSky.name = "Opaque Sky";
+opaqueSky.renderOrder = -20;
+opaqueSky.frustumCulled = false;
+opaqueSky.visible = true;
+scene.add(opaqueSky);
 
 function createWorldPanel(lines, width, height, accent = "#82cfff") {
   const canvas = document.createElement("canvas");
@@ -1282,7 +1299,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.47");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.48");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2543,7 +2560,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.47`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.48`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3819,10 +3836,12 @@ async function requestXrSession(mode, timeoutMs = 12000) {
   ]);
 }
 function restoreDesktopPresentation() {
-  renderer.setClearColor(0x8ac5ee, 1);
+  renderer.setClearColor(SKY_COLOR, 1);
+  renderer.setClearAlpha(1);
   scene.background = null;
-  scene.fog = new THREE.Fog(0x8ac5ee, 70, 350);
+  scene.fog = new THREE.Fog(SKY_COLOR, 70, 350);
   virtualEnvironment.visible = true;
+  opaqueSky.visible = true;
 }
 function applyPassthroughPresentation() {
   renderer.setClearColor(0x000000, 0);
@@ -3830,12 +3849,17 @@ function applyPassthroughPresentation() {
   scene.background = null;
   scene.fog = null;
   virtualEnvironment.visible = false;
+  opaqueSky.visible = false;
 }
 function applyOpaqueXrPresentation() {
-  renderer.setClearColor(0x8ac5ee, 1);
-  scene.background = null;
-  scene.fog = new THREE.Fog(0x8ac5ee, 70, 350);
+  // AR/alpha-blend sessions still show camera where nothing is drawn — sky mesh
+  // + opaque clear cover the upper half that ground alone can't fill.
+  renderer.setClearColor(SKY_COLOR, 1);
+  renderer.setClearAlpha(1);
+  scene.background = new THREE.Color(SKY_COLOR);
+  scene.fog = new THREE.Fog(SKY_COLOR, 70, 350);
   virtualEnvironment.visible = true;
+  opaqueSky.visible = true;
 }
 function applySessionPresentation(mode, blend) {
   const canPassthrough = mode === "immersive-ar" || isPassthroughBlend(blend);
