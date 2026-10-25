@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.60";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.60";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.60";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.60";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.61";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.61";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.61";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.61";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -148,14 +148,16 @@ for (let i = 0; i < OFFSCREEN_OTHER_POOL; i += 1) {
 }
 scene.add(new THREE.HemisphereLight(0xdceeff, 0x263f24, 3.2));
 const sun = new THREE.DirectionalLight(0xfff2d4, 3.2); sun.position.set(25, 55, 10); scene.add(sun);
-/** Runway / ground deck height in play-space meters (matches LandingStrip). */
+/** Runway deck height in play-space meters (matches LandingStrip). */
 const RUNWAY_Y = 0.3865;
+/** Grass slightly below the strip so coplanar meshes don't z-fight. */
+const GROUND_DECK_Y = RUNWAY_Y - 0.02;
 /** Plane origin sits slightly above the strip when parked. */
 const GROUND_CONTACT_Y = 0.5;
 const GROUND_BOUNCE_RESTITUTION = 0.55;
 const GROUND_HIT_COOLDOWN_SEC = 0.45;
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
-ground.rotation.x = -Math.PI / 2; ground.position.y = RUNWAY_Y; virtualEnvironment.add(ground);
+ground.rotation.x = -Math.PI / 2; ground.position.y = GROUND_DECK_Y; virtualEnvironment.add(ground);
 const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a); grid.position.y = RUNWAY_Y + 0.02; virtualEnvironment.add(grid);
 // Opaque sky fill for passthrough-off. Clear color alone is ignored in AR alpha-blend
 // sessions, so the upper hemisphere stays see-through without a real mesh.
@@ -1422,7 +1424,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.60");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.61");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2954,7 +2956,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.60`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.61`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -2990,7 +2992,22 @@ async function mountFlightScene() {
         });
         continue;
       }
-      const object = createSceneObject(item);
+      const isLandingStrip = role === "room" && /LandingStrip/i.test(`${item.name || ""} ${item.url || ""}`);
+      const object = createSceneObject(item, isLandingStrip ? {
+        onAssetLoaded: (wrapper) => {
+          wrapper.traverse((node) => {
+            if (!node.isMesh || !node.material) return;
+            const mats = Array.isArray(node.material) ? node.material : [node.material];
+            for (const mat of mats) {
+              if (!mat) continue;
+              mat.polygonOffset = true;
+              mat.polygonOffsetFactor = -1;
+              mat.polygonOffsetUnits = -1;
+              mat.needsUpdate = true;
+            }
+          });
+        },
+      } : undefined);
       if (role === "controls") nextControls = object;
       else if (role === "pause") nextPause = object;
       else if (role === "room") room.push(object);
