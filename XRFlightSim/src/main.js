@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.56";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.56";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.56";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.56";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.57";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.57";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.57";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.57";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -52,7 +52,10 @@ const explosionUrl = assetUrl("audio/explosion.wav");
 const shootUrl = assetUrl("audio/shoot.wav");
 let shootBuffer = null;
 let shootLoad = null;
+let explosionBuffer = null;
+let explosionLoad = null;
 const shootWorldPos = new THREE.Vector3();
+const explosionWorldPos = new THREE.Vector3();
 const inputProfilesBase = "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/";
 const localControllerModelUrls = {
   left: assetUrl("controllers/meta-quest-touch-pro-left.glb?v=0.4.23"),
@@ -1419,7 +1422,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.56");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.57");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2406,7 +2409,8 @@ function spawnPlaneFx(origin, kind = "flame") {
 
 /** Big ground-impact burst when a crashing plane hits. */
 function spawnCrashExplosion(origin) {
-  playExplosionSound();
+  playSpace.localToWorld(explosionWorldPos.copy(origin));
+  playExplosionSound(explosionWorldPos);
   // Bright core flash
   for (let i = 0; i < 5; i += 1) {
     const mat = muzzleSparkMat.clone();
@@ -2884,7 +2888,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.56`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.57`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3417,6 +3421,18 @@ function createShotPanner() {
   panner.coneOuterGain = 0;
   return panner;
 }
+function createExplosionPanner() {
+  const panner = engineContext.createPanner();
+  panner.panningModel = "HRTF";
+  panner.distanceModel = "inverse";
+  panner.refDistance = 4;
+  panner.maxDistance = 180;
+  panner.rolloffFactor = 1.0;
+  panner.coneInnerAngle = 360;
+  panner.coneOuterAngle = 360;
+  panner.coneOuterGain = 0;
+  return panner;
+}
 function ensureSharedAudioContext() {
   if (!engineContext) {
     engineContext = new AudioContext();
@@ -3509,8 +3525,9 @@ async function startEngineSound() {
       .then((response) => response.arrayBuffer())
       .then((data) => engineContext.decodeAudioData(data));
     engineBuffer = await engineLoad;
-    // Prefetch gunshot so the first shot isn't delayed by decode.
+    // Prefetch gunshot / explosion so first play isn't delayed by decode.
     ensureShootBuffer().catch(() => {});
+    ensureExplosionBuffer().catch(() => {});
     await engineContext.resume();
     if (!engineSource) {
       engineSource = engineContext.createBufferSource();
@@ -3556,10 +3573,47 @@ function playImpactSound() {
   pop.playbackRate = 1.35;
   pop.play().catch(() => {});
 }
-function playExplosionSound() {
-  const boom = new Audio(explosionUrl);
-  boom.volume = 0.9 * gameSettings.masterVolume;
-  boom.play().catch(() => {});
+async function ensureExplosionBuffer() {
+  ensureSharedAudioContext();
+  if (!explosionLoad) {
+    explosionLoad = fetch(explosionUrl)
+      .then((response) => response.arrayBuffer())
+      .then((data) => engineContext.decodeAudioData(data));
+  }
+  explosionBuffer = await explosionLoad;
+  return explosionBuffer;
+}
+/** Spatial ground-crash boom at a world position (quieter than the old 2D blast). */
+function playExplosionSound(worldPosition) {
+  ensureExplosionBuffer().then((buffer) => {
+    if (!buffer || !engineContext || !worldPosition) return;
+    const time = engineContext.currentTime;
+    updateSpatialListener(time);
+    const source = engineContext.createBufferSource();
+    const gain = engineContext.createGain();
+    const panner = createExplosionPanner();
+    source.buffer = buffer;
+    gain.gain.value = 0.32 * gameSettings.masterVolume;
+    source.connect(gain);
+    gain.connect(panner);
+    panner.connect(engineContext.destination);
+    if (!setAudioVector(
+      panner, "positionX", "positionY", "positionZ",
+      worldPosition.x, worldPosition.y, worldPosition.z, time,
+    ) && panner.setPosition) {
+      panner.setPosition(worldPosition.x, worldPosition.y, worldPosition.z);
+    }
+    source.start();
+    source.onended = () => {
+      try {
+        source.disconnect();
+        gain.disconnect();
+        panner.disconnect();
+      } catch (_) { /* already torn down */ }
+    };
+  }).catch((error) => {
+    console.warn("[WebXR] explosion sound failed", error);
+  });
 }
 
 const impactRaycaster = new THREE.Raycaster();
