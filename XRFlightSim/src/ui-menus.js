@@ -238,7 +238,7 @@ export function listClickableUiButtons(panel) {
   return buttons;
 }
 
-function createMenuPanel(title, width, height) {
+function createMenuPanel(title, width, height, opts = {}) {
   const root = new THREE.Group();
   root.name = title;
   const canvas = document.createElement("canvas");
@@ -247,6 +247,8 @@ function createMenuPanel(title, width, height) {
   const context = canvas.getContext("2d");
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  const titleSize = opts.titleSize || 92;
+  const titleColor = opts.titleColor || "#a9dbff";
   const drawTitle = (nextTitle) => {
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = "rgba(4, 20, 34, 0.92)";
@@ -256,15 +258,23 @@ function createMenuPanel(title, width, height) {
     context.roundRect(18, 18, canvas.width - 36, canvas.height - 36, 40);
     context.fill();
     context.stroke();
-    context.fillStyle = "#a9dbff";
-    context.font = "bold 92px system-ui, sans-serif";
+    context.font = `bold ${titleSize}px system-ui, sans-serif`;
     context.textAlign = "center";
     context.textBaseline = "middle";
     const lines = String(nextTitle).split("\n");
-    const lineH = 100;
+    const lineH = Math.round(titleSize * 1.1);
     const startY = 150 - ((lines.length - 1) * lineH) * 0.5;
     for (let i = 0; i < lines.length; i++) {
-      context.fillText(lines[i], canvas.width / 2, startY + i * lineH);
+      const x = canvas.width / 2;
+      const y = startY + i * lineH;
+      if (opts.titleOutline) {
+        context.lineJoin = "round";
+        context.lineWidth = Math.max(8, titleSize * 0.08);
+        context.strokeStyle = "#000000";
+        context.strokeText(lines[i], x, y);
+      }
+      context.fillStyle = titleColor;
+      context.fillText(lines[i], x, y);
     }
     texture.needsUpdate = true;
   };
@@ -445,22 +455,26 @@ export function createGamePanel({ onMenu }) {
 /** End-of-match ranking panel. entries: [{ name, score, isLocal? }] already sorted. */
 export function createScoreboardMenu({ onPlayAgain, onMenu }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Scoreboard", 2.6 * s, 3.1 * s);
+  const root = createMenuPanel("Game Over", 2.6 * s, 3.25 * s, {
+    titleSize: 148,
+    titleColor: "#ffe28a",
+    titleOutline: true,
+  });
   root.name = "Scoreboard Panel";
   const rows = [];
   for (let i = 0; i < 6; i += 1) {
     const row = createUiButton("—", 2.2 * s, 0.28 * s);
-    row.position.set(0, (0.85 - i * 0.35) * s, 0.02 * s);
+    row.position.set(0, (0.7 - i * 0.35) * s, 0.02 * s);
     row.userData.uiButton.onClick = null;
     root.add(row);
     rows.push(row);
   }
   const again = createUiButton("Play Again", 1.9 * s, 0.34 * s);
-  again.position.set(0, -1.15 * s, 0.02 * s);
+  again.position.set(0, -1.2 * s, 0.02 * s);
   again.userData.uiButton.onClick = onPlayAgain;
   root.add(again);
   const menu = createUiButton("Menu", 1.4 * s, 0.32 * s);
-  menu.position.set(0, -1.55 * s, 0.02 * s);
+  menu.position.set(0, -1.6 * s, 0.02 * s);
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);
 
