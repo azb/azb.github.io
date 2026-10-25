@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.63";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.63";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.63";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.63";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.64";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.64";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.64";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.64";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1424,7 +1424,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.63");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.64");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2145,19 +2145,24 @@ function setupPlayVolume() {
   const forward = new THREE.Vector3(0, 0, -1);
   // Near face used to sit exactly on spawn — pull the cube back so takeoff works.
   playVolumeCenter.copy(spawnPosition).addScaledVector(forward, half - PLAY_VOLUME_BEHIND);
-  playVolumeCenter.y = spawnPosition.y + half * 0.35;
+  // Keep the old full-cube ceiling; put the floor on the ground (? half height).
+  const topY = spawnPosition.y + half * 0.35 + half;
+  const minY = GROUND_CONTACT_Y;
+  const maxY = Math.max(topY, minY + 1);
+  const heightY = maxY - minY;
+  playVolumeCenter.y = (minY + maxY) * 0.5;
   playVolumeMin.set(
     playVolumeCenter.x - half,
-    playVolumeCenter.y - half,
+    minY,
     playVolumeCenter.z - half,
   );
   playVolumeMax.set(
     playVolumeCenter.x + half,
-    playVolumeCenter.y + half,
+    maxY,
     playVolumeCenter.z + half,
   );
   if (playVolumeMesh) playSpace.remove(playVolumeMesh);
-  const box = new THREE.BoxGeometry(PLAY_VOLUME_SIZE, PLAY_VOLUME_SIZE, PLAY_VOLUME_SIZE);
+  const box = new THREE.BoxGeometry(PLAY_VOLUME_SIZE, heightY, PLAY_VOLUME_SIZE);
   const edges = new THREE.EdgesGeometry(box);
   playVolumeMesh = new THREE.LineSegments(
     edges,
@@ -2956,7 +2961,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.63`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.64`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
