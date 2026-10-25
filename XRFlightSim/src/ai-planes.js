@@ -30,12 +30,22 @@ const FRONT_VERT = 1.2;
 /** Absolute world altitude band — do not track player Y as a rising floor. */
 /** Matches player GROUND_CONTACT_Y / runway deck after strip lowered 1m. */
 const GROUND_CONTACT_Y = 0.5;
-const MIN_FLY_ALT = GROUND_CONTACT_Y;
+/** Stay this far above the runway deck while flying (m). */
+const MIN_FLY_CLEARANCE = 1.4;
+const MIN_FLY_ALT = GROUND_CONTACT_Y + MIN_FLY_CLEARANCE;
 const MAX_FLY_ALT = 45;
 const GROUND_BOUNCE_RESTITUTION = 0.55;
 const GROUND_HIT_COOLDOWN_SEC = 0.45;
+/** Soft steer away from ground / walls before hard clamps (m). */
+const GROUND_AVOID_MARGIN = 2.8;
+const WALL_AVOID_MARGIN = 4.2;
+const CEILING_AVOID_MARGIN = 3.5;
 /** Max |y| of unit look dir (~20°) — avoids nose-down sliding on the floor clamp. */
 const MAX_LOOK_PITCH = 0.35;
+/** Bank into turns (radians). */
+const MAX_BANK = 0.85;
+const BANK_GAIN = 1.55;
+const BANK_SMOOTH = 4.2;
 /** Fixed play-space forward — cone does not rotate with head or plane. */
 const WORLD_FORWARD = new THREE.Vector3(0, 0, -1);
 
@@ -67,7 +77,7 @@ function distPointToSegment(point, a, b) {
   return point.distanceTo(_closest);
 }
 
-function lookRotation(forward, outQuat) {
+function lookRotation(forward, outQuat, bankRad = 0) {
   _fwd.copy(forward).normalize();
   if (_fwd.lengthSq() < 1e-8) {
     outQuat.identity();
@@ -84,6 +94,15 @@ function lookRotation(forward, outQuat) {
     _right.normalize();
   }
   _aimUp.crossVectors(_right, _fwd).normalize();
+  if (Math.abs(bankRad) > 1e-4) {
+    _tumbleQ.setFromAxisAngle(_fwd, bankRad);
+    _aimUp.applyQuaternion(_tumbleQ).normalize();
+    _right.crossVectors(_fwd, _aimUp);
+    if (_right.lengthSq() > 1e-8) {
+      _right.normalize();
+      _aimUp.crossVectors(_right, _fwd).normalize();
+    }
+  }
   _mat.makeBasis(_right, _aimUp, _fwd.clone().negate());
   return outQuat.setFromRotationMatrix(_mat);
 }
@@ -241,6 +260,7 @@ export function createAiFleet(opts) {
         propeller: opts.findPropeller?.(mesh) ?? null,
         position: pos.clone(),
         rotation: new THREE.Quaternion(),
+        bank: 0,
         throttle: 0,
         velocity: new THREE.Vector3(),
         health: PLANE_MAX_HEALTH,
@@ -311,7 +331,8 @@ export function createAiFleet(opts) {
     runwaySpawn(bot.position, origin, bot.runwaySlot ?? 0);
     clampToPlayVolume(bot.position);
     bot.patrolAngle = Math.random() * Math.PI * 2;
-    lookRotation(WORLD_FORWARD.clone(), bot.rotation);
+    bot.bank = 0;
+    lookRotation(WORLD_FORWARD.clone(), bot.rotation, 0);
     bot.throttle = 0;
     bot.health = PLANE_MAX_HEALTH;
     bot.alive = true;
@@ -446,12 +467,105 @@ export function createAiFleet(opts) {
     emitFx(shot.position, "spark");
   }
 
+  function applyBoundaryAvoidance(bot, aim) {
+    const p = bot.position;
+    const floor = MIN_FLY_ALT;
+    const headroom = p.y - floor;
+    if (headroom < GROUND_AVOID_MARGIN) {
+      const w = 1 - Math.max(0, headroom) / GROUND_AVOID_MARGIN;
+      aim.y = Math.max(aim.y, p.y + GROUND_AVOID_MARGIN * (0.6 + 1.4 * w * w));
+    }
+    _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
+    if (_fwd.y < -0.05 && headroom < GROUND_AVOID_MARGIN * 1.5) {
+      const dive = clamp(-_fwd.y, 0, 1);
+      aim.y = Math.max(aim.y, p.y + GROUND_AVOID_MARGIN * (1 + dive));
+    }
+    if (boundsMin && boundsMax) {
+      const pushAxis = (distToMin, distToMax, margin, towardMax, towardMin, cur) => {
+        let out = cur;
+        if (distToMin < margin) {
+          const w = 1 - Math.max(0, distToMin) / margin;
+          out = lerp(out, towardMax, w * w);
+        }
+        if (distToMax < margin) {
+          const w = 1 - Math.max(0, distToMax) / margin;
+          out = lerp(out, towardMin, w * w);
+        }
+        return out;
+      };
+      const cx = (boundsMin.x + boundsMax.x) * 0.5;
+      const cy = (boundsMin.y + boundsMax.y) * 0.5;
+      const cz = (boundsMin.z + boundsMax.z) * 0.5;
+      aim.x = pushAxis(
+        p.x - boundsMin.x,
+        boundsMax.x - p.x,
+        WALL_AVOID_MARGIN,
+        p.x + WALL_AVOID_MARGIN * 2,
+        p.x - WALL_AVOID_MARGIN * 2,
+        aim.x,
+      );
+      aim.z = pushAxis(
+        p.z - boundsMin.z,
+        boundsMax.z - p.z,
+        WALL_AVOID_MARGIN,
+        p.z + WALL_AVOID_MARGIN * 2,
+        p.z - WALL_AVOID_MARGIN * 2,
+        aim.z,
+      );
+      aim.y = pushAxis(
+        p.y - Math.max(boundsMin.y, floor),
+        boundsMax.y - p.y,
+        CEILING_AVOID_MARGIN,
+        p.y + CEILING_AVOID_MARGIN,
+        p.y - CEILING_AVOID_MARGIN,
+        aim.y,
+      );
+      const edge = Math.min(
+        p.x - boundsMin.x,
+        boundsMax.x - p.x,
+        p.z - boundsMin.z,
+        boundsMax.z - p.z,
+      ) / WALL_AVOID_MARGIN;
+      if (edge < 1) {
+        _to.set(cx - p.x, cy - p.y, cz - p.z);
+        if (_to.lengthSq() > 1) {
+          const t = (1 - Math.max(0, edge)) * 0.65;
+          _to.normalize().multiplyScalar(WALL_AVOID_MARGIN * 2);
+          aim.x = lerp(aim.x, p.x + _to.x, t);
+          aim.y = lerp(aim.y, p.y + _to.y, t * 0.5);
+          aim.z = lerp(aim.z, p.z + _to.z, t);
+        }
+      }
+    }
+    aim.y = clamp(aim.y, floor, MAX_FLY_ALT);
+    return clampToPlayVolume(aim);
+  }
+
   function steerBot(bot, targetPos, dt) {
     _to.subVectors(targetPos, bot.position);
     const dist = _to.length();
     if (dist > 0.01) _to.multiplyScalar(1 / dist);
     else _to.set(0, 0, -1);
-    lookRotation(_to, _quat);
+    _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
+    const curFlatX = _fwd.x;
+    const curFlatZ = _fwd.z;
+    const curFlatLen = Math.hypot(curFlatX, curFlatZ);
+    const wantFlatX = _to.x;
+    const wantFlatZ = _to.z;
+    const wantFlatLen = Math.hypot(wantFlatX, wantFlatZ);
+    let wantBank = 0;
+    if (curFlatLen > 0.05 && wantFlatLen > 0.05) {
+      const ax = curFlatX / curFlatLen;
+      const az = curFlatZ / curFlatLen;
+      const bx = wantFlatX / wantFlatLen;
+      const bz = wantFlatZ / wantFlatLen;
+      const crossY = ax * bz - az * bx;
+      const flatDot = clamp(ax * bx + az * bz, -1, 1);
+      const yawErr = Math.atan2(crossY, flatDot);
+      wantBank = clamp(-yawErr * BANK_GAIN, -MAX_BANK, MAX_BANK);
+    }
+    bot.bank = lerp(bot.bank || 0, wantBank, clamp(BANK_SMOOTH * dt, 0, 1));
+    lookRotation(_to, _quat, bot.bank);
     bot.rotation.slerp(_quat, clamp(TURN_RATE * dt, 0, 1));
     const desired = clamp(0.4 + dist / 40, 0.35, 0.95);
     bot.throttle = lerp(bot.throttle, desired, clamp(2 * dt, 0, 1));
@@ -556,6 +670,7 @@ export function createAiFleet(opts) {
       // Absolute altitude only — don't shove bots up when the player climbs.
       aim.y = clamp(aim.y, MIN_FLY_ALT, MAX_FLY_ALT);
       clampToPlayVolume(aim);
+      applyBoundaryAvoidance(bot, aim);
       steerBot(bot, aim, dt);
       const speed = lerp(0, 100, bot.throttle) * opts.worldSpeedScale;
       _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
