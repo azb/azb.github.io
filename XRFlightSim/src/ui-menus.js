@@ -1,16 +1,17 @@
 import * as THREE from "three";
 
-// v3: reset prefs so mesh visual/collision start Off (was On in older builds).
-const SETTINGS_KEY = "xrflightsim-settings-v3";
+// v4: default display name Player 1 (was Pilot in v3).
+const SETTINGS_KEY = "xrflightsim-settings-v4";
 const VOLUME_STEPS = [0, 0.25, 0.5, 0.75, 1];
 const SENSITIVITY_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
 /** Cycle list for the in-headset Name setting (no keyboard). */
 export const PLAYER_NAME_OPTIONS = [
-  "Pilot", "Ace", "Sparrow", "Viper", "Rogue", "Falcon", "Nova", "Blaze", "Ghost", "Hawk",
+  "Player 1", "Player 2", "Player 3", "Player 4", "Player 5",
+  "Ace", "Sparrow", "Viper", "Rogue", "Falcon", "Nova", "Blaze", "Ghost", "Hawk",
 ];
 
 export const defaultSettings = () => ({
-  playerName: "Pilot",
+  playerName: "Player 1",
   passthrough: true,
   meshCollision: false,
   meshVisual: false,
@@ -464,9 +465,9 @@ export function createScoreboardMenu({ onPlayAgain, onMenu }) {
   // Lift score rows off the panel plane to avoid z-fighting with the glass.
   const rowZ = 0.1 * s;
   const rows = [];
-  for (let i = 0; i < 6; i += 1) {
-    const row = createUiButton("—", 2.3 * s, 0.38 * s);
-    row.position.set(0, (0.65 - i * 0.4) * s, rowZ);
+  for (let i = 0; i < 8; i += 1) {
+    const row = createUiButton("—", 2.3 * s, 0.34 * s);
+    row.position.set(0, (0.7 - i * 0.32) * s, rowZ);
     row.userData.uiButton.onClick = null;
     root.add(row);
     rows.push(row);
@@ -492,7 +493,7 @@ export function createScoreboardMenu({ onPlayAgain, onMenu }) {
       const rank = i + 1;
       const mark = entry.isLocal ? " ★" : "";
       rows[i].userData.uiButton.setLabel(
-        `${rank}. ${entry.name || "Pilot"} — ${Math.max(0, entry.score | 0)}${mark}`,
+        `${rank}. ${entry.name || "Player"} — ${Math.max(0, entry.score | 0)}${mark}`,
       );
     }
   };
@@ -508,9 +509,9 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     {
       key: "playerName",
       y: 1.15 * s,
-      label: () => `Name: ${settings.playerName || "Pilot"}`,
+      label: () => `Name: ${settings.playerName || "Player 1"}`,
       click: () => {
-        settings.playerName = nextPlayerName(settings.playerName || "Pilot");
+        settings.playerName = nextPlayerName(settings.playerName || "Player 1");
       },
     },
     {

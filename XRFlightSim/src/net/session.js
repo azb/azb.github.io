@@ -248,7 +248,7 @@ export class FlightMultiplayerSession {
     });
     this.roster = live.map((d) => ({
       uid: d.id,
-      name: d.data.name || "Pilot",
+      name: d.data.name || "Player 2",
       host: d.id === this.hostUid,
     }));
     this._rtc?.syncPresence(live);
@@ -308,7 +308,7 @@ export class FlightMultiplayerSession {
     const { db, fs } = firebaseApi();
     const sig = this._rtc?.signalBlob() || {};
     const doc = {
-      name: this.handlers.playerName?.() || "Pilot",
+      name: this.handlers.playerName?.() || "Player 1",
       host: this.isHost,
       presenting: !!this.handlers.presenting?.(),
       updatedAt: fs.serverTimestamp(),
@@ -429,7 +429,7 @@ export class FlightMultiplayerSession {
     this._ws = createWsRelay({
       url,
       uid: this.uid,
-      name: this.handlers.playerName?.() || "Pilot",
+      name: this.handlers.playerName?.() || "Player 1",
       onMessage: (from, msg) => this._onRtc(from, msg),
       onOpen: () => {
         this._ws?.send(makeHelloMessage(this.uid));

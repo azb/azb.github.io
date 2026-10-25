@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.58";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.58";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.58";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.58";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.59";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.59";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.59";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.59";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -287,7 +287,7 @@ async function loadInstructionControllerModels(session) {
   } catch (error) { console.warn("Controller profile lookup failed; using guide fallback", error); }
 }
 const gameSettings = loadSettings();
-if (!gameSettings.playerName) gameSettings.playerName = "Pilot";
+if (!gameSettings.playerName) gameSettings.playerName = "Player 1";
 let returnToPauseAfterControls = false;
 /** @type {"controls" | "game" | "pause" | "settings" | "multiplayer" | "scoreboard"} */
 let uiMode = "controls";
@@ -1422,7 +1422,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.58");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.59");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1703,7 +1703,7 @@ function createNameTagSprite(label, color = "#eaf6ff") {
   sprite.userData.nameTagLabel = "";
   sprite.userData.nameTagColor = color;
   sprite.userData.nameTagCanvas = canvas;
-  setNameTagLabel(sprite, label || "Pilot");
+  setNameTagLabel(sprite, label || "Player 1");
   return sprite;
 }
 
@@ -1722,7 +1722,7 @@ function placeNameTagAboveWorld(tag, anchorObject) {
 
 function setNameTagLabel(sprite, label) {
   if (!sprite?.userData?.nameTagCanvas) return;
-  const text = String(label || "Pilot").slice(0, 24);
+  const text = String(label || "Player 1").slice(0, 24);
   if (sprite.userData.nameTagLabel === text) return;
   sprite.userData.nameTagLabel = text;
   const canvas = sprite.userData.nameTagCanvas;
@@ -1753,10 +1753,10 @@ function disposeNameTag(sprite) {
 function updateLocalNameTag() {
   if (!planeRoot) return;
   if (!localNameTag) {
-    localNameTag = createNameTagSprite(gameSettings.playerName || "Pilot", "#7fd4ff");
+    localNameTag = createNameTagSprite(gameSettings.playerName || "Player 1", "#7fd4ff");
     planeRoot.add(localNameTag);
   } else {
-    setNameTagLabel(localNameTag, gameSettings.playerName || "Pilot");
+    setNameTagLabel(localNameTag, gameSettings.playerName || "Player 1");
   }
 }
 
@@ -1780,6 +1780,7 @@ function startMatch() {
   gamePanel?.userData.setScore?.(0);
   gamePanel?.userData.setMatchTime?.(matchTimeLeft);
   for (const entry of remotePlanes.values()) entry.score = 0;
+  ensureAiFleet()?.resetMatchScores?.();
 }
 
 function endMatch() {
@@ -1795,18 +1796,22 @@ function endMatch() {
 function refreshScoreboardPanel() {
   const entries = [
     {
-      name: gameSettings.playerName || "Pilot",
+      name: gameSettings.playerName || "Player 1",
       score: killScore,
       isLocal: true,
     },
   ];
+  let humanIndex = 2;
   for (const entry of remotePlanes.values()) {
     entries.push({
-      name: entry.name || "Pilot",
+      name: entry.name || `Player ${humanIndex}`,
       score: entry.score || 0,
       isLocal: false,
     });
+    humanIndex += 1;
   }
+  const aiEntries = ensureAiFleet()?.getScoreboardEntries?.() || [];
+  for (const row of aiEntries) entries.push(row);
   entries.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   scoreboardPanel?.userData.setEntries?.(entries);
 }
@@ -1833,7 +1838,7 @@ function ensureRemotePlane(playerId) {
     targetQuat: new THREE.Quaternion(),
     throttle: 0,
     propeller: findNamedPropeller(mesh),
-    name: `Pilot`,
+    name: `Player ${remotePlanes.size + 2}`,
     score: 0,
     nameTag: null,
   };
@@ -1956,7 +1961,7 @@ function broadcastLocalPlane(time) {
     position: flight.position,
     rotation: flight.rotation,
     throttle: flight.throttle,
-    name: gameSettings.playerName || "Pilot",
+    name: gameSettings.playerName || "Player 1",
     score: killScore,
   });
 }
@@ -2055,7 +2060,7 @@ async function leaveMultiplayerRoom() {
 }
 
 net.on({
-  playerName: () => gameSettings.playerName || "Pilot",
+  playerName: () => gameSettings.playerName || "Player 1",
   presenting: () => renderer.xr.isPresenting,
   getBalloonSync: () => getBalloonSyncPayload(),
   onRoster: () => refreshMultiplayerUi(),
@@ -2888,7 +2893,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.58`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.59`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;

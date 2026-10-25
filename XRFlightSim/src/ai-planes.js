@@ -212,7 +212,7 @@ export function createAiFleet(opts) {
       opts.playSpace.add(root);
       const pos = clampToPlayVolume(randomSpawn(new THREE.Vector3(), _playerPos));
       root.position.copy(pos);
-      const displayName = `Bandit ${i + 1}`;
+      const displayName = `AI Player ${i + 1}`;
       const nameTag = opts.createNameTag?.(displayName) ?? null;
       if (nameTag) root.add(nameTag);
       const bot = {
@@ -226,6 +226,7 @@ export function createAiFleet(opts) {
         throttle: 0.55 + Math.random() * 0.2,
         velocity: new THREE.Vector3(),
         health: PLANE_MAX_HEALTH,
+        score: 0,
         groundHitCooldown: 0,
         alive: true,
         crashing: false,
@@ -236,6 +237,7 @@ export function createAiFleet(opts) {
         patrolAngle: Math.random() * Math.PI * 2,
         spawnIndex: 0,
         chasing: Math.random() < CHASE_MOOD_CHANCE,
+        chaseTargetId: null,
         moodTimer: MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC),
       };
       lookRotation(_to.subVectors(_playerPos, pos).normalize(), bot.rotation);
@@ -293,6 +295,7 @@ export function createAiFleet(opts) {
     bot.smokeAcc = 0;
     bot.respawnAt = -1;
     bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
+    bot.chaseTargetId = null;
     bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
     bot.root.visible = true;
     bot.root.position.copy(bot.position);
@@ -301,7 +304,69 @@ export function createAiFleet(opts) {
 
   function rollMood(bot) {
     bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
+    bot.chaseTargetId = null;
     bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
+  }
+
+  function findBotById(id) {
+    for (const bot of bots) {
+      if (bot.id === id) return bot;
+    }
+    return null;
+  }
+
+  function creditKill(ownerId) {
+    const shooter = findBotById(ownerId);
+    if (shooter) shooter.score = (shooter.score || 0) + 1;
+  }
+
+  /** Nearest engageable target: player and/or other living AI. */
+  function pickChaseTarget(bot, playerPos, playerAirborne) {
+    let bestId = null;
+    let bestDist = ENGAGE_RANGE;
+    if (playerAirborne) {
+      const d = bot.position.distanceTo(playerPos);
+      if (d < bestDist) {
+        bestDist = d;
+        bestId = "player";
+      }
+    }
+    for (const other of bots) {
+      if (other === bot || !other.alive || other.crashing) continue;
+      const d = bot.position.distanceTo(other.position);
+      if (d < bestDist) {
+        bestDist = d;
+        bestId = other.id;
+      }
+    }
+    return bestId;
+  }
+
+  function resolveChaseTarget(bot, playerPos, playerAirborne) {
+    if (!bot.chasing) {
+      bot.chaseTargetId = null;
+      return null;
+    }
+    const current = bot.chaseTargetId;
+    if (current === "player") {
+      if (playerAirborne && bot.position.distanceTo(playerPos) < ENGAGE_RANGE) {
+        return { id: "player", position: playerPos, isPlayer: true };
+      }
+    } else if (current) {
+      const other = findBotById(current);
+      if (other?.alive && !other.crashing
+        && bot.position.distanceTo(other.position) < ENGAGE_RANGE) {
+        return { id: other.id, position: other.position, isPlayer: false };
+      }
+    }
+    bot.chaseTargetId = pickChaseTarget(bot, playerPos, playerAirborne);
+    if (!bot.chaseTargetId) return null;
+    if (bot.chaseTargetId === "player") {
+      return { id: "player", position: playerPos, isPlayer: true };
+    }
+    const other = findBotById(bot.chaseTargetId);
+    if (!other) return null;
+    return { id: other.id, position: other.position, isPlayer: false };
   }
 
   function emitFx(origin, kind) {
@@ -426,17 +491,15 @@ export function createAiFleet(opts) {
         }
       }
 
-      const toPlayer = bot.position.distanceTo(playerPos);
-      const aheadDot = _to.subVectors(bot.position, playerPos).dot(_worldFwd);
-      const inFront = aheadDot > FRONT_DIST_MIN * 0.35;
-      const shouldChase = playerAirborne
-        && bot.chasing
-        && toPlayer < ENGAGE_RANGE
-        && inFront;
+      const chase = resolveChaseTarget(bot, playerPos, playerAirborne);
       let aim;
-      if (shouldChase) {
-        // Attack from world-ahead — don't orbit behind the player.
-        aim = _frontal.copy(playerPos).addScaledVector(_worldFwd, 1.2);
+      if (chase) {
+        if (chase.isPlayer) {
+          // Attack from world-ahead — don't orbit behind the player.
+          aim = _frontal.copy(playerPos).addScaledVector(_worldFwd, 1.2);
+        } else {
+          aim = _frontal.copy(chase.position);
+        }
       } else {
         aim = frontalPoint(playerPos, bot, dt, _frontal);
       }
@@ -474,10 +537,13 @@ export function createAiFleet(opts) {
       if (bot.propeller) {
         bot.propeller.rotateY(-dt * (4 + bot.throttle * 38));
       }
-      if (shouldChase && toPlayer < FIRE_RANGE) {
-        _fwd.set(0, 0, -1).applyQuaternion(bot.rotation);
-        _to.subVectors(playerPos, bot.position).normalize();
-        if (_fwd.dot(_to) >= FIRE_ALIGN_DOT) fireFrom(bot, nowSec);
+      if (chase) {
+        const toTarget = bot.position.distanceTo(chase.position);
+        if (toTarget < FIRE_RANGE) {
+          _fwd.set(0, 0, -1).applyQuaternion(bot.rotation);
+          _to.subVectors(chase.position, bot.position).normalize();
+          if (_fwd.dot(_to) >= FIRE_ALIGN_DOT) fireFrom(bot, nowSec);
+        }
       }
     }
   }
@@ -488,12 +554,34 @@ export function createAiFleet(opts) {
       const prev = shot.userData.prevPosition || shot.position.clone();
       if (!shot.userData.prevPosition) shot.userData.prevPosition = shot.position.clone();
       const next = shot.position.clone().addScaledVector(shot.userData.velocity, dt);
+      const ownerId = shot.userData.ownerId;
       if (playerPos && distPointToSegment(playerPos, prev, next) <= AI_HIT_RADIUS) {
         opts.playSpace.remove(shot);
         bullets.splice(i, 1);
+        creditKill(ownerId);
         onPlayerHit?.();
         continue;
       }
+      let hitAi = false;
+      for (const bot of bots) {
+        if (!bot.alive || bot.crashing) continue;
+        if (bot.id === ownerId) continue;
+        if (distPointToSegment(bot.position, prev, next) <= AI_HIT_RADIUS) {
+          opts.playSpace.remove(shot);
+          bullets.splice(i, 1);
+          bot.health -= 1;
+          if (bot.health <= 0) {
+            bot.health = 0;
+            creditKill(ownerId);
+            beginCrash(bot);
+          } else {
+            emitFx(bot.position, "smoke");
+          }
+          hitAi = true;
+          break;
+        }
+      }
+      if (hitAi) continue;
       shot.userData.prevPosition.copy(shot.position);
       shot.position.copy(next);
       shot.userData.age += dt;
@@ -577,6 +665,18 @@ export function createAiFleet(opts) {
     },
     aliveCount() {
       return bots.filter((b) => b.alive && !b.crashing).length;
+    },
+    /** Scoreboard rows for AI bandits. */
+    getScoreboardEntries() {
+      return bots.map((b) => ({
+        name: b.name,
+        score: b.score || 0,
+        isAi: true,
+        isLocal: false,
+      }));
+    },
+    resetMatchScores() {
+      for (const bot of bots) bot.score = 0;
     },
     rebuild() {
       disposeBots();

@@ -53,7 +53,7 @@ export function createWsRelay(opts) {
           JSON.stringify({
             type: "join",
             uid: opts.uid,
-            name: opts.name || "Pilot",
+            name: opts.name || "Player 1",
           }),
         );
       } catch {
