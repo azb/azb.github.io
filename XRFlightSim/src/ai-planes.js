@@ -30,14 +30,13 @@ const FRONT_VERT = 1.2;
 /** Absolute world altitude band — do not track player Y as a rising floor. */
 /** Matches player GROUND_CONTACT_Y / runway deck after strip lowered 1m. */
 const GROUND_CONTACT_Y = 0.5;
-/** Stay this far above the runway deck while flying (m). */
-const MIN_FLY_CLEARANCE = 1.4;
-const MIN_FLY_ALT = GROUND_CONTACT_Y + MIN_FLY_CLEARANCE;
+const MIN_FLY_ALT = GROUND_CONTACT_Y;
 const MAX_FLY_ALT = 45;
 const GROUND_BOUNCE_RESTITUTION = 0.55;
 const GROUND_HIT_COOLDOWN_SEC = 0.45;
-/** Soft steer away from ground / walls before hard clamps (m). */
-const GROUND_AVOID_MARGIN = 2.8;
+/** Soft climb cue near the real ground — not a hard invisible floor (m). */
+const GROUND_AVOID_MARGIN = 2.2;
+const GROUND_AVOID_CLIMB = 0.9;
 const WALL_AVOID_MARGIN = 4.2;
 const CEILING_AVOID_MARGIN = 3.5;
 /** Max |y| of unit look dir (~20°) — avoids nose-down sliding on the floor clamp. */
@@ -469,16 +468,18 @@ export function createAiFleet(opts) {
 
   function applyBoundaryAvoidance(bot, aim) {
     const p = bot.position;
-    const floor = MIN_FLY_ALT;
-    const headroom = p.y - floor;
+    // Measure from the real runway deck — a raised hard floor caused pitch wobble.
+    const headroom = p.y - GROUND_CONTACT_Y;
     if (headroom < GROUND_AVOID_MARGIN) {
       const w = 1 - Math.max(0, headroom) / GROUND_AVOID_MARGIN;
-      aim.y = Math.max(aim.y, p.y + GROUND_AVOID_MARGIN * (0.6 + 1.4 * w * w));
-    }
-    _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
-    if (_fwd.y < -0.05 && headroom < GROUND_AVOID_MARGIN * 1.5) {
-      const dive = clamp(-_fwd.y, 0, 1);
-      aim.y = Math.max(aim.y, p.y + GROUND_AVOID_MARGIN * (1 + dive));
+      const ww = w * w;
+      const shallow = p.y + GROUND_AVOID_CLIMB * (0.35 + 0.65 * ww);
+      aim.y = lerp(aim.y, Math.max(aim.y, shallow), ww * 0.9);
+      _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
+      if (_fwd.y < -0.06) {
+        const dive = clamp(-_fwd.y, 0, 1);
+        aim.y = lerp(aim.y, p.y + GROUND_AVOID_CLIMB * (1 + dive), ww * dive);
+      }
     }
     if (boundsMin && boundsMax) {
       const pushAxis = (distToMin, distToMax, margin, towardMax, towardMin, cur) => {
@@ -513,7 +514,7 @@ export function createAiFleet(opts) {
         aim.z,
       );
       aim.y = pushAxis(
-        p.y - Math.max(boundsMin.y, floor),
+        p.y - Math.max(boundsMin.y, GROUND_CONTACT_Y),
         boundsMax.y - p.y,
         CEILING_AVOID_MARGIN,
         p.y + CEILING_AVOID_MARGIN,
@@ -537,7 +538,7 @@ export function createAiFleet(opts) {
         }
       }
     }
-    aim.y = clamp(aim.y, floor, MAX_FLY_ALT);
+    aim.y = clamp(aim.y, GROUND_CONTACT_Y, MAX_FLY_ALT);
     return clampToPlayVolume(aim);
   }
 
@@ -562,7 +563,7 @@ export function createAiFleet(opts) {
       const crossY = ax * bz - az * bx;
       const flatDot = clamp(ax * bx + az * bz, -1, 1);
       const yawErr = Math.atan2(crossY, flatDot);
-      wantBank = clamp(-yawErr * BANK_GAIN, -MAX_BANK, MAX_BANK);
+      wantBank = clamp(yawErr * BANK_GAIN, -MAX_BANK, MAX_BANK);
     }
     bot.bank = lerp(bot.bank || 0, wantBank, clamp(BANK_SMOOTH * dt, 0, 1));
     lookRotation(_to, _quat, bot.bank);
@@ -668,7 +669,7 @@ export function createAiFleet(opts) {
         aim = frontalPoint(playerPos, bot, dt, _frontal);
       }
       // Absolute altitude only — don't shove bots up when the player climbs.
-      aim.y = clamp(aim.y, MIN_FLY_ALT, MAX_FLY_ALT);
+      aim.y = clamp(aim.y, GROUND_CONTACT_Y, MAX_FLY_ALT);
       clampToPlayVolume(aim);
       applyBoundaryAvoidance(bot, aim);
       steerBot(bot, aim, dt);
@@ -681,6 +682,7 @@ export function createAiFleet(opts) {
         const diving = _fwd.y < -0.02 || bot.velocity.y < -0.05;
         bot.position.y = GROUND_CONTACT_Y;
         if (diving) {
+          bot.bank = 0;
           bounceOffGround(bot);
           if (bot.groundHitCooldown <= 0 && !isBotInvulnerable(bot, nowSec)) {
             bot.groundHitCooldown = GROUND_HIT_COOLDOWN_SEC;
@@ -693,8 +695,8 @@ export function createAiFleet(opts) {
             }
           }
         }
-      } else {
-        bot.position.y = clamp(bot.position.y, MIN_FLY_ALT, MAX_FLY_ALT);
+      } else if (bot.position.y > MAX_FLY_ALT) {
+        bot.position.y = MAX_FLY_ALT;
       }
       if (bot.crashing) continue;
       clampToPlayVolume(bot.position);
