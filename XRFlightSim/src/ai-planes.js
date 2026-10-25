@@ -15,8 +15,11 @@ const AI_HIT_RADIUS = 0.55;
 const AI_RESPAWN_SEC = 5;
 const ENGAGE_RANGE = 45;
 const FIRE_RANGE = 28;
-const FIRE_ALIGN_DOT = 0.88;
-const FIRE_COOLDOWN = 0.35;
+/** ~39° half-angle — “roughly ahead” is enough to open fire. */
+const FIRE_ALIGN_DOT = 0.78;
+/** Cooldown when barely aligned vs locked on (seconds). */
+const FIRE_COOLDOWN_MAX = 0.35;
+const FIRE_COOLDOWN_MIN = 0.1;
 const TURN_RATE = 1.8;
 /** Chance to pick chase when rolling a new mood (patrol otherwise). */
 const CHASE_MOOD_CHANCE = 0.2;
@@ -439,9 +442,16 @@ export function createAiFleet(opts) {
     opts.spawnFx?.(origin, kind);
   }
 
-  function fireFrom(bot, nowSec) {
+  function fireFrom(bot, nowSec, alignDot = FIRE_ALIGN_DOT) {
     if (bot.crashing) return;
-    if (nowSec - bot.lastFire < FIRE_COOLDOWN) return;
+    const alignT = clamp(
+      (alignDot - FIRE_ALIGN_DOT) / Math.max(1e-3, 1 - FIRE_ALIGN_DOT),
+      0,
+      1,
+    );
+    // Dead-ahead → burst; edge of cone → slower.
+    const cooldown = lerp(FIRE_COOLDOWN_MAX, FIRE_COOLDOWN_MIN, alignT * alignT);
+    if (nowSec - bot.lastFire < cooldown) return;
     bot.lastFire = nowSec;
     const locals = opts.bulletSpawnLocal;
     const local = locals[bot.spawnIndex % locals.length];
@@ -710,7 +720,8 @@ export function createAiFleet(opts) {
         if (toTarget < FIRE_RANGE) {
           _fwd.set(0, 0, -1).applyQuaternion(bot.rotation);
           _to.subVectors(chase.position, bot.position).normalize();
-          if (_fwd.dot(_to) >= FIRE_ALIGN_DOT) fireFrom(bot, nowSec);
+          const align = _fwd.dot(_to);
+          if (align >= FIRE_ALIGN_DOT) fireFrom(bot, nowSec, align);
         }
       }
     }
