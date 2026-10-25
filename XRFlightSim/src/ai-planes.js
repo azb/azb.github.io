@@ -124,6 +124,17 @@ function randomSpawn(out, playerPos) {
     .setY(Math.max(out.y, MIN_FLY_ALT));
 }
 
+/** Park on the runway beside the player pad (index 0 = first AI slot). */
+function runwaySpawn(out, origin, index) {
+  buildWorldBasis();
+  const side = (index + 1) * 2.4 * (index % 2 === 0 ? 1 : -1);
+  const ahead = -0.4 * index;
+  return out.copy(origin)
+    .addScaledVector(_right, side)
+    .addScaledVector(_worldFwd, ahead)
+    .setY(GROUND_CONTACT_Y);
+}
+
 /**
  * @param {{
  *   playSpace: THREE.Object3D,
@@ -138,9 +149,15 @@ function randomSpawn(out, playerPos) {
  *   bulletLifetimeSec: number,
  *   bulletSpawnLocal: THREE.Vector3[],
  *   spawnFx?: (origin: THREE.Vector3, kind: "smoke" | "flame") => void,
+ *   runwayOrigin?: () => THREE.Vector3,
+ *   takeoffInvulnSec?: number,
+ *   takeoffThrottle?: number,
+ *   onBotDamaged?: (root: THREE.Object3D) => void,
  * }} opts
  */
 export function createAiFleet(opts) {
+  const takeoffInvulnSec = opts.takeoffInvulnSec ?? 3;
+  const takeoffThrottle = opts.takeoffThrottle ?? 0.25;
   const bots = [];
   const bullets = [];
   let nextBulletId = 0;
@@ -210,7 +227,8 @@ export function createAiFleet(opts) {
       });
       root.add(mesh);
       opts.playSpace.add(root);
-      const pos = clampToPlayVolume(randomSpawn(new THREE.Vector3(), _playerPos));
+      const origin = opts.runwayOrigin?.() || _playerPos;
+      const pos = clampToPlayVolume(runwaySpawn(new THREE.Vector3(), origin, i));
       root.position.copy(pos);
       const displayName = `AI Player ${i + 1}`;
       const nameTag = opts.createNameTag?.(displayName) ?? null;
@@ -223,7 +241,7 @@ export function createAiFleet(opts) {
         propeller: opts.findPropeller?.(mesh) ?? null,
         position: pos.clone(),
         rotation: new THREE.Quaternion(),
-        throttle: 0.55 + Math.random() * 0.2,
+        throttle: 0,
         velocity: new THREE.Vector3(),
         health: PLANE_MAX_HEALTH,
         score: 0,
@@ -236,14 +254,21 @@ export function createAiFleet(opts) {
         lastFire: -Infinity,
         patrolAngle: Math.random() * Math.PI * 2,
         spawnIndex: 0,
-        chasing: Math.random() < CHASE_MOOD_CHANCE,
+        chasing: false,
         chaseTargetId: null,
         moodTimer: MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC),
+        takingOff: true,
+        invulnerableUntil: 0,
+        runwaySlot: i,
       };
-      lookRotation(_to.subVectors(_playerPos, pos).normalize(), bot.rotation);
+      lookRotation(WORLD_FORWARD.clone(), bot.rotation);
       root.quaternion.copy(bot.rotation);
       bots.push(bot);
     }
+  }
+
+  function isBotInvulnerable(bot, nowSec) {
+    return nowSec < (bot.invulnerableUntil || 0);
   }
 
   function beginCrash(bot) {
@@ -282,24 +307,45 @@ export function createAiFleet(opts) {
   }
 
   function respawnBot(bot) {
-    randomSpawn(bot.position, _playerPos);
+    const origin = opts.runwayOrigin?.() || _playerPos;
+    runwaySpawn(bot.position, origin, bot.runwaySlot ?? 0);
     clampToPlayVolume(bot.position);
-    bot.rotation.identity();
     bot.patrolAngle = Math.random() * Math.PI * 2;
-    lookRotation(_to.subVectors(_playerPos, bot.position).normalize(), bot.rotation);
-    bot.throttle = 0.55 + Math.random() * 0.2;
+    lookRotation(WORLD_FORWARD.clone(), bot.rotation);
+    bot.throttle = 0;
     bot.health = PLANE_MAX_HEALTH;
     bot.alive = true;
     bot.crashing = false;
     bot.crash = null;
     bot.smokeAcc = 0;
     bot.respawnAt = -1;
-    bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
+    bot.chasing = false;
     bot.chaseTargetId = null;
+    bot.takingOff = true;
+    bot.invulnerableUntil = 0;
     bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
     bot.root.visible = true;
     bot.root.position.copy(bot.position);
     bot.root.quaternion.copy(bot.rotation);
+  }
+
+  function updateTakeoff(bot, dt, nowSec) {
+    bot.throttle = clamp(bot.throttle + 0.4 * dt, 0, 0.85);
+    const speed = lerp(0, 100, bot.throttle) * opts.worldSpeedScale;
+    _fwd.set(0, 0, -1).applyQuaternion(bot.rotation).normalize();
+    bot.velocity.copy(_fwd).multiplyScalar(speed);
+    bot.position.addScaledVector(bot.velocity, dt);
+    bot.position.y = GROUND_CONTACT_Y;
+    clampToPlayVolume(bot.position);
+    bot.root.position.copy(bot.position);
+    bot.root.quaternion.copy(bot.rotation);
+    if (bot.propeller) bot.propeller.rotateY(-dt * (4 + bot.throttle * 38));
+    if (bot.throttle >= takeoffThrottle) {
+      bot.takingOff = false;
+      bot.invulnerableUntil = nowSec + takeoffInvulnSec;
+      bot.chasing = Math.random() < CHASE_MOOD_CHANCE;
+      bot.moodTimer = MOOD_MIN_SEC + Math.random() * (MOOD_MAX_SEC - MOOD_MIN_SEC);
+    }
   }
 
   function rollMood(bot) {
@@ -478,6 +524,10 @@ export function createAiFleet(opts) {
         updateCrash(bot, dt, nowSec);
         continue;
       }
+      if (bot.takingOff) {
+        updateTakeoff(bot, dt, nowSec);
+        continue;
+      }
 
       bot.moodTimer -= dt;
       if (bot.moodTimer <= 0) rollMood(bot);
@@ -517,9 +567,10 @@ export function createAiFleet(opts) {
         bot.position.y = GROUND_CONTACT_Y;
         if (diving) {
           bounceOffGround(bot);
-          if (bot.groundHitCooldown <= 0) {
+          if (bot.groundHitCooldown <= 0 && !isBotInvulnerable(bot, nowSec)) {
             bot.groundHitCooldown = GROUND_HIT_COOLDOWN_SEC;
             bot.health -= 1;
+            opts.onBotDamaged?.(bot.root);
             emitFx(bot.position, "smoke");
             if (bot.health <= 0) {
               bot.health = 0;
@@ -548,7 +599,7 @@ export function createAiFleet(opts) {
     }
   }
 
-  function updateBullets(dt, playerPos, onPlayerHit) {
+  function updateBullets(dt, playerPos, onPlayerHit, nowSec) {
     for (let i = bullets.length - 1; i >= 0; i -= 1) {
       const shot = bullets[i];
       const prev = shot.userData.prevPosition || shot.position.clone();
@@ -558,18 +609,23 @@ export function createAiFleet(opts) {
       if (playerPos && distPointToSegment(playerPos, prev, next) <= AI_HIT_RADIUS) {
         opts.playSpace.remove(shot);
         bullets.splice(i, 1);
-        creditKill(ownerId);
-        onPlayerHit?.();
+        // Caller may ignore during player takeoff invuln; only credit if applied.
+        if (onPlayerHit) {
+          creditKill(ownerId);
+          onPlayerHit();
+        }
         continue;
       }
       let hitAi = false;
       for (const bot of bots) {
-        if (!bot.alive || bot.crashing) continue;
+        if (!bot.alive || bot.crashing || bot.takingOff) continue;
         if (bot.id === ownerId) continue;
+        if (isBotInvulnerable(bot, nowSec)) continue;
         if (distPointToSegment(bot.position, prev, next) <= AI_HIT_RADIUS) {
           opts.playSpace.remove(shot);
           bullets.splice(i, 1);
           bot.health -= 1;
+          opts.onBotDamaged?.(bot.root);
           if (bot.health <= 0) {
             bot.health = 0;
             creditKill(ownerId);
@@ -595,11 +651,13 @@ export function createAiFleet(opts) {
   /**
    * @returns {{ hit: boolean, health: number, destroyed: boolean, position?: THREE.Vector3 } | null}
    */
-  function hitTestPlayerBullet(prev, next, _nowSec) {
+  function hitTestPlayerBullet(prev, next, nowSec = 0) {
     for (const bot of bots) {
-      if (!bot.alive || bot.crashing) continue;
+      if (!bot.alive || bot.crashing || bot.takingOff) continue;
+      if (isBotInvulnerable(bot, nowSec)) continue;
       if (distPointToSegment(bot.position, prev, next) <= AI_HIT_RADIUS) {
         bot.health -= 1;
+        opts.onBotDamaged?.(bot.root);
         if (bot.health <= 0) {
           bot.health = 0;
           const at = bot.position.clone();
@@ -634,9 +692,14 @@ export function createAiFleet(opts) {
     } = {}) {
       if (paused) return;
       updateBots(dt, nowSec, playerPos, playerAirborne);
-      updateBullets(dt, playerPos, onPlayerHit);
+      updateBullets(dt, playerPos, onPlayerHit, nowSec);
     },
     hitTestPlayerBullet,
+    forEachBotRoot(fn) {
+      for (const bot of bots) {
+        if (bot.root) fn(bot.root);
+      }
+    },
     collectAliveWorldPositions(out) {
       for (const bot of bots) {
         if (!bot.alive && !bot.crashing) continue;

@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.59";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.59";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.59";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.59";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.60";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.60";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.60";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.60";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1422,7 +1422,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.59");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.60");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1679,8 +1679,12 @@ function createRemotePlaneMesh() {
   return mesh;
 }
 
-/** World-space height of nametags above the plane origin (meters). */
-const NAME_TAG_WORLD_HEIGHT = 1.15;
+/** World-space height of nametags above the plane origin (meters). Matches Specs 45 cm. */
+const NAME_TAG_WORLD_HEIGHT = 0.45;
+/** Seconds of invulnerability after leaving the runway. */
+const TAKEOFF_INVULN_SEC = 3;
+/** Brief red flash when a plane takes damage. */
+const HIT_FLASH_SEC = 0.4;
 const nameTagWorldPos = new THREE.Vector3();
 
 function createNameTagSprite(label, color = "#eaf6ff") {
@@ -2345,6 +2349,9 @@ const fireHapticDurationMs = 10;
 /** Local AI dogfighters — chase/shoot you; you can shoot them back. */
 let aiFleet = null;
 let playerHealth = PLANE_MAX_HEALTH;
+let playerInvulnUntil = 0;
+let playerWasThrottleCommitted = false;
+let playerHitFlashUntil = 0;
 let killScore = 0;
 /** @type {{ sprite: THREE.Sprite, expiresAt: number }[]} */
 const killPopups = [];
@@ -2514,13 +2521,65 @@ function ensureAiFleet() {
     bulletSpawnLocal,
     boundsMin: playVolumeMin,
     boundsMax: playVolumeMax,
+    takeoffInvulnSec: TAKEOFF_INVULN_SEC,
+    takeoffThrottle: TAKEOFF_THROTTLE,
+    runwayOrigin: () => spawnPosition.clone(),
     createNameTag: (label) => createNameTagSprite(label, "#ff8a80"),
     spawnFx: (origin, kind) => {
       spawnPlaneFx(origin, kind);
       if (kind === "spark") playSpatialShoot(origin);
     },
+    onBotDamaged: (botRoot) => beginHitFlash(botRoot),
   });
   return aiFleet;
+}
+
+function isPlayerInvulnerable(nowSec = performance.now() / 1000) {
+  return nowSec < playerInvulnUntil;
+}
+
+function beginHitFlash(root) {
+  if (!root) return;
+  const until = performance.now() + HIT_FLASH_SEC * 1000;
+  root.userData.hitFlashUntil = until;
+  root.traverse((node) => {
+    if (!node.isMesh || !node.material) return;
+    const mats = Array.isArray(node.material) ? node.material : [node.material];
+    for (const mat of mats) {
+      if (!mat?.color) continue;
+      if (!mat.userData._baseColor) mat.userData._baseColor = mat.color.clone();
+      mat.userData.hitFlashUntil = until;
+    }
+  });
+}
+
+function updateHitFlashes() {
+  const now = performance.now();
+  const roots = [planeRoot];
+  ensureAiFleet()?.forEachBotRoot?.((root) => roots.push(root));
+  for (const root of roots) {
+    if (!root) continue;
+    root.traverse((node) => {
+      if (!node.isMesh || !node.material) return;
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      for (const mat of mats) {
+        const base = mat.userData?._baseColor;
+        if (!base || !mat.color) continue;
+        const until = mat.userData.hitFlashUntil || 0;
+        if (now < until) {
+          const pulse = 0.55 + 0.45 * Math.sin(now * 0.045);
+          mat.color.setRGB(
+            base.r * (1 - pulse) + pulse,
+            base.g * (1 - pulse) * 0.15,
+            base.b * (1 - pulse) * 0.15,
+          );
+        } else if (mat.userData.hitFlashUntil) {
+          mat.color.copy(base);
+          mat.userData.hitFlashUntil = 0;
+        }
+      }
+    });
+  }
 }
 
 function beginPlayerCrash() {
@@ -2549,8 +2608,9 @@ function beginPlayerCrash() {
 }
 
 function onAiHitPlayer() {
-  if (playerCrash) return;
+  if (playerCrash || isPlayerInvulnerable()) return;
   playerHealth -= 1;
+  beginHitFlash(planeRoot);
   if (playerHealth <= 0) {
     playerHealth = 0;
     beginPlayerCrash();
@@ -2563,8 +2623,9 @@ function onAiHitPlayer() {
 }
 
 function onPlayerGroundHit() {
-  if (playerCrash) return;
+  if (playerCrash || isPlayerInvulnerable()) return;
   playerHealth -= 1;
+  beginHitFlash(planeRoot);
   spawnPlaneFx(flight.position, "smoke");
   if (playerHealth <= 0) {
     playerHealth = 0;
@@ -2893,7 +2954,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.59`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.60`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3894,6 +3955,11 @@ renderer.setAnimationLoop((time, frame) => {
     }
     updateImpactParticles(dt);
   }
+  // Rising edge of takeoff ? brief invulnerability.
+  if (flight.throttleCommitted && !playerWasThrottleCommitted) {
+    playerInvulnUntil = time / 1000 + TAKEOFF_INVULN_SEC;
+  }
+  playerWasThrottleCommitted = flight.throttleCommitted;
   planeRoot.position.copy(flight.position);
   planeRoot.quaternion.copy(flight.rotation);
   broadcastLocalPlane(time);
@@ -3902,11 +3968,13 @@ renderer.setAnimationLoop((time, frame) => {
   ensureAiFleet()?.update(dt, flight.position, {
     paused: simulationPaused,
     nowSec: time / 1000,
-    onPlayerHit: playerCrash ? null : onAiHitPlayer,
+    onPlayerHit:
+      playerCrash || isPlayerInvulnerable(time / 1000) ? null : onAiHitPlayer,
     // Grounded at spawn / no throttle — AI patrols only until you take off.
     playerAirborne: flight.throttleCommitted
       || flight.position.distanceToSquared(spawnPosition) > 2.25,
   });
+  updateHitFlashes();
   if (!simulationPaused) updatePlayerDamageSmoke(dt);
   updateCrashFlames(dt);
   updateBalloons();
@@ -4009,6 +4077,9 @@ function resetPlayerFlight({ keepScore = true } = {}) {
   flight.reset();
   playerCrash = null;
   playerHealth = PLANE_MAX_HEALTH;
+  playerInvulnUntil = 0;
+  playerWasThrottleCommitted = false;
+  playerHitFlashUntil = 0;
   if (!keepScore) {
     killScore = 0;
     gamePanel?.userData.setScore?.(0);
