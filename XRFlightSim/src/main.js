@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.52";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.52";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.52";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.52";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.53";
+import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.53";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.53";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.53";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -1418,7 +1418,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.52");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.53");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1724,11 +1724,18 @@ function setNameTagLabel(sprite, label) {
   const canvas = sprite.userData.nameTagCanvas;
   const c = canvas.getContext("2d");
   c.clearRect(0, 0, canvas.width, canvas.height);
-  c.fillStyle = sprite.userData.nameTagColor || "#eaf6ff";
   c.font = "bold 64px system-ui, sans-serif";
   c.textAlign = "center";
   c.textBaseline = "middle";
-  c.fillText(text, canvas.width / 2, canvas.height / 2);
+  const x = canvas.width / 2;
+  const y = canvas.height / 2;
+  c.lineJoin = "round";
+  c.miterLimit = 2;
+  c.lineWidth = 10;
+  c.strokeStyle = "#000000";
+  c.strokeText(text, x, y);
+  c.fillStyle = sprite.userData.nameTagColor || "#eaf6ff";
+  c.fillText(text, x, y);
   sprite.material.map.needsUpdate = true;
 }
 
@@ -2876,7 +2883,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.52`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.53`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
