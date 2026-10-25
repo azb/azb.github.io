@@ -461,20 +461,22 @@ export function createScoreboardMenu({ onPlayAgain, onMenu }) {
     titleOutline: true,
   });
   root.name = "Scoreboard Panel";
+  // Lift score rows off the panel plane to avoid z-fighting with the glass.
+  const rowZ = 0.1 * s;
   const rows = [];
   for (let i = 0; i < 6; i += 1) {
-    const row = createUiButton("—", 2.2 * s, 0.28 * s);
-    row.position.set(0, (0.7 - i * 0.35) * s, 0.02 * s);
+    const row = createUiButton("—", 2.3 * s, 0.38 * s);
+    row.position.set(0, (0.65 - i * 0.4) * s, rowZ);
     row.userData.uiButton.onClick = null;
     root.add(row);
     rows.push(row);
   }
   const again = createUiButton("Play Again", 1.9 * s, 0.34 * s);
-  again.position.set(0, -1.2 * s, 0.02 * s);
+  again.position.set(0, -1.25 * s, rowZ);
   again.userData.uiButton.onClick = onPlayAgain;
   root.add(again);
   const menu = createUiButton("Menu", 1.4 * s, 0.32 * s);
-  menu.position.set(0, -1.6 * s, 0.02 * s);
+  menu.position.set(0, -1.65 * s, rowZ);
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);
 
