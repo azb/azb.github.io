@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.68";
-import { createGamePanel, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.68";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.68";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.68";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.69";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.69";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.69";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.69";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -291,8 +291,10 @@ async function loadInstructionControllerModels(session) {
 const gameSettings = loadSettings();
 if (!gameSettings.playerName) gameSettings.playerName = "Player 1";
 let returnToPauseAfterControls = false;
-/** @type {"controls" | "game" | "pause" | "settings" | "multiplayer" | "scoreboard"} */
+/** @type {"controls" | "modeSelect" | "game" | "pause" | "settings" | "multiplayer" | "scoreboard"} */
 let uiMode = "controls";
+/** unset until mode picker; then freefly | dogfight. */
+let gameMode = "";
 /** Match length in seconds (dogfight round). */
 const MATCH_DURATION_SEC = 180;
 let matchActive = false;
@@ -325,6 +327,21 @@ function applyGameSettings() {
 
 function dismissControlsToGame() {
   returnToPauseAfterControls = false;
+  showUiMode("modeSelect");
+}
+
+function selectGameMode(mode) {
+  gameMode = mode === "freefly" ? "freefly" : "dogfight";
+  if (gameMode === "dogfight") {
+    startMatch();
+  } else {
+    matchActive = false;
+    matchEnded = false;
+    matchTimeLeft = 0;
+    killScore = 0;
+    gamePanel?.userData.setScore?.(0);
+    gamePanel?.userData.setMatchLabel?.("Free Fly");
+  }
   showUiMode("game");
 }
 
@@ -356,6 +373,7 @@ function showUiMode(mode) {
   if (worldRecenterActive && mode !== "pause") return;
   uiMode = mode;
   const showControls = mode === "controls";
+  const showModeSelect = mode === "modeSelect";
   const showGame = mode === "game";
   const showPause = mode === "pause";
   const showSettings = mode === "settings";
@@ -364,6 +382,7 @@ function showUiMode(mode) {
   controlsVisible = showControls;
   if (controlsPanel) controlsPanel.visible = showControls;
   if (controlsOkButton) controlsOkButton.visible = showControls;
+  if (modeSelectPanel) modeSelectPanel.visible = showModeSelect;
   if (gamePanel) gamePanel.visible = showGame;
   if (pausePanel) pausePanel.visible = showPause;
   if (settingsPanel) settingsPanel.visible = showSettings;
@@ -378,9 +397,11 @@ function showUiMode(mode) {
       ? "Settings"
       : mode === "multiplayer"
         ? "Multiplayer"
-        : mode === "scoreboard"
-          ? "Match over · scoreboard"
-          : "Simulation paused";
+        : mode === "modeSelect"
+          ? "Choose Free Fly or Dogfight"
+          : mode === "scoreboard"
+            ? "Match over · scoreboard"
+            : "Simulation paused";
   } else {
     startEngineSound();
     statusLabel.textContent = mode === "controls"
@@ -395,15 +416,19 @@ function showUiMode(mode) {
     setUiButtonHovers(draggableUiPanels(), null);
     gamePanel?.userData.setThrottle?.(flight?.throttle ?? 0);
     gamePanel?.userData.setScore?.(killScore);
-    gamePanel?.userData.setMatchTime?.(matchTimeLeft);
+    if (gameMode === "freefly") {
+      gamePanel?.userData.setMatchLabel?.("Free Fly");
+    } else {
+      gamePanel?.userData.setMatchTime?.(matchTimeLeft);
+    }
     ensureBalloonsSeeded();
-    if (!matchActive && !matchEnded) startMatch();
+    if (gameMode === "dogfight" && !matchActive && !matchEnded) startMatch();
   }
   if (showMultiplayer) refreshMultiplayerUi();
   if (showScoreboard) refreshScoreboardPanel();
   // Snap to hand height in front of the player whenever a menu/HUD opens.
   if (
-    mode === "controls" || mode === "pause" || mode === "settings"
+    mode === "controls" || mode === "modeSelect" || mode === "pause" || mode === "settings"
     || mode === "game" || mode === "multiplayer" || mode === "scoreboard"
   ) {
     placeMenusInFrontOfPlayer();
@@ -497,6 +522,14 @@ pausePanel.position.set(0, 0.55, -1.4);
 pausePanel.visible = false;
 playSpace.add(pausePanel);
 
+const modeSelectPanel = createModeSelectMenu({
+  onFreeFly: () => selectGameMode("freefly"),
+  onDogfight: () => selectGameMode("dogfight"),
+});
+modeSelectPanel.position.set(0, 0.55, -1.4);
+modeSelectPanel.visible = false;
+playSpace.add(modeSelectPanel);
+
 const gamePanel = createGamePanel({
   onMenu: () => showUiMode("pause"),
 });
@@ -547,6 +580,7 @@ playSpace.add(multiplayerPanel);
 
 const scoreboardPanel = createScoreboardMenu({
   onPlayAgain: () => {
+    gameMode = "dogfight";
     startMatch();
     resetPlayerFlight({ keepScore: false });
     showUiMode("game");
@@ -608,6 +642,7 @@ function activeMenuRoot() {
   if (uiMode === "pause") return pausePanel;
   if (uiMode === "settings") return settingsPanel;
   if (uiMode === "multiplayer") return multiplayerPanel;
+  if (uiMode === "modeSelect") return modeSelectPanel;
   if (uiMode === "scoreboard") return scoreboardPanel;
   if (uiMode === "controls") return controlsPanel;
   return null;
@@ -849,7 +884,9 @@ function placeMenusInFrontOfPlayer() {
   uiTempWorld.copy(uiHitPoint);
   playSpace.worldToLocal(uiTempWorld);
 
-  for (const panel of [controlsPanel, pausePanel, settingsPanel, multiplayerPanel, gamePanel]) {
+  for (const panel of [
+    controlsPanel, modeSelectPanel, pausePanel, settingsPanel, multiplayerPanel, gamePanel, scoreboardPanel,
+  ]) {
     if (!panel) continue;
     panel.position.copy(uiTempWorld);
     panel.quaternion.copy(uiFaceQuat);
@@ -1134,6 +1171,7 @@ const xrHands = [0, 1].map((index) => {
 function draggableUiPanels() {
   const panels = [];
   if (controlsPanel?.visible) panels.push(controlsPanel);
+  if (modeSelectPanel?.visible) panels.push(modeSelectPanel);
   if (gamePanel?.visible) panels.push(gamePanel);
   if (pausePanel?.visible) panels.push(pausePanel);
   if (settingsPanel?.visible) panels.push(settingsPanel);
@@ -1147,6 +1185,7 @@ function uiRootFromHit(object) {
   while (node) {
     if (
       node === controlsPanel ||
+      node === modeSelectPanel ||
       node === gamePanel ||
       node === pausePanel ||
       node === settingsPanel ||
@@ -1424,7 +1463,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.68");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.69");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1779,6 +1818,7 @@ function billboardNameTags(_viewCam) {
 }
 
 function startMatch() {
+  gameMode = "dogfight";
   matchActive = true;
   matchEnded = false;
   matchTimeLeft = MATCH_DURATION_SEC;
@@ -1823,6 +1863,7 @@ function refreshScoreboardPanel() {
 }
 
 function tickMatchTimer(dt) {
+  if (gameMode !== "dogfight") return;
   if (!matchActive || matchEnded || simulationPaused) return;
   if (uiMode !== "game" && uiMode !== "controls") return;
   matchTimeLeft = Math.max(0, matchTimeLeft - dt);
@@ -2511,6 +2552,7 @@ function spawnMuzzleSparks(origin, forward = null) {
 }
 
 function ensureAiFleet() {
+  if (gameMode !== "dogfight") return null;
   // Only spawn after the real fighter GLB is hooked — placeholder mesh is huge.
   if (!fighterHooked) return null;
   if (aiFleet) return aiFleet;
@@ -2962,7 +3004,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.68`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.69`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -4019,7 +4061,11 @@ renderer.setAnimationLoop((time, frame) => {
   if (uiMode === "game") {
     gamePanel?.userData.setThrottle?.(flight.throttle);
     gamePanel?.userData.setScore?.(killScore);
-    gamePanel?.userData.setMatchTime?.(matchTimeLeft);
+    if (gameMode === "freefly") {
+      gamePanel?.userData.setMatchLabel?.("Free Fly");
+    } else {
+      gamePanel?.userData.setMatchTime?.(matchTimeLeft);
+    }
   }
   updateKillPopups(time);
   if (!simulationPaused) updateEngineSound();

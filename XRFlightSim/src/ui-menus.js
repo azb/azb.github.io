@@ -297,6 +297,24 @@ function createMenuPanel(title, width, height, opts = {}) {
   return root;
 }
 
+/** Startup mode picker after Controls OK. */
+export function createModeSelectMenu({ onFreeFly, onDogfight }) {
+  const s = UI_MENU_SCALE;
+  const root = createMenuPanel("Choose Mode", 2.4 * s, 2.2 * s);
+  root.name = "Mode Select Panel";
+  const buttonSpecs = [
+    { label: "Free Fly", y: 0.35 * s, onClick: onFreeFly },
+    { label: "Dogfight", y: -0.25 * s, onClick: onDogfight },
+  ];
+  for (const spec of buttonSpecs) {
+    const button = createUiButton(spec.label, 1.7 * s, 0.4 * s);
+    button.position.set(0, spec.y, 0.02 * s);
+    button.userData.uiButton.onClick = spec.onClick;
+    root.add(button);
+  }
+  return root;
+}
+
 export function createPauseMenu({
   onResume, onRecenterView, onControls, onSettings, onMultiplayer, onRestart,
 }) {
@@ -425,14 +443,17 @@ export function createGamePanel({ onMenu }) {
     root.userData._killScore = n;
     scoreReadout.userData.uiButton.setLabel(`Score: ${n}`);
   };
+  root.userData.setMatchLabel = (label) => {
+    const text = String(label || "");
+    if (root.userData._matchLabel === text) return;
+    root.userData._matchLabel = text;
+    timerReadout.userData.uiButton.setLabel(text);
+  };
   root.userData.setMatchTime = (secondsLeft) => {
     const sec = Math.max(0, Math.ceil(Number(secondsLeft) || 0));
     const m = Math.floor(sec / 60);
     const r = sec % 60;
-    const label = `Time: ${m}:${r.toString().padStart(2, "0")}`;
-    if (root.userData._matchLabel === label) return;
-    root.userData._matchLabel = label;
-    timerReadout.userData.uiButton.setLabel(label);
+    root.userData.setMatchLabel(`Time: ${m}:${r.toString().padStart(2, "0")}`);
   };
   root.userData.setThrottle = (throttle) => {
     const clamped = Math.max(0, Math.min(1, throttle));
