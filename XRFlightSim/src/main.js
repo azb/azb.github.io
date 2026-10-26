@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.71";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.71";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.71";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.71";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.72";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.72";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.72";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.72";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.71");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.72");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1463,7 +1463,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.71");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.72");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -3004,7 +3004,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.71`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.72`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3532,10 +3532,10 @@ function createEnginePanner() {
   const panner = engineContext.createPanner();
   panner.panningModel = "HRTF";
   panner.distanceModel = "inverse";
-  // Louder nearby; clearly quieter as the plane leaves the headset.
-  panner.refDistance = 6;
-  panner.maxDistance = 120;
-  panner.rolloffFactor = 1.35;
+  // Position/HRTF only — volume falloff is engineDistanceVolumeScale().
+  panner.refDistance = 1;
+  panner.maxDistance = 10000;
+  panner.rolloffFactor = 0;
   panner.coneInnerAngle = 360;
   panner.coneOuterAngle = 360;
   panner.coneOuterGain = 0;
@@ -3683,13 +3683,14 @@ function engineDistanceVolumeScale(worldPos) {
   if (!listener || !worldPos) return 1;
   listener.getWorldPosition(listenerPosition);
   const dist = listenerPosition.distanceTo(worldPos);
-  // Meters: full volume within ~2.5 m; near-silent by ~40 m.
-  const minDist = 2.5;
-  const maxDist = 40;
-  if (dist <= minDist) return 1;
-  if (dist >= maxDist) return 0.04;
-  const t = (dist - minDist) / (maxDist - minDist);
-  return lerp(1, 0.04, 1 - 1 / (1 + 3.5 * t));
+  // Linear: next to you ? 100%, opposite side of the play volume ? 0%.
+  const maxDist = Math.max(
+    playVolumeMax.x - playVolumeMin.x,
+    playVolumeMax.z - playVolumeMin.z,
+    PLAY_VOLUME_SIZE,
+    1,
+  );
+  return clamp(1 - dist / maxDist, 0, 1);
 }
 function updateEngineSound() {
   if (!engineContext || !engineGain || !engineSource) return;
