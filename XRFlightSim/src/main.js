@@ -3683,14 +3683,16 @@ function engineDistanceVolumeScale(worldPos) {
   if (!listener || !worldPos) return 1;
   listener.getWorldPosition(listenerPosition);
   const dist = listenerPosition.distanceTo(worldPos);
-  // Linear: next to you ? 100%, opposite side of the play volume ? 0%.
+  // Next to you -> 100%, opposite side of play volume -> 0%.
+  // Power curve so the drop is audible mid-range (linear gain feels late).
   const maxDist = Math.max(
     playVolumeMax.x - playVolumeMin.x,
     playVolumeMax.z - playVolumeMin.z,
     PLAY_VOLUME_SIZE,
     1,
   );
-  return clamp(1 - dist / maxDist, 0, 1);
+  const t = clamp(dist / maxDist, 0, 1);
+  return (1 - t) ** 2.5;
 }
 function updateEngineSound() {
   if (!engineContext || !engineGain || !engineSource) return;
