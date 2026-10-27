@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.74";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.74";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.74";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.74";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.75";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.75";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.75";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.75";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.74");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.75");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1463,7 +1463,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.74");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.75");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1743,7 +1743,7 @@ function createNameTagSprite(label, color = "#eaf6ff") {
     }),
   );
   sprite.position.set(0, NAME_TAG_WORLD_HEIGHT, 0);
-  sprite.scale.set(1.6, 0.5, 1);
+  sprite.scale.set(1.6, 0.42, 1);
   sprite.renderOrder = 35;
   sprite.userData.nameTagLabel = "";
   sprite.userData.nameTagColor = color;
@@ -1801,11 +1801,11 @@ function redrawNameTag(sprite, label, health = PLANE_MAX_HEALTH, maxHealth = PLA
   const canvas = sprite.userData.nameTagCanvas;
   const c = canvas.getContext("2d");
   c.clearRect(0, 0, canvas.width, canvas.height);
-  c.font = "bold 56px system-ui, sans-serif";
+  c.font = "bold 60px system-ui, sans-serif";
   c.textAlign = "center";
   c.textBaseline = "middle";
   const x = canvas.width / 2;
-  const nameY = 52;
+  const nameY = 58;
   c.lineJoin = "round";
   c.miterLimit = 2;
   c.lineWidth = 10;
@@ -1813,20 +1813,20 @@ function redrawNameTag(sprite, label, health = PLANE_MAX_HEALTH, maxHealth = PLA
   c.strokeText(text, x, nameY);
   c.fillStyle = sprite.userData.nameTagColor || "#eaf6ff";
   c.fillText(text, x, nameY);
-  // Health bar under the name.
-  const barW = 280;
-  const barH = 22;
+  // Compact health bar directly under the name.
+  const barW = 200;
+  const barH = 12;
   const barX = (canvas.width - barW) / 2;
-  const barY = 112;
+  const barY = 108;
   c.fillStyle = "rgba(12, 16, 22, 0.85)";
   c.fillRect(barX, barY, barW, barH);
   c.strokeStyle = "rgba(0, 0, 0, 0.9)";
-  c.lineWidth = 3;
+  c.lineWidth = 2;
   c.strokeRect(barX, barY, barW, barH);
-  const fillW = Math.max(0, barW * ratio - 4);
+  const fillW = Math.max(0, barW * ratio - 2);
   if (fillW > 0) {
     c.fillStyle = ratio > 0.35 ? "#3fe66a" : ratio > 0.15 ? "#e6c03f" : "#e64b3f";
-    c.fillRect(barX + 2, barY + 2, fillW, barH - 4);
+    c.fillRect(barX + 1, barY + 1, fillW, barH - 2);
   }
   sprite.material.map.needsUpdate = true;
 }
@@ -3055,7 +3055,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.74`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.75`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
