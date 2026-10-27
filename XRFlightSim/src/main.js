@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.79";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.79";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.79";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.79";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.80";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.80";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.80";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.80";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.79");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.80");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -497,8 +497,12 @@ function applyPlaySpaceRecenterToFacing() {
   const half = PLAY_VOLUME_SIZE * 0.5;
   const behind = PLAY_VOLUME_BEHIND;
   const desiredAhead = recenterCamFwd.clone();
-  // Spawn/viewer slot is (half - behind) behind the volume center.
-  const desiredCenter = recenterPivot.clone().addScaledVector(desiredAhead, half - behind);
+  // Spawn/viewer slot is (half - behind) behind the volume center (XZ only).
+  const desiredCenter = new THREE.Vector3(
+    recenterPivot.x + desiredAhead.x * (half - behind),
+    playVolumeCenter.y,
+    recenterPivot.z + desiredAhead.z * (half - behind),
+  );
 
   playSpace.getWorldQuaternion(recenterWorldQuat);
   recenterContentFwd.set(0, 0, -1).applyQuaternion(recenterWorldQuat);
@@ -507,39 +511,46 @@ function applyPlaySpaceRecenterToFacing() {
   else recenterContentFwd.normalize();
 
   const angle = horizontalYawFromTo(recenterContentFwd, desiredAhead);
+  const playSpaceY = playSpace.position.y;
   if (Math.abs(angle) >= 0.002) {
     recenterYawQ.setFromAxisAngle(recenterUp, angle);
     playSpace.getWorldPosition(recenterWorldPos);
     playSpace.getWorldQuaternion(recenterWorldQuat);
-    recenterRel.subVectors(recenterWorldPos, recenterPivot).applyQuaternion(recenterYawQ);
-    recenterWorldPos.copy(recenterPivot).add(recenterRel);
+    // Horizontal orbit only — keep playSpace world Y (runway height).
+    recenterRel.set(
+      recenterWorldPos.x - recenterPivot.x,
+      0,
+      recenterWorldPos.z - recenterPivot.z,
+    ).applyQuaternion(recenterYawQ);
+    playSpace.position.set(
+      recenterPivot.x + recenterRel.x,
+      playSpaceY,
+      recenterPivot.z + recenterRel.z,
+    );
     recenterWorldQuat.premultiply(recenterYawQ);
-    playSpace.position.copy(recenterWorldPos);
     playSpace.quaternion.copy(recenterWorldQuat);
   }
 
-  // After yaw, slide so volume center lands on desiredCenter (XZ).
-  playVolumeCenter.y = desiredCenter.y;
-  const centerAfter = playVolumeCenter.clone();
-  // Recompute center from current spawn + content forward if mesh exists.
+  // After yaw, slide on XZ so volume center lands on desiredCenter.
   playSpace.getWorldQuaternion(recenterWorldQuat);
   recenterContentFwd.set(0, 0, -1).applyQuaternion(recenterWorldQuat);
   recenterContentFwd.y = 0;
   if (recenterContentFwd.lengthSq() < 1e-6) recenterContentFwd.set(0, 0, -1);
   else recenterContentFwd.normalize();
-  // spawnPosition is playSpace-local; convert to world for center estimate.
   recenterWorldPos.copy(spawnPosition);
   playSpace.localToWorld(recenterWorldPos);
-  centerAfter.copy(recenterWorldPos).addScaledVector(recenterContentFwd, half - behind);
+  const centerAfterX = recenterWorldPos.x + recenterContentFwd.x * (half - behind);
+  const centerAfterZ = recenterWorldPos.z + recenterContentFwd.z * (half - behind);
 
-  const dx = desiredCenter.x - centerAfter.x;
-  const dz = desiredCenter.z - centerAfter.z;
+  const dx = desiredCenter.x - centerAfterX;
+  const dz = desiredCenter.z - centerAfterZ;
   if (dx * dx + dz * dz >= 1e-6) {
     playSpace.position.x += dx;
     playSpace.position.z += dz;
   }
+  playSpace.position.y = playSpaceY;
 
-  // Put the authored spawn/viewer slot under the headset (playSpace-local).
+  // Viewer slot under headset on XZ only — keep authored spawn ground Y.
   recenterWorldPos.copy(recenterPivot);
   playSpace.worldToLocal(recenterWorldPos);
   spawnPosition.set(recenterWorldPos.x, spawnPosition.y, recenterWorldPos.z);
@@ -1523,7 +1534,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.79");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.80");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -3123,7 +3134,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.79`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.80`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
