@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.73";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.73";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.73";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.73";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.74";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.74";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.74";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.74";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.73");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.74");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1463,7 +1463,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.73");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.74");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1731,7 +1731,7 @@ const nameTagWorldPos = new THREE.Vector3();
 function createNameTagSprite(label, color = "#eaf6ff") {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
-  canvas.height = 128;
+  canvas.height = 160;
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(
@@ -1743,12 +1743,14 @@ function createNameTagSprite(label, color = "#eaf6ff") {
     }),
   );
   sprite.position.set(0, NAME_TAG_WORLD_HEIGHT, 0);
-  sprite.scale.set(1.6, 0.4, 1);
+  sprite.scale.set(1.6, 0.5, 1);
   sprite.renderOrder = 35;
   sprite.userData.nameTagLabel = "";
   sprite.userData.nameTagColor = color;
   sprite.userData.nameTagCanvas = canvas;
-  setNameTagLabel(sprite, label || "Player 1");
+  sprite.userData.nameTagHealth = PLANE_MAX_HEALTH;
+  sprite.userData.nameTagMaxHealth = PLANE_MAX_HEALTH;
+  redrawNameTag(sprite, label || "Player 1", PLANE_MAX_HEALTH);
   return sprite;
 }
 
@@ -1767,24 +1769,65 @@ function placeNameTagAboveWorld(tag, anchorObject) {
 
 function setNameTagLabel(sprite, label) {
   if (!sprite?.userData?.nameTagCanvas) return;
+  redrawNameTag(
+    sprite,
+    label,
+    sprite.userData.nameTagHealth ?? PLANE_MAX_HEALTH,
+  );
+}
+
+function setNameTagHealth(sprite, health, maxHealth = PLANE_MAX_HEALTH) {
+  if (!sprite?.userData?.nameTagCanvas) return;
+  const h = Math.max(0, Math.floor(Number(health) || 0));
+  const maxH = Math.max(1, Math.floor(Number(maxHealth) || PLANE_MAX_HEALTH));
+  if (
+    sprite.userData.nameTagHealth === h
+    && sprite.userData.nameTagMaxHealth === maxH
+    && sprite.userData.nameTagLabel
+  ) {
+    return;
+  }
+  redrawNameTag(sprite, sprite.userData.nameTagLabel || "Player 1", h, maxH);
+}
+
+function redrawNameTag(sprite, label, health = PLANE_MAX_HEALTH, maxHealth = PLANE_MAX_HEALTH) {
+  if (!sprite?.userData?.nameTagCanvas) return;
   const text = String(label || "Player 1").slice(0, 24);
-  if (sprite.userData.nameTagLabel === text) return;
+  const maxH = Math.max(1, maxHealth);
+  const ratio = Math.max(0, Math.min(1, health / maxH));
   sprite.userData.nameTagLabel = text;
+  sprite.userData.nameTagHealth = health;
+  sprite.userData.nameTagMaxHealth = maxH;
   const canvas = sprite.userData.nameTagCanvas;
   const c = canvas.getContext("2d");
   c.clearRect(0, 0, canvas.width, canvas.height);
-  c.font = "bold 64px system-ui, sans-serif";
+  c.font = "bold 56px system-ui, sans-serif";
   c.textAlign = "center";
   c.textBaseline = "middle";
   const x = canvas.width / 2;
-  const y = canvas.height / 2;
+  const nameY = 52;
   c.lineJoin = "round";
   c.miterLimit = 2;
   c.lineWidth = 10;
   c.strokeStyle = "#000000";
-  c.strokeText(text, x, y);
+  c.strokeText(text, x, nameY);
   c.fillStyle = sprite.userData.nameTagColor || "#eaf6ff";
-  c.fillText(text, x, y);
+  c.fillText(text, x, nameY);
+  // Health bar under the name.
+  const barW = 280;
+  const barH = 22;
+  const barX = (canvas.width - barW) / 2;
+  const barY = 112;
+  c.fillStyle = "rgba(12, 16, 22, 0.85)";
+  c.fillRect(barX, barY, barW, barH);
+  c.strokeStyle = "rgba(0, 0, 0, 0.9)";
+  c.lineWidth = 3;
+  c.strokeRect(barX, barY, barW, barH);
+  const fillW = Math.max(0, barW * ratio - 4);
+  if (fillW > 0) {
+    c.fillStyle = ratio > 0.35 ? "#3fe66a" : ratio > 0.15 ? "#e6c03f" : "#e64b3f";
+    c.fillRect(barX + 2, barY + 2, fillW, barH - 4);
+  }
   sprite.material.map.needsUpdate = true;
 }
 
@@ -1807,12 +1850,20 @@ function updateLocalNameTag() {
 
 function billboardNameTags(_viewCam) {
   // Sprites already face the camera; only pin position to world-up above each plane.
-  if (localNameTag && planeRoot) placeNameTagAboveWorld(localNameTag, planeRoot);
+  if (localNameTag && planeRoot) {
+    setNameTagHealth(localNameTag, playerHealth);
+    placeNameTagAboveWorld(localNameTag, planeRoot);
+  }
   for (const entry of remotePlanes.values()) {
-    if (entry.nameTag && entry.root) placeNameTagAboveWorld(entry.nameTag, entry.root);
+    if (entry.nameTag && entry.root) {
+      // Remote health isn't networked yet — show full bar.
+      setNameTagHealth(entry.nameTag, PLANE_MAX_HEALTH);
+      placeNameTagAboveWorld(entry.nameTag, entry.root);
+    }
   }
   const fleet = typeof ensureAiFleet === "function" ? ensureAiFleet() : null;
-  fleet?.forEachNameTag?.((tag, root) => {
+  fleet?.forEachNameTag?.((tag, root, health) => {
+    setNameTagHealth(tag, health);
     placeNameTagAboveWorld(tag, root);
   });
 }
@@ -3004,7 +3055,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.73`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.74`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;

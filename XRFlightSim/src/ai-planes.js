@@ -851,7 +851,7 @@ export function createAiFleet(opts) {
       for (const bot of bots) {
         if (!bot.nameTag) continue;
         bot.nameTag.visible = Boolean(bot.alive || bot.crashing);
-        fn(bot.nameTag, bot.root);
+        fn(bot.nameTag, bot.root, bot.health);
       }
     },
     aliveCount() {
