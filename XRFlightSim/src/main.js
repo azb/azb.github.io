@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.77";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.77";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.77";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.77";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.78";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.78";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.78";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.78";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.77");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.78");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -455,21 +455,28 @@ function beginWorldRecenter() {
   worldRecenterEndsAt = performance.now() / 1000 + WORLD_RECENTER_SEC;
   showUiMode("pause");
   pausePanel?.userData.setPauseRecentering?.(true, WORLD_RECENTER_SEC);
-  applyPlaySpaceRecenterToFacing();
+  // Snap once at end of countdown (same as Spectacles) — no mid-countdown chase.
 }
 
 function tickWorldRecenter() {
   if (!worldRecenterActive) return;
   const left = Math.max(0, worldRecenterEndsAt - performance.now() / 1000);
   pausePanel?.userData.setPauseRecentering?.(true, left);
-  applyPlaySpaceRecenterToFacing();
   if (left > 0) return;
+  applyPlaySpaceRecenterToFacing();
+  centerPlaySpaceUnderHeadset();
+  // Rebuild volume from spawn/plane now that content sits under the headset.
+  if (typeof flight !== "undefined" && flight?.position) {
+    spawnPosition.copy(flight.position);
+  }
+  setupPlayVolume();
+  aiFleet?.setPlayBounds?.(playVolumeMin, playVolumeMax);
   worldRecenterActive = false;
   pausePanel?.userData.setPauseRecentering?.(false);
   showUiMode("pause");
 }
 
-/** Signed yaw about +Y taking horizontal `from` ? `to` (Y-up RHS). */
+/** Signed yaw about +Y taking horizontal `from` -> `to` (Y-up RHS). */
 function horizontalYawFromTo(from, to) {
   const dot = THREE.MathUtils.clamp(from.dot(to), -1, 1);
   // (from × to).y — previous code used the opposite cross and swung sideways.
@@ -477,7 +484,7 @@ function horizontalYawFromTo(from, to) {
   return Math.atan2(crossY, dot);
 }
 
-/** Yaw-rotate playSpace around the headset so the play volume sits ahead. */
+/** Yaw-rotate playSpace around the headset so content faces look. */
 function applyPlaySpaceRecenterToFacing() {
   if (!playSpace) return;
   const viewCam = typeof engineListenerObject === "function" ? engineListenerObject() : camera;
@@ -490,15 +497,12 @@ function applyPlaySpaceRecenterToFacing() {
   if (recenterCamFwd.lengthSq() < 1e-6) return;
   recenterCamFwd.normalize();
 
-  // Prefer cam ? play-volume center so the volume lands straight ahead.
-  recenterContentFwd.subVectors(playVolumeCenter, recenterPivot);
+  // Align plane / playSpace forward (same axis volume rebuild uses).
+  const contentRoot = typeof planeRoot !== "undefined" && planeRoot ? planeRoot : playSpace;
+  contentRoot.updateMatrixWorld(true);
+  contentRoot.getWorldQuaternion(recenterWorldQuat);
+  recenterContentFwd.set(0, 0, -1).applyQuaternion(recenterWorldQuat);
   recenterContentFwd.y = 0;
-  if (recenterContentFwd.lengthSq() < 0.25) {
-    const contentRoot = typeof planeRoot !== "undefined" && planeRoot ? planeRoot : playSpace;
-    contentRoot.getWorldQuaternion(recenterWorldQuat);
-    recenterContentFwd.set(0, 0, -1).applyQuaternion(recenterWorldQuat);
-    recenterContentFwd.y = 0;
-  }
   if (recenterContentFwd.lengthSq() < 1e-6) recenterContentFwd.set(0, 0, -1);
   else recenterContentFwd.normalize();
 
@@ -513,6 +517,24 @@ function applyPlaySpaceRecenterToFacing() {
   recenterWorldQuat.premultiply(recenterYawQ);
   playSpace.position.copy(recenterWorldPos);
   playSpace.quaternion.copy(recenterWorldQuat);
+  placeMenusInFrontOfPlayer();
+}
+
+/** Slide playSpace on XZ so the plane sits under the headset. */
+function centerPlaySpaceUnderHeadset() {
+  if (!playSpace) return;
+  const viewCam = typeof engineListenerObject === "function" ? engineListenerObject() : camera;
+  if (!viewCam) return;
+  viewCam.updateMatrixWorld(true);
+  viewCam.getWorldPosition(recenterPivot);
+  const contentRoot = typeof planeRoot !== "undefined" && planeRoot ? planeRoot : playSpace;
+  contentRoot.updateMatrixWorld(true);
+  contentRoot.getWorldPosition(recenterWorldPos);
+  const dx = recenterPivot.x - recenterWorldPos.x;
+  const dz = recenterPivot.z - recenterWorldPos.z;
+  if (dx * dx + dz * dz < 1e-6) return;
+  playSpace.position.x += dx;
+  playSpace.position.z += dz;
   placeMenusInFrontOfPlayer();
 }
 
@@ -1491,7 +1513,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.77");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.78");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2262,7 +2284,15 @@ let playVolumeMesh = null;
 
 function setupPlayVolume() {
   const half = PLAY_VOLUME_SIZE * 0.5;
+  // Offset along content forward (playSpace yaw), not fixed world -Z.
   const forward = new THREE.Vector3(0, 0, -1);
+  if (playSpace) {
+    playSpace.getWorldQuaternion(flightQuatScratch);
+    forward.applyQuaternion(flightQuatScratch);
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+    else forward.normalize();
+  }
   // Near face used to sit exactly on spawn — pull the cube back so takeoff works.
   playVolumeCenter.copy(spawnPosition).addScaledVector(forward, half - PLAY_VOLUME_BEHIND);
   // Keep the old full-cube ceiling; put the floor on the ground (? half height).
@@ -3083,7 +3113,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.77`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.78`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
