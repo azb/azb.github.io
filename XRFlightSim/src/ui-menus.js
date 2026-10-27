@@ -316,17 +316,18 @@ export function createModeSelectMenu({ onFreeFly, onDogfight }) {
 }
 
 export function createPauseMenu({
-  onResume, onRecenterView, onControls, onSettings, onMultiplayer, onRestart,
+  onResume, onRecenterView, onControls, onSettings, onMultiplayer, onMainMenu, onRestart,
 }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Simulation Paused", 2.4 * s, 3.25 * s);
+  const root = createMenuPanel("Simulation Paused", 2.4 * s, 3.65 * s);
   const buttonSpecs = [
-    { label: "Resume", y: 0.95 * s, onClick: onResume },
-    { label: "Recenter View", y: 0.55 * s, onClick: onRecenterView },
-    { label: "Controls", y: 0.15 * s, onClick: onControls },
-    { label: "Settings", y: -0.25 * s, onClick: onSettings },
-    { label: "Multiplayer", y: -0.65 * s, onClick: onMultiplayer },
-    { label: "Restart", y: -1.05 * s, onClick: onRestart },
+    { label: "Resume", y: 1.2 * s, onClick: onResume },
+    { label: "Recenter View", y: 0.75 * s, onClick: onRecenterView },
+    { label: "Controls", y: 0.3 * s, onClick: onControls },
+    { label: "Settings", y: -0.15 * s, onClick: onSettings },
+    { label: "Multiplayer", y: -0.6 * s, onClick: onMultiplayer },
+    { label: "Main Menu", y: -1.05 * s, onClick: onMainMenu },
+    { label: "Restart", y: -1.5 * s, onClick: onRestart },
   ];
   const actionButtons = [];
   for (const spec of buttonSpecs) {
