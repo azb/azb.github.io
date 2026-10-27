@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.81";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.81";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.81";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.81";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.82";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.82";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.82";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.82";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.81");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.82");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1534,7 +1534,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.81");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.82");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2725,19 +2725,45 @@ function isPlayerInvulnerable(nowSec = performance.now() / 1000) {
   return nowSec < playerInvulnUntil;
 }
 
-function beginHitFlash(root) {
-  if (!root) return;
-  const until = performance.now() + HIT_FLASH_SEC * 1000;
-  root.userData.hitFlashUntil = until;
+function collectHitFlashMats(root) {
+  const mats = [];
   root.traverse((node) => {
     if (!node.isMesh || !node.material) return;
-    const mats = Array.isArray(node.material) ? node.material : [node.material];
-    for (const mat of mats) {
+    // Prefer fuselage-ish meshes; skip tiny detail if named.
+    const n = (node.name || "").toLowerCase();
+    if (n.includes("propeller") || n.includes("wheel") || n.includes("tire")) return;
+    const list = Array.isArray(node.material) ? node.material : [node.material];
+    for (const mat of list) {
       if (!mat?.color) continue;
       if (!mat.userData._baseColor) mat.userData._baseColor = mat.color.clone();
-      mat.userData.hitFlashUntil = until;
+      mats.push(mat);
     }
   });
+  // Cap — enough to read as a hit flash without touching every submesh.
+  return mats.slice(0, 6);
+}
+
+function beginHitFlash(root) {
+  if (!root) return;
+  const now = performance.now();
+  const until = now + HIT_FLASH_SEC * 1000;
+  // Already flashing — only extend timer (no material work).
+  if (root.userData.hitFlashUntil > now) {
+    root.userData.hitFlashUntil = until;
+    return;
+  }
+  if (!root.userData.hitFlashMats) {
+    root.userData.hitFlashMats = collectHitFlashMats(root);
+  }
+  const mats = root.userData.hitFlashMats;
+  for (let i = 0; i < mats.length; i += 1) {
+    const mat = mats[i];
+    const base = mat.userData._baseColor;
+    if (!base || !mat.color) continue;
+    mat.color.setRGB(1, 0.2, 0.15);
+  }
+  root.userData.hitFlashUntil = until;
+  root.userData._hitFlashActive = true;
 }
 
 function updateHitFlashes() {
@@ -2745,35 +2771,16 @@ function updateHitFlashes() {
   const roots = [planeRoot];
   ensureAiFleet()?.forEachBotRoot?.((root) => roots.push(root));
   for (const root of roots) {
-    if (!root) continue;
-    // Skip full mesh walks when nothing is flashing on this plane.
-    if (!(root.userData?.hitFlashUntil > now) && !root.userData?._hitFlashWasActive) {
-      continue;
+    if (!root?.userData?._hitFlashActive) continue;
+    if (root.userData.hitFlashUntil > now) continue;
+    const mats = root.userData.hitFlashMats || [];
+    for (let i = 0; i < mats.length; i += 1) {
+      const mat = mats[i];
+      const base = mat.userData?._baseColor;
+      if (base && mat.color) mat.color.copy(base);
     }
-    let anyActive = false;
-    root.traverse((node) => {
-      if (!node.isMesh || !node.material) return;
-      const mats = Array.isArray(node.material) ? node.material : [node.material];
-      for (const mat of mats) {
-        const base = mat.userData?._baseColor;
-        if (!base || !mat.color) continue;
-        const until = mat.userData.hitFlashUntil || 0;
-        if (now < until) {
-          anyActive = true;
-          const pulse = 0.55 + 0.45 * Math.sin(now * 0.045);
-          mat.color.setRGB(
-            base.r * (1 - pulse) + pulse,
-            base.g * (1 - pulse) * 0.15,
-            base.b * (1 - pulse) * 0.15,
-          );
-        } else if (mat.userData.hitFlashUntil) {
-          mat.color.copy(base);
-          mat.userData.hitFlashUntil = 0;
-        }
-      }
-    });
-    root.userData._hitFlashWasActive = anyActive;
-    if (!anyActive) root.userData.hitFlashUntil = 0;
+    root.userData.hitFlashUntil = 0;
+    root.userData._hitFlashActive = false;
   }
 }
 
@@ -3149,7 +3156,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.81`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.82`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
