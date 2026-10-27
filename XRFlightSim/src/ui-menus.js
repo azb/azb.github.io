@@ -19,6 +19,7 @@ export const defaultSettings = () => ({
   engineVolume: 1,
   stickSensitivity: 1,
   wingParticles: true,
+  damageParticles: true,
   playVolumeVisible: true,
 });
 
@@ -526,7 +527,7 @@ export function createScoreboardMenu({ onPlayAgain, onMenu }) {
 
 export function createSettingsMenu(settings, { onBack, onChange }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Settings", 2.6 * s, 4.5 * s);
+  const root = createMenuPanel("Settings", 2.6 * s, 4.9 * s);
   root.userData.settingsButtons = {};
 
   const rows = [
@@ -595,8 +596,16 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
       },
     },
     {
-      key: "playVolumeVisible",
+      key: "damageParticles",
       y: -1.65 * s,
+      label: () => `Damage Particles: ${settings.damageParticles ? "On" : "Off"}`,
+      click: () => {
+        settings.damageParticles = !settings.damageParticles;
+      },
+    },
+    {
+      key: "playVolumeVisible",
+      y: -2.05 * s,
       label: () => `Play Volume: ${settings.playVolumeVisible ? "On" : "Off"}`,
       click: () => {
         settings.playVolumeVisible = !settings.playVolumeVisible;
@@ -618,7 +627,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
   }
 
   const back = createUiButton("Back", 1.4 * s, 0.32 * s);
-  back.position.set(0, -2.1 * s, 0.02 * s);
+  back.position.set(0, -2.5 * s, 0.02 * s);
   back.userData.uiButton.onClick = onBack;
   root.add(back);
 
