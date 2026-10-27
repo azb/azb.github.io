@@ -43,7 +43,7 @@
       "name": "Ground",
       "position": [
         0,
-        0.3665,
+        0.8665,
         0
       ],
       "rotation": [
@@ -66,7 +66,7 @@
       "name": "FighterPlane",
       "position": [
         0,
-        0.5,
+        1.0,
         -3.2323
       ],
       "rotation": [
@@ -87,7 +87,7 @@
       "name": "LandingStrip",
       "position": [
         0,
-        0.3865,
+        0.8865,
         -3.2286
       ],
       "rotation": [
