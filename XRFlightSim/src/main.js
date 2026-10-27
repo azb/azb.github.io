@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.85";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.85";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.85";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.85";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.86";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.86";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.86";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.86";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.85");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.86");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -314,6 +314,10 @@ function markBulletCollidersDirty() {
 function applyGameSettings() {
   markBulletCollidersDirty();
   saveSettings(gameSettings);
+  if (playVolumeMesh) {
+    playVolumeMesh.visible = gameSettings.playVolumeVisible !== false;
+  }
+  applyWingParticleSetting();
   if (engineGain && engineContext && typeof flight !== "undefined") {
     const time = engineContext.currentTime;
     const base = simulationPaused ? 0 : lerp(0.5, 1, flight.throttle);
@@ -324,6 +328,9 @@ function applyGameSettings() {
     );
   }
 }
+
+/** Wing vortex mesh is created later — no-op until then. */
+let applyWingParticleSetting = () => {};
 
 function dismissControlsToGame() {
   returnToPauseAfterControls = false;
@@ -1534,7 +1541,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.85");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.86");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2340,6 +2347,7 @@ function setupPlayVolume() {
   );
   playVolumeMesh.position.copy(playVolumeCenter);
   playVolumeMesh.renderOrder = 2;
+  playVolumeMesh.visible = gameSettings.playVolumeVisible !== false;
   playSpace.add(playVolumeMesh);
   box.dispose();
 }
@@ -2972,6 +2980,22 @@ for (let i = 0; i < vortexPoolSize; i += 1) {
   vortexFree.push(i);
 }
 vortexMesh.instanceMatrix.needsUpdate = true;
+vortexMesh.visible = gameSettings.wingParticles !== false;
+
+function clearVortexWisps() {
+  for (let i = vortexActive.length - 1; i >= 0; i -= 1) {
+    hideVortexInstance(vortexActive[i].id);
+    vortexFree.push(vortexActive[i].id);
+  }
+  vortexActive.length = 0;
+  vortexMesh.instanceMatrix.needsUpdate = true;
+}
+
+applyWingParticleSetting = function applyWingParticleSettingImpl() {
+  vortexMesh.visible = gameSettings.wingParticles !== false;
+  if (gameSettings.wingParticles === false) clearVortexWisps();
+};
+applyWingParticleSetting();
 
 function airspeedIntensity() {
   // Lens getCurrentAirspeedRatio with minSpeed 0, maxSpeed 500 ? ref = 125.
@@ -3021,6 +3045,10 @@ function spawnVortexWisp(side, intensity) {
 }
 
 function updateWingVortex(dt) {
+  if (gameSettings.wingParticles === false) {
+    if (vortexActive.length) clearVortexWisps();
+    return;
+  }
   let matricesDirty = false;
   for (let i = vortexActive.length - 1; i >= 0; i -= 1) {
     const wisp = vortexActive[i];
@@ -3154,7 +3182,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.85`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.86`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;

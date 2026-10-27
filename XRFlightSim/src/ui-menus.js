@@ -18,6 +18,8 @@ export const defaultSettings = () => ({
   masterVolume: 1,
   engineVolume: 1,
   stickSensitivity: 1,
+  wingParticles: true,
+  playVolumeVisible: true,
 });
 
 export function nextPlayerName(current) {
@@ -524,13 +526,13 @@ export function createScoreboardMenu({ onPlayAgain, onMenu }) {
 
 export function createSettingsMenu(settings, { onBack, onChange }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Settings", 2.6 * s, 3.7 * s);
+  const root = createMenuPanel("Settings", 2.6 * s, 4.5 * s);
   root.userData.settingsButtons = {};
 
   const rows = [
     {
       key: "playerName",
-      y: 1.15 * s,
+      y: 1.55 * s,
       label: () => `Name: ${settings.playerName || "Player 1"}`,
       click: () => {
         settings.playerName = nextPlayerName(settings.playerName || "Player 1");
@@ -538,7 +540,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "passthrough",
-      y: 0.75 * s,
+      y: 1.15 * s,
       label: () => `Passthrough: ${settings.passthrough ? "On" : "Off"}`,
       click: () => {
         settings.passthrough = !settings.passthrough;
@@ -546,7 +548,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshVisual",
-      y: 0.35 * s,
+      y: 0.75 * s,
       label: () => `Mesh Visual: ${settings.meshVisual ? "On" : "Off"}`,
       click: () => {
         settings.meshVisual = !settings.meshVisual;
@@ -554,7 +556,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshCollision",
-      y: -0.05 * s,
+      y: 0.35 * s,
       label: () => `Mesh Collision: ${settings.meshCollision ? "On" : "Off"}`,
       click: () => {
         settings.meshCollision = !settings.meshCollision;
@@ -562,7 +564,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "masterVolume",
-      y: -0.45 * s,
+      y: -0.05 * s,
       label: () => `Master Volume: ${formatPercent(settings.masterVolume)}`,
       click: () => {
         settings.masterVolume = nextStep(VOLUME_STEPS, settings.masterVolume);
@@ -570,7 +572,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "engineVolume",
-      y: -0.85 * s,
+      y: -0.45 * s,
       label: () => `Engine Volume: ${formatPercent(settings.engineVolume)}`,
       click: () => {
         settings.engineVolume = nextStep(VOLUME_STEPS, settings.engineVolume);
@@ -578,10 +580,26 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "stickSensitivity",
-      y: -1.25 * s,
+      y: -0.85 * s,
       label: () => `Stick Sensitivity: ${settings.stickSensitivity.toFixed(2)}x`,
       click: () => {
         settings.stickSensitivity = nextStep(SENSITIVITY_STEPS, settings.stickSensitivity);
+      },
+    },
+    {
+      key: "wingParticles",
+      y: -1.25 * s,
+      label: () => `Wing Particles: ${settings.wingParticles ? "On" : "Off"}`,
+      click: () => {
+        settings.wingParticles = !settings.wingParticles;
+      },
+    },
+    {
+      key: "playVolumeVisible",
+      y: -1.65 * s,
+      label: () => `Play Volume: ${settings.playVolumeVisible ? "On" : "Off"}`,
+      click: () => {
+        settings.playVolumeVisible = !settings.playVolumeVisible;
       },
     },
   ];
@@ -600,7 +618,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
   }
 
   const back = createUiButton("Back", 1.4 * s, 0.32 * s);
-  back.position.set(0, -1.7 * s, 0.02 * s);
+  back.position.set(0, -2.1 * s, 0.02 * s);
   back.userData.uiButton.onClick = onBack;
   root.add(back);
 
