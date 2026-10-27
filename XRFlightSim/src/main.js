@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.83";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.83";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.83";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.83";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.84";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.84";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.84";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.84";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.83");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.84");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1534,7 +1534,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.83");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.84");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2514,6 +2514,7 @@ const vortexPoolSize = Math.max(Math.ceil(vortexMaxSpawnsPerSecond * vortexWispL
 const bulletMuzzleSpeed = 800 * worldSpeedScale;
 const bulletLifetimeSec = 2;
 const fireCooldownMs = 150;
+const maxPlayerBullets = 16;
 const bulletGeom = new THREE.SphereGeometry(0.5, 8, 8);
 const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
 const fireHapticIntensity = 20 / 255;
@@ -2706,6 +2707,10 @@ function ensureAiFleet() {
     runwayOrigin: () => spawnPosition.clone(),
     createNameTag: (label) => createNameTagSprite(label, "#ff8a80"),
     spawnFx: (origin, kind) => {
+      if (kind === "gun") {
+        playSpatialShoot(origin);
+        return;
+      }
       spawnPlaneFx(origin, kind);
       if (kind === "spark") playSpatialShoot(origin);
     },
@@ -3149,7 +3154,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.83`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.84`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -4057,6 +4062,7 @@ function vibrateFireController() {
   } catch (_) { /* haptics unavailable on desktop / unsupported pads */ }
 }
 function fire() {
+  if (bullets.length >= maxPlayerBullets) return;
   const local = bulletSpawnLocal[nextBulletSpawnIndex % bulletSpawnLocal.length];
   nextBulletSpawnIndex += 1;
   const offset = local.clone().applyQuaternion(flight.rotation);

@@ -18,8 +18,10 @@ const FIRE_RANGE = 28;
 /** ~39° half-angle — “roughly ahead” is enough to open fire. */
 const FIRE_ALIGN_DOT = 0.78;
 /** Cooldown when barely aligned vs locked on (seconds). */
-const FIRE_COOLDOWN_MAX = 0.35;
-const FIRE_COOLDOWN_MIN = 0.1;
+const FIRE_COOLDOWN_MAX = 0.45;
+const FIRE_COOLDOWN_MIN = 0.2;
+/** Cap live AI rounds — mesh moves + hit tests scale with count. */
+const MAX_AI_BULLETS = 18;
 const TURN_RATE = 1.8;
 /** Chance to pick chase when rolling a new mood (patrol otherwise). */
 const CHASE_MOOD_CHANCE = 0.2;
@@ -452,6 +454,7 @@ export function createAiFleet(opts) {
     // Dead-ahead → burst; edge of cone → slower.
     const cooldown = lerp(FIRE_COOLDOWN_MAX, FIRE_COOLDOWN_MIN, alignT * alignT);
     if (nowSec - bot.lastFire < cooldown) return;
+    if (bullets.length >= MAX_AI_BULLETS) return;
     bot.lastFire = nowSec;
     const locals = opts.bulletSpawnLocal;
     const local = locals[bot.spawnIndex % locals.length];
@@ -471,9 +474,11 @@ export function createAiFleet(opts) {
     shot.userData.ai = true;
     shot.userData.ownerId = bot.id;
     shot.userData.bulletId = `${bot.id}-${(nextBulletId += 1)}`;
+    shot.userData.prevPosition = shot.position.clone();
     opts.playSpace.add(shot);
     bullets.push(shot);
-    emitFx(shot.position, "spark");
+    // Audio only — spark meshes every AI shot hitch under recording.
+    emitFx(shot.position, "gun");
   }
 
   function applyBoundaryAvoidance(bot, aim) {
@@ -728,46 +733,26 @@ export function createAiFleet(opts) {
     }
   }
 
-  function updateBullets(dt, playerPos, onPlayerHit, nowSec) {
+  function updateBullets(dt, playerPos, onPlayerHit, _nowSec) {
     for (let i = bullets.length - 1; i >= 0; i -= 1) {
       const shot = bullets[i];
-      const prev = shot.userData.prevPosition || shot.position.clone();
-      if (!shot.userData.prevPosition) shot.userData.prevPosition = shot.position.clone();
-      const next = shot.position.clone().addScaledVector(shot.userData.velocity, dt);
+      if (!shot.userData.prevPosition) {
+        shot.userData.prevPosition = shot.position.clone();
+      }
+      const prev = shot.userData.prevPosition;
+      prev.copy(shot.position);
+      shot.position.addScaledVector(shot.userData.velocity, dt);
       const ownerId = shot.userData.ownerId;
-      if (playerPos && distPointToSegment(playerPos, prev, next) <= AI_HIT_RADIUS) {
+      // AI rounds only hit the player — skip AI↔AI (O(bullets×bots)).
+      if (playerPos && distPointToSegment(playerPos, prev, shot.position) <= AI_HIT_RADIUS) {
         opts.playSpace.remove(shot);
         bullets.splice(i, 1);
-        // Caller may ignore during player takeoff invuln; only credit if applied.
         if (onPlayerHit) {
           creditKill(ownerId);
           onPlayerHit();
         }
         continue;
       }
-      let hitAi = false;
-      for (const bot of bots) {
-        if (!bot.alive || bot.crashing || bot.takingOff) continue;
-        if (bot.id === ownerId) continue;
-        if (isBotInvulnerable(bot, nowSec)) continue;
-        if (distPointToSegment(bot.position, prev, next) <= AI_HIT_RADIUS) {
-          opts.playSpace.remove(shot);
-          bullets.splice(i, 1);
-          bot.health -= 1;
-          opts.onBotDamaged?.(bot.root);
-          if (bot.health <= 0) {
-            bot.health = 0;
-            creditKill(ownerId);
-            beginCrash(bot);
-          }
-          // Non-lethal: hit flash only (damage smoke is rate-limited separately).
-          hitAi = true;
-          break;
-        }
-      }
-      if (hitAi) continue;
-      shot.userData.prevPosition.copy(shot.position);
-      shot.position.copy(next);
       shot.userData.age += dt;
       if (shot.userData.age > opts.bulletLifetimeSec) {
         opts.playSpace.remove(shot);
