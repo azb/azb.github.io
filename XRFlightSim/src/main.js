@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.88";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.88";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.88";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.88";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.89";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.89";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.89";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.89";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.88");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.89");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1542,7 +1542,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.88");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.89");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1927,7 +1927,11 @@ function updateLocalNameTag() {
   }
 }
 
-function billboardNameTags(_viewCam) {
+function billboardNameTags(_viewCam, dt = 0.016) {
+  // ~8 Hz — per-frame nametag writes hitch while recording.
+  nameTagUpdateAcc += dt;
+  if (nameTagUpdateAcc < nameTagUpdateIntervalSec) return;
+  nameTagUpdateAcc = 0;
   // Sprites already face the camera; only pin position to world-up above each plane.
   if (localNameTag && planeRoot) {
     setNameTagHealth(localNameTag, playerHealth);
@@ -2513,7 +2517,7 @@ const wingTipLocal = [
 ];
 // Lens WingtipVortexFX defaults / scene overrides.
 const vortexMinAirspeedRatio = 0.45;
-const vortexMaxSpawnsPerSecond = 14;
+const vortexMaxSpawnsPerSecond = 5;
 const vortexWispLifetime = 0.65;
 // Lens wispLength/width are cm world scale ? meters.
 const vortexWispLength = 5 * 0.01;
@@ -2522,8 +2526,10 @@ const vortexPoolSize = Math.max(Math.ceil(vortexMaxSpawnsPerSecond * vortexWispL
 // Lens GameControllerMovement: Unit Sphere setWorldScale(3,3,12) cm, speed 800 + planeVelocity, lifetime 3, cooldown 0.15.
 const bulletMuzzleSpeed = 800 * worldSpeedScale;
 const bulletLifetimeSec = 1;
-const fireCooldownMs = 150;
-const maxPlayerBullets = 16;
+const fireCooldownMs = 220;
+const maxPlayerBullets = 8;
+let nameTagUpdateAcc = 0;
+const nameTagUpdateIntervalSec = 0.12;
 const bulletGeom = new THREE.SphereGeometry(0.5, 8, 8);
 const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
 const fireHapticIntensity = 20 / 255;
@@ -2719,6 +2725,10 @@ function ensureAiFleet() {
     takeoffThrottle: TAKEOFF_THROTTLE,
     runwayOrigin: () => spawnPosition.clone(),
     createNameTag: (label) => createNameTagSprite(label, "#ff8a80"),
+    playerLookForward: () => {
+      const viewCam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+      return flightForwardScratch.set(0, 0, -1).applyQuaternion(viewCam.quaternion).normalize();
+    },
     spawnFx: (origin, kind) => {
       if (kind === "gun") {
         playSpatialShoot(origin);
@@ -3049,12 +3059,16 @@ function spawnVortexWisp(side, intensity) {
   });
 }
 
+let vortexVisualTick = 0;
 function updateWingVortex(dt) {
   if (gameSettings.wingParticles === false) {
     if (vortexActive.length) clearVortexWisps();
     return;
   }
   let matricesDirty = false;
+  vortexVisualTick += 1;
+  const visualParity = vortexVisualTick & 1;
+  let write = 0;
   for (let i = vortexActive.length - 1; i >= 0; i -= 1) {
     const wisp = vortexActive[i];
     wisp.age += dt;
@@ -3065,18 +3079,22 @@ function updateWingVortex(dt) {
       matricesDirty = true;
       continue;
     }
-    const lifeRatio = 1 - wisp.age / wisp.lifetime;
-    const width = wisp.startWidth * (0.2 + lifeRatio * 0.8);
-    const length = wisp.startLength * (0.35 + lifeRatio * 0.65);
     wisp.x += wisp.velocityX * dt;
     wisp.y += wisp.velocityY * dt;
     wisp.z += wisp.velocityZ * dt;
-    vortexDummy.position.set(wisp.x, wisp.y, wisp.z);
-    vortexDummy.quaternion.set(wisp.qx, wisp.qy, wisp.qz, wisp.qw);
-    vortexDummy.scale.set(width, width, length);
-    vortexDummy.updateMatrix();
-    vortexMesh.setMatrixAt(wisp.id, vortexDummy.matrix);
-    matricesDirty = true;
+    // Half the wisps sync instance matrices each frame (Lens-style stagger).
+    if ((write & 1) === visualParity) {
+      const lifeRatio = 1 - wisp.age / wisp.lifetime;
+      const width = wisp.startWidth * (0.2 + lifeRatio * 0.8);
+      const length = wisp.startLength * (0.35 + lifeRatio * 0.65);
+      vortexDummy.position.set(wisp.x, wisp.y, wisp.z);
+      vortexDummy.quaternion.set(wisp.qx, wisp.qy, wisp.qz, wisp.qw);
+      vortexDummy.scale.set(width, width, length);
+      vortexDummy.updateMatrix();
+      vortexMesh.setMatrixAt(wisp.id, vortexDummy.matrix);
+      matricesDirty = true;
+    }
+    write += 1;
   }
 
   if (!simulationPaused) {
@@ -3187,7 +3205,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.88`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.89`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -3879,9 +3897,9 @@ function engineDistanceVolumeScale(worldPos) {
 }
 function updateEngineSound() {
   if (!engineContext || !engineGain || !engineSource) return;
-  // AudioParam writes every frame show up as XR micro-hitches; 20 Hz is plenty.
+  // AudioParam writes every frame show up as XR micro-hitches; ~12 Hz is plenty while recording.
   const now = performance.now();
-  if (now - lastEngineAudioMs < 50) return;
+  if (now - lastEngineAudioMs < 80) return;
   lastEngineAudioMs = now;
   const time = engineContext.currentTime;
   engineSource.playbackRate.setTargetAtTime(enginePlaybackRate(), time, .125);
@@ -4241,7 +4259,7 @@ renderer.setAnimationLoop((time, frame) => {
   tickMatchTimer(dt);
   tickWorldRecenter();
   updateLocalNameTag();
-  billboardNameTags(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
+  billboardNameTags(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera, dt);
   updateEnvironmentMeshes(frame);
   calibratePlaySpaceHeight(frame);
   const speedValue = Math.round(flight.airspeed);

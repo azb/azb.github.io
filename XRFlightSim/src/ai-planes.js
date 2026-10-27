@@ -10,7 +10,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 
 export const PLANE_MAX_HEALTH = 5;
 
-const AI_COUNT = 3;
+const AI_COUNT = 2;
 const AI_HIT_RADIUS = 0.55;
 const AI_RESPAWN_SEC = 5;
 const ENGAGE_RANGE = 45;
@@ -18,10 +18,12 @@ const FIRE_RANGE = 28;
 /** ~39° half-angle — “roughly ahead” is enough to open fire. */
 const FIRE_ALIGN_DOT = 0.78;
 /** Cooldown when barely aligned vs locked on (seconds). */
-const FIRE_COOLDOWN_MAX = 0.45;
-const FIRE_COOLDOWN_MIN = 0.2;
+const FIRE_COOLDOWN_MAX = 0.75;
+const FIRE_COOLDOWN_MIN = 0.35;
 /** Cap live AI rounds — mesh moves + hit tests scale with count. */
-const MAX_AI_BULLETS = 18;
+const MAX_AI_BULLETS = 8;
+/** Don't shoot if outside the player's forward view. */
+const FIRE_IN_VIEW_DOT = 0.2;
 const TURN_RATE = 1.8;
 /** Chance to pick chase when rolling a new mood (patrol otherwise). */
 const CHASE_MOOD_CHANCE = 0.2;
@@ -176,6 +178,7 @@ function runwaySpawn(out, origin, index) {
  *   takeoffInvulnSec?: number,
  *   takeoffThrottle?: number,
  *   onBotDamaged?: (root: THREE.Object3D) => void,
+ *   playerLookForward?: () => THREE.Vector3,
  * }} opts
  */
 export function createAiFleet(opts) {
@@ -442,6 +445,17 @@ export function createAiFleet(opts) {
 
   function emitFx(origin, kind) {
     opts.spawnFx?.(origin, kind);
+  }
+
+  function isBotInPlayerView(botPos, playerPos) {
+    if (!opts.playerLookForward) return true;
+    const look = opts.playerLookForward();
+    if (!look) return true;
+    _to.subVectors(botPos, playerPos);
+    const len = _to.length();
+    if (len < 1e-4) return true;
+    _to.multiplyScalar(1 / len);
+    return look.dot(_to) >= FIRE_IN_VIEW_DOT;
   }
 
   function fireFrom(bot, nowSec, alignDot = FIRE_ALIGN_DOT) {
@@ -723,7 +737,7 @@ export function createAiFleet(opts) {
       }
       if (chase) {
         const toTarget = bot.position.distanceTo(chase.position);
-        if (toTarget < FIRE_RANGE) {
+        if (toTarget < FIRE_RANGE && isBotInPlayerView(bot.position, playerPos)) {
           _fwd.set(0, 0, -1).applyQuaternion(bot.rotation);
           _to.subVectors(chase.position, bot.position).normalize();
           const align = _fwd.dot(_to);
