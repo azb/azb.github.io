@@ -615,7 +615,8 @@ export function createAiFleet(opts) {
     bot.position.addScaledVector(c.velocity, step);
     bot.velocity.copy(c.velocity);
     c.smokeAcc += step;
-    if (c.smokeAcc >= 0.06) {
+    // Match Specs cadence — 0.06 spawned a mesh every few frames while crashing.
+    if (c.smokeAcc >= 0.4) {
       c.smokeAcc = 0;
       emitFx(bot.position, "flame");
     }
@@ -657,10 +658,10 @@ export function createAiFleet(opts) {
       bot.moodTimer -= dt;
       if (bot.moodTimer <= 0) rollMood(bot);
 
-      // Damage smoke while flying damaged.
+      // Sparse damage smoke — dense trails hitch while recording.
       if (bot.health < PLANE_MAX_HEALTH) {
         bot.smokeAcc += dt;
-        if (bot.smokeAcc >= 0.08) {
+        if (bot.smokeAcc >= 0.55) {
           bot.smokeAcc = 0;
           emitFx(bot.position, "smoke");
         }
@@ -758,9 +759,8 @@ export function createAiFleet(opts) {
             bot.health = 0;
             creditKill(ownerId);
             beginCrash(bot);
-          } else {
-            emitFx(bot.position, "smoke");
           }
+          // Non-lethal: hit flash only (damage smoke is rate-limited separately).
           hitAi = true;
           break;
         }
@@ -792,7 +792,7 @@ export function createAiFleet(opts) {
           beginCrash(bot);
           return { hit: true, health: 0, destroyed: true, position: at };
         }
-        emitFx(bot.position, "smoke");
+        // Non-lethal: hit flash only (damage smoke is rate-limited separately).
         return {
           hit: true,
           health: bot.health,

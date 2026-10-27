@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.80";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.80";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.80";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.80";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.81";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.81";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.81";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.81";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.80");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.81");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1534,7 +1534,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.80");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.81");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2564,6 +2564,15 @@ const crashTumbleQuat = new THREE.Quaternion();
 const crashAxisScratch = new THREE.Vector3();
 const muzzleFwdScratch = new THREE.Vector3();
 
+const MAX_CRASH_FLAME_PARTICLES = 24;
+
+function trimCrashFlameBudget(room = 1) {
+  while (crashFlameParticles.length + room > MAX_CRASH_FLAME_PARTICLES) {
+    const oldest = crashFlameParticles.shift();
+    if (oldest) playSpace.remove(oldest);
+  }
+}
+
 function spawnPlaneFx(origin, kind = "flame") {
   if (kind === "spark") {
     spawnMuzzleSparks(origin);
@@ -2573,37 +2582,37 @@ function spawnPlaneFx(origin, kind = "flame") {
     spawnCrashExplosion(origin);
     return;
   }
-  const count = kind === "smoke" ? 2 : 4;
-  for (let i = 0; i < count; i += 1) {
-    const isSmoke = kind === "smoke" || i % 3 === 0;
-    const mat = (isSmoke ? crashSmokeMat : crashFlameMat).clone();
-    const spark = new THREE.Mesh(crashFlameGeom, mat);
-    spark.position.copy(origin).add(new THREE.Vector3(
-      (Math.random() - 0.5) * 0.25,
-      (Math.random() - 0.5) * 0.15,
-      (Math.random() - 0.5) * 0.25,
-    ));
-    spark.userData.velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * (isSmoke ? 0.6 : 1.2),
-      (isSmoke ? 0.4 : 0.8) + Math.random() * (isSmoke ? 0.8 : 1.6),
-      (Math.random() - 0.5) * (isSmoke ? 0.6 : 1.2),
-    );
-    spark.userData.age = 0;
-    spark.userData.lifetime = (isSmoke ? 0.55 : 0.35) + Math.random() * 0.45;
-    spark.userData.isSmoke = isSmoke;
-    spark.userData.baseScale = isSmoke ? 1.0 : 0.55;
-    spark.scale.setScalar(spark.userData.baseScale);
-    playSpace.add(spark);
-    crashFlameParticles.push(spark);
-  }
+  trimCrashFlameBudget(1);
+  // One puff — trails fire often during dogfights / recording.
+  const isSmoke = kind === "smoke";
+  const mat = (isSmoke ? crashSmokeMat : crashFlameMat).clone();
+  const spark = new THREE.Mesh(crashFlameGeom, mat);
+  spark.position.copy(origin).add(new THREE.Vector3(
+    (Math.random() - 0.5) * 0.25,
+    (Math.random() - 0.5) * 0.15,
+    (Math.random() - 0.5) * 0.25,
+  ));
+  spark.userData.velocity = new THREE.Vector3(
+    (Math.random() - 0.5) * (isSmoke ? 0.6 : 1.2),
+    (isSmoke ? 0.4 : 0.8) + Math.random() * (isSmoke ? 0.8 : 1.6),
+    (Math.random() - 0.5) * (isSmoke ? 0.6 : 1.2),
+  );
+  spark.userData.age = 0;
+  spark.userData.lifetime = (isSmoke ? 0.4 : 0.28) + Math.random() * 0.25;
+  spark.userData.isSmoke = isSmoke;
+  spark.userData.baseScale = isSmoke ? 1.0 : 0.55;
+  spark.scale.setScalar(spark.userData.baseScale);
+  playSpace.add(spark);
+  crashFlameParticles.push(spark);
 }
 
 /** Big ground-impact burst when a crashing plane hits. */
 function spawnCrashExplosion(origin) {
   playSpace.localToWorld(explosionWorldPos.copy(origin));
   playExplosionSound(explosionWorldPos);
-  // Bright core flash
-  for (let i = 0; i < 5; i += 1) {
+  trimCrashFlameBudget(10);
+  // Lean burst — full 40+ mesh explosions hitch hard while recording.
+  for (let i = 0; i < 2; i += 1) {
     const mat = muzzleSparkMat.clone();
     const flash = new THREE.Mesh(crashFlameGeom, mat);
     flash.position.copy(origin).add(new THREE.Vector3(
@@ -2617,16 +2626,15 @@ function spawnCrashExplosion(origin) {
       (Math.random() - 0.5) * 1.5,
     );
     flash.userData.age = 0;
-    flash.userData.lifetime = 0.45 + Math.random() * 0.35;
+    flash.userData.lifetime = 0.35 + Math.random() * 0.25;
     flash.userData.isSmoke = false;
-    flash.userData.baseScale = 2.2 + Math.random() * 1.4;
+    flash.userData.baseScale = 2.0 + Math.random() * 1.0;
     flash.scale.setScalar(flash.userData.baseScale);
     playSpace.add(flash);
     crashFlameParticles.push(flash);
   }
-  // Fireball + lingering smoke column
-  for (let i = 0; i < 36; i += 1) {
-    const isSmoke = i % 3 === 0;
+  for (let i = 0; i < 8; i += 1) {
+    const isSmoke = i % 2 === 0;
     const mat = (isSmoke ? crashSmokeMat : crashFlameMat).clone();
     const spark = new THREE.Mesh(crashFlameGeom, mat);
     spark.position.copy(origin).add(new THREE.Vector3(
@@ -2643,9 +2651,9 @@ function spawnCrashExplosion(origin) {
       (isSmoke ? 1.8 : 4.5) + Math.random() * (isSmoke ? 2.5 : 6.5),
     );
     spark.userData.age = 0;
-    spark.userData.lifetime = (isSmoke ? 2.4 : 1.1) + Math.random() * (isSmoke ? 1.6 : 0.9);
+    spark.userData.lifetime = (isSmoke ? 1.2 : 0.7) + Math.random() * (isSmoke ? 0.8 : 0.5);
     spark.userData.isSmoke = isSmoke;
-    spark.userData.baseScale = isSmoke ? 2.0 + Math.random() * 1.6 : 0.7 + Math.random() * 1.1;
+    spark.userData.baseScale = isSmoke ? 1.6 + Math.random() * 1.2 : 0.7 + Math.random() * 0.9;
     spark.scale.setScalar(spark.userData.baseScale);
     playSpace.add(spark);
     crashFlameParticles.push(spark);
@@ -2657,28 +2665,27 @@ function spawnMuzzleSparks(origin, forward = null) {
   const fwd = forward
     ? muzzleFwdScratch.copy(forward).normalize()
     : muzzleFwdScratch.set(0, 0, -1);
-  const count = 5;
-  for (let i = 0; i < count; i += 1) {
-    const mat = muzzleSparkMat.clone();
-    const spark = new THREE.Mesh(crashFlameGeom, mat);
-    spark.position.copy(origin).add(new THREE.Vector3(
-      (Math.random() - 0.5) * 0.06,
-      (Math.random() - 0.5) * 0.06,
-      (Math.random() - 0.5) * 0.06,
-    ));
-    spark.userData.velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 2.4,
-      (Math.random() - 0.5) * 2.0,
-      (Math.random() - 0.5) * 2.4,
-    ).addScaledVector(fwd, 3.5 + Math.random() * 4.5);
-    spark.userData.age = 0;
-    spark.userData.lifetime = 0.06 + Math.random() * 0.1;
-    spark.userData.isSmoke = false;
-    spark.userData.baseScale = 0.28 + Math.random() * 0.22;
-    spark.scale.setScalar(spark.userData.baseScale);
-    playSpace.add(spark);
-    crashFlameParticles.push(spark);
-  }
+  // One spark — autofire + recording can't afford 5 mesh+material clones/shot.
+  trimCrashFlameBudget(1);
+  const mat = muzzleSparkMat.clone();
+  const spark = new THREE.Mesh(crashFlameGeom, mat);
+  spark.position.copy(origin).add(new THREE.Vector3(
+    (Math.random() - 0.5) * 0.06,
+    (Math.random() - 0.5) * 0.06,
+    (Math.random() - 0.5) * 0.06,
+  ));
+  spark.userData.velocity = new THREE.Vector3(
+    (Math.random() - 0.5) * 2.4,
+    (Math.random() - 0.5) * 2.0,
+    (Math.random() - 0.5) * 2.4,
+  ).addScaledVector(fwd, 3.5 + Math.random() * 4.5);
+  spark.userData.age = 0;
+  spark.userData.lifetime = 0.06 + Math.random() * 0.1;
+  spark.userData.isSmoke = false;
+  spark.userData.baseScale = 0.28 + Math.random() * 0.22;
+  spark.scale.setScalar(spark.userData.baseScale);
+  playSpace.add(spark);
+  crashFlameParticles.push(spark);
 }
 
 function ensureAiFleet() {
@@ -2739,6 +2746,11 @@ function updateHitFlashes() {
   ensureAiFleet()?.forEachBotRoot?.((root) => roots.push(root));
   for (const root of roots) {
     if (!root) continue;
+    // Skip full mesh walks when nothing is flashing on this plane.
+    if (!(root.userData?.hitFlashUntil > now) && !root.userData?._hitFlashWasActive) {
+      continue;
+    }
+    let anyActive = false;
     root.traverse((node) => {
       if (!node.isMesh || !node.material) return;
       const mats = Array.isArray(node.material) ? node.material : [node.material];
@@ -2747,6 +2759,7 @@ function updateHitFlashes() {
         if (!base || !mat.color) continue;
         const until = mat.userData.hitFlashUntil || 0;
         if (now < until) {
+          anyActive = true;
           const pulse = 0.55 + 0.45 * Math.sin(now * 0.045);
           mat.color.setRGB(
             base.r * (1 - pulse) + pulse,
@@ -2759,6 +2772,8 @@ function updateHitFlashes() {
         }
       }
     });
+    root.userData._hitFlashWasActive = anyActive;
+    if (!anyActive) root.userData.hitFlashUntil = 0;
   }
 }
 
@@ -2824,7 +2839,7 @@ function spawnCrashFlameBurst() {
 function updatePlayerDamageSmoke(dt) {
   if (playerCrash || playerHealth >= PLANE_MAX_HEALTH) return;
   playerDamageSmokeAcc += dt;
-  if (playerDamageSmokeAcc < 0.08) return;
+  if (playerDamageSmokeAcc < 0.55) return;
   playerDamageSmokeAcc = 0;
   spawnPlaneFx(flight.position, "smoke");
 }
@@ -3134,7 +3149,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.80`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.81`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
