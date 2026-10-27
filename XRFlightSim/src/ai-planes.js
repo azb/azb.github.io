@@ -849,7 +849,10 @@ export function createAiFleet(opts) {
     forEachNameTag(fn) {
       for (const bot of bots) {
         if (!bot.nameTag) continue;
-        bot.nameTag.visible = Boolean(bot.alive || bot.crashing);
+        if (!(bot.alive || bot.crashing) || !bot.root) {
+          bot.nameTag.visible = false;
+          continue;
+        }
         fn(bot.nameTag, bot.root, bot.health);
       }
     },

@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.92";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.92";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.92";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.92";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.93";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.93";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.93";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.93";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.92");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.93");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1542,7 +1542,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.92");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.93");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -1927,27 +1927,63 @@ function updateLocalNameTag() {
   }
 }
 
-function billboardNameTags(_viewCam) {
-  // Every other frame â€” same cadence as bullet/FX visual writes.
+const nameTagLookScratch = new THREE.Vector3();
+const nameTagToScratch = new THREE.Vector3();
+
+function billboardNameTags(viewCam) {
+  // Every other frame — same cadence as bullet/FX visual writes.
   nameTagVisualTick += 1;
   if ((nameTagVisualTick & 1) === 0) return;
-  // Sprites already face the camera; only pin position to world-up above each plane.
+  if (!viewCam) return;
+
+  viewCam.getWorldDirection(nameTagLookScratch);
+  // Three.js cameras look down -Z; getWorldDirection already matches that.
+  const camPos = viewCam.getWorldPosition(nameTagToScratch);
+  // Reuse after copying cam — getWorldPosition wrote into nameTagToScratch.
+  const camX = camPos.x;
+  const camY = camPos.y;
+  const camZ = camPos.z;
+
+  let bestTag = null;
+  let bestRoot = null;
+  let bestHealth = 0;
+  let bestDot = -2;
+
+  const consider = (tag, root, health) => {
+    if (!tag || !root) return;
+    tag.visible = false;
+    root.getWorldPosition(nameTagToScratch);
+    nameTagToScratch.x -= camX;
+    nameTagToScratch.y -= camY;
+    nameTagToScratch.z -= camZ;
+    const len = nameTagToScratch.length();
+    if (len < 0.05) return;
+    nameTagToScratch.multiplyScalar(1 / len);
+    const dot = nameTagLookScratch.dot(nameTagToScratch);
+    if (dot <= 0 || dot <= bestDot) return;
+    bestDot = dot;
+    bestTag = tag;
+    bestRoot = root;
+    bestHealth = health;
+  };
+
   if (localNameTag && planeRoot) {
-    setNameTagHealth(localNameTag, playerHealth);
-    placeNameTagAboveWorld(localNameTag, planeRoot);
+    consider(localNameTag, planeRoot, playerHealth);
   }
   for (const entry of remotePlanes.values()) {
-    if (entry.nameTag && entry.root) {
-      // Remote health isn't networked yet â€” show full bar.
-      setNameTagHealth(entry.nameTag, PLANE_MAX_HEALTH);
-      placeNameTagAboveWorld(entry.nameTag, entry.root);
-    }
+    if (!entry.nameTag || !entry.root) continue;
+    // Remote health isn't networked yet — show full bar.
+    consider(entry.nameTag, entry.root, PLANE_MAX_HEALTH);
   }
   const fleet = typeof ensureAiFleet === "function" ? ensureAiFleet() : null;
   fleet?.forEachNameTag?.((tag, root, health) => {
-    setNameTagHealth(tag, health);
-    placeNameTagAboveWorld(tag, root);
+    consider(tag, root, health);
   });
+
+  if (!bestTag || !bestRoot) return;
+  bestTag.visible = true;
+  setNameTagHealth(bestTag, bestHealth);
+  placeNameTagAboveWorld(bestTag, bestRoot);
 }
 
 function startMatch() {
@@ -3203,7 +3239,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading sceneâ€¦";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.92`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.93`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
