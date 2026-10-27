@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.82";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.82";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.82";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.82";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.83";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.83";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.83";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.83";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.82");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.83");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1534,7 +1534,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.82");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.83");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2102,14 +2102,7 @@ function updateRemoteBullets(dt) {
   for (let i = remoteBullets.length - 1; i >= 0; i -= 1) {
     const shot = remoteBullets[i];
     bulletNextLocal.copy(shot.position).addScaledVector(shot.userData.velocity, dt);
-    // Balloon pops are owned by the shooter (broadcast); don't re-roll here.
-    const hit = bulletHitsEnvironment(shot, bulletNextLocal);
-    if (hit) {
-      spawnBulletImpact(hit.point);
-      playSpace.remove(shot);
-      remoteBullets.splice(i, 1);
-      continue;
-    }
+    // No world-mesh raycasts — lifetime / plane hits only.
     if (shot.userData.prevPosition) shot.userData.prevPosition.copy(shot.position);
     shot.position.copy(bulletNextLocal);
     shot.userData.traveled = (shot.userData.traveled ?? 0) + shot.userData.velocity.length() * dt;
@@ -2519,7 +2512,7 @@ const vortexWispWidth = 0.35 * 0.01;
 const vortexPoolSize = Math.max(Math.ceil(vortexMaxSpawnsPerSecond * vortexWispLifetime * 2), 36);
 // Lens GameControllerMovement: Unit Sphere setWorldScale(3,3,12) cm, speed 800 + planeVelocity, lifetime 3, cooldown 0.15.
 const bulletMuzzleSpeed = 800 * worldSpeedScale;
-const bulletLifetimeSec = 3;
+const bulletLifetimeSec = 2;
 const fireCooldownMs = 150;
 const bulletGeom = new THREE.SphereGeometry(0.5, 8, 8);
 const bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
@@ -3156,7 +3149,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.82`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.83`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -4143,11 +4136,6 @@ renderer.setAnimationLoop((time, frame) => {
     } else {
       animateAircraft({ pitch: 0, roll: 0, yaw: 0, throttle: 0 }, dt);
     }
-    if (bullets.length) {
-      collectBulletColliders();
-      environmentMeshRoot.updateMatrixWorld(true);
-      roomContent.updateMatrixWorld(true);
-    }
     for (let i = bullets.length - 1; i >= 0; i -= 1) {
       const shot = bullets[i];
       bulletNextLocal.copy(shot.position).addScaledVector(shot.userData.velocity, dt);
@@ -4173,13 +4161,7 @@ renderer.setAnimationLoop((time, frame) => {
         }
         continue;
       }
-      const hit = bulletHitsEnvironment(shot, bulletNextLocal);
-      if (hit) {
-        spawnBulletImpact(hit.point);
-        playSpace.remove(shot);
-        bullets.splice(i, 1);
-        continue;
-      }
+      // No world-mesh raycasts — bullets vanish after lifetime (~2s).
       if (shot.userData.prevPosition) shot.userData.prevPosition.copy(shot.position);
       shot.position.copy(bulletNextLocal);
       shot.userData.traveled = (shot.userData.traveled ?? 0) + stepDistance;
