@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.98";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.98";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.98";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.98";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.99";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.99";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.99";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.99";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.98");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.99");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1555,7 +1555,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.98");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.99");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2440,20 +2440,35 @@ let proximityHintTick = 0;
 /** Filled each update; reused to avoid per-frame alloc churn. */
 const proximityHitsScratch = [];
 
+function createProximityGridLines(size, divisions, color) {
+  // Both axes in the XY plane (facing +Z) so horizontal and vertical stay visible.
+  const positions = [];
+  const half = size * 0.5;
+  const step = size / divisions;
+  for (let i = 0; i <= divisions; i += 1) {
+    const t = -half + step * i;
+    positions.push(-half, t, 0, half, t, 0);
+    positions.push(t, -half, 0, t, half, 0);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const material = new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+  });
+  const lines = new THREE.LineSegments(geometry, material);
+  lines.frustumCulled = false;
+  return lines;
+}
+
 function ensureProximityHintPool() {
   if (proximityHintPatches.length) return;
   for (let i = 0; i < PROXIMITY_MAX_PATCHES; i += 1) {
-    const grid = new THREE.GridHelper(PROXIMITY_PATCH_SIZE_M, 4, 0x59f2ff, 0x59f2ff);
-    const mats = Array.isArray(grid.material) ? grid.material : [grid.material];
-    for (const mat of mats) {
-      mat.transparent = true;
-      mat.opacity = 0.55;
-      mat.depthWrite = false;
-    }
-    // GridHelper lies in XZ with +Y up; rotate so local +Z faces the surface normal.
+    const grid = createProximityGridLines(PROXIMITY_PATCH_SIZE_M, 4, 0x59f2ff);
     const pivot = new THREE.Group();
     pivot.name = `ProximityGrid${i}`;
-    grid.rotation.x = Math.PI * 0.5;
     pivot.add(grid);
     pivot.visible = false;
     proximityHintRoot.add(pivot);
@@ -2463,10 +2478,7 @@ function ensureProximityHintPool() {
 
 function setProximityPatchIntensity(entry, intensity) {
   const lineA = 0.22 + intensity * 0.65;
-  const mats = Array.isArray(entry.grid?.material) ? entry.grid.material : [entry.grid?.material];
-  for (const mat of mats) {
-    if (mat) mat.opacity = lineA;
-  }
+  if (entry.grid?.material) entry.grid.material.opacity = lineA;
 }
 
 /** Snap a surface point onto a fixed world grid in the surface tangent plane. */
@@ -3427,7 +3439,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.98`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.99`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
