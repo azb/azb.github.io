@@ -36,7 +36,7 @@ const FRONT_HALF_WIDTH = 5;
 const FRONT_VERT = 1.2;
 /** Absolute world altitude band — do not track player Y as a rising floor. */
 /** Matches player GROUND_CONTACT_Y / runway deck. */
-const GROUND_CONTACT_Y = 1.0;
+const GROUND_CONTACT_Y = 1.02;
 const MIN_FLY_ALT = GROUND_CONTACT_Y;
 const MAX_FLY_ALT = 45;
 const GROUND_BOUNCE_RESTITUTION = 0.55;
