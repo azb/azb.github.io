@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.101";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.101";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.101";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.101";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.102";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.102";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.102";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.102";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.101");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.102");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -158,7 +158,10 @@ const GROUND_BOUNCE_RESTITUTION = 0.55;
 const GROUND_HIT_COOLDOWN_SEC = 0.45;
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x4c7e42, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = GROUND_DECK_Y; virtualEnvironment.add(ground);
-const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a); grid.position.y = RUNWAY_Y + 0.02; virtualEnvironment.add(grid);
+// Grid marks grass/ground level (tiny lift only to avoid z-fighting with the plane).
+const grid = new THREE.GridHelper(1000, 100, 0x6ca760, 0x47794a);
+grid.position.y = GROUND_DECK_Y + 0.005;
+virtualEnvironment.add(grid);
 // Opaque sky fill for passthrough-off. Clear color alone is ignored in AR alpha-blend
 // sessions, so the upper hemisphere stays see-through without a real mesh.
 const SKY_COLOR = 0x8ac5ee;
@@ -1555,7 +1558,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.101");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.102");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -3472,7 +3475,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.101`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.102`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
