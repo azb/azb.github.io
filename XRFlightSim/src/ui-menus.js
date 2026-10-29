@@ -267,7 +267,8 @@ function createMenuPanel(title, width, height, opts = {}) {
     context.textBaseline = "middle";
     const lines = String(nextTitle).split("\n");
     const lineH = Math.round(titleSize * 1.1);
-    const startY = 150 - ((lines.length - 1) * lineH) * 0.5;
+    // Keep the title in the top band so menu buttons don't cover it.
+    const startY = 110 - ((lines.length - 1) * lineH) * 0.5;
     for (let i = 0; i < lines.length; i++) {
       const x = canvas.width / 2;
       const y = startY + i * lineH;
@@ -322,15 +323,16 @@ export function createPauseMenu({
   onResume, onRecenterView, onControls, onSettings, onMultiplayer, onMainMenu, onRestart,
 }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Simulation Paused", 2.4 * s, 3.65 * s);
+  // Taller panel + lower stack so Resume clears the "Simulation Paused" title.
+  const root = createMenuPanel("Simulation Paused", 2.4 * s, 3.9 * s);
   const buttonSpecs = [
-    { label: "Resume", y: 1.2 * s, onClick: onResume },
-    { label: "Recenter View", y: 0.75 * s, onClick: onRecenterView },
-    { label: "Controls", y: 0.3 * s, onClick: onControls },
-    { label: "Settings", y: -0.15 * s, onClick: onSettings },
-    { label: "Multiplayer", y: -0.6 * s, onClick: onMultiplayer },
-    { label: "Main Menu", y: -1.05 * s, onClick: onMainMenu },
-    { label: "Restart", y: -1.5 * s, onClick: onRestart },
+    { label: "Resume", y: 0.95 * s, onClick: onResume },
+    { label: "Recenter View", y: 0.5 * s, onClick: onRecenterView },
+    { label: "Controls", y: 0.05 * s, onClick: onControls },
+    { label: "Settings", y: -0.4 * s, onClick: onSettings },
+    { label: "Multiplayer", y: -0.85 * s, onClick: onMultiplayer },
+    { label: "Main Menu", y: -1.3 * s, onClick: onMainMenu },
+    { label: "Restart", y: -1.75 * s, onClick: onRestart },
   ];
   const actionButtons = [];
   for (const spec of buttonSpecs) {
