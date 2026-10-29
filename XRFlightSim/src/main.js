@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.97";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.97";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.97";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.97";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.98";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.98";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.98";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.98";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.97");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.98");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1555,7 +1555,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.97");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.98");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2415,6 +2415,7 @@ function isInsidePlayVolume(pos) {
 const PROXIMITY_WARN_M = 2.5;
 const PROXIMITY_PROBE_M = 2.8;
 const PROXIMITY_PATCH_SIZE_M = 3.2;
+const PROXIMITY_GRID_CELL_M = 0.8;
 const PROXIMITY_MAX_PATCHES = 3;
 const proximityHintRoot = new THREE.Group();
 proximityHintRoot.name = "Proximity Surface Hints";
@@ -2422,6 +2423,9 @@ scene.add(proximityHintRoot);
 const proximityHintPatches = [];
 const proximityPlaneWorld = new THREE.Vector3();
 const proximityNormalScratch = new THREE.Vector3();
+const proximityTangentScratch = new THREE.Vector3();
+const proximityBitangentScratch = new THREE.Vector3();
+const proximitySnapScratch = new THREE.Vector3();
 const proximityZAxis = new THREE.Vector3(0, 0, 1);
 const proximityRaycaster = new THREE.Raycaster();
 const proximityProbeDirs = [
@@ -2451,32 +2455,38 @@ function ensureProximityHintPool() {
     pivot.name = `ProximityGrid${i}`;
     grid.rotation.x = Math.PI * 0.5;
     pivot.add(grid);
-    const fill = new THREE.Mesh(
-      new THREE.PlaneGeometry(PROXIMITY_PATCH_SIZE_M, PROXIMITY_PATCH_SIZE_M),
-      new THREE.MeshBasicMaterial({
-        color: 0x59f2ff,
-        transparent: true,
-        opacity: 0.12,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    fill.position.z = 0.01;
-    pivot.add(fill);
     pivot.visible = false;
     proximityHintRoot.add(pivot);
-    proximityHintPatches.push({ root: pivot, grid, fill });
+    proximityHintPatches.push({ root: pivot, grid });
   }
 }
 
 function setProximityPatchIntensity(entry, intensity) {
   const lineA = 0.22 + intensity * 0.65;
-  const fillA = 0.06 + intensity * 0.22;
   const mats = Array.isArray(entry.grid?.material) ? entry.grid.material : [entry.grid?.material];
   for (const mat of mats) {
     if (mat) mat.opacity = lineA;
   }
-  if (entry.fill?.material) entry.fill.material.opacity = fillA;
+}
+
+/** Snap a surface point onto a fixed world grid in the surface tangent plane. */
+function snapProximityHitToGrid(pos, normal, out = proximitySnapScratch) {
+  const n = proximityNormalScratch.copy(normal).normalize();
+  const ref = Math.abs(n.y) > 0.85 ? flightForwardScratch.set(0, 0, -1) : handWorldUp;
+  proximityTangentScratch.crossVectors(ref, n);
+  if (proximityTangentScratch.lengthSq() < 1e-6) {
+    proximityTangentScratch.set(1, 0, 0).cross(n);
+  }
+  proximityTangentScratch.normalize();
+  proximityBitangentScratch.crossVectors(n, proximityTangentScratch).normalize();
+  const cell = PROXIMITY_GRID_CELL_M;
+  const u = Math.round(pos.dot(proximityTangentScratch) / cell) * cell;
+  const v = Math.round(pos.dot(proximityBitangentScratch) / cell) * cell;
+  const alongN = pos.dot(n);
+  return out
+    .copy(proximityTangentScratch).multiplyScalar(u)
+    .addScaledVector(proximityBitangentScratch, v)
+    .addScaledVector(n, alongN);
 }
 
 function collectProximitySurfaceHits(planeLocal, hits) {
@@ -2569,7 +2579,8 @@ function updateProximitySurfaceHints() {
     const hit = used[i];
     const intensity = 1 - clamp(hit.dist / PROXIMITY_WARN_M, 0, 1);
     entry.root.visible = true;
-    entry.root.position.copy(hit.pos).addScaledVector(hit.normal, 0.03 + intensity * 0.04);
+    snapProximityHitToGrid(hit.pos, hit.normal, entry.root.position);
+    entry.root.position.addScaledVector(hit.normal, 0.03 + intensity * 0.04);
     entry.root.quaternion.setFromUnitVectors(proximityZAxis, hit.normal);
     setProximityPatchIntensity(entry, intensity);
   }
@@ -3416,7 +3427,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.97`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.98`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
