@@ -2,10 +2,10 @@
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.96";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.96";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.96";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.96";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.97";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.97";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.97";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.97";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.96");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.97");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1555,7 +1555,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.96");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.97");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2411,6 +2411,170 @@ function isInsidePlayVolume(pos) {
     && pos.z >= playVolumeMin.z && pos.z <= playVolumeMax.z;
 }
 
+/** Near-surface warning grids on floor / walls around the plane. */
+const PROXIMITY_WARN_M = 2.5;
+const PROXIMITY_PROBE_M = 2.8;
+const PROXIMITY_PATCH_SIZE_M = 3.2;
+const PROXIMITY_MAX_PATCHES = 3;
+const proximityHintRoot = new THREE.Group();
+proximityHintRoot.name = "Proximity Surface Hints";
+scene.add(proximityHintRoot);
+const proximityHintPatches = [];
+const proximityPlaneWorld = new THREE.Vector3();
+const proximityNormalScratch = new THREE.Vector3();
+const proximityZAxis = new THREE.Vector3(0, 0, 1);
+const proximityRaycaster = new THREE.Raycaster();
+const proximityProbeDirs = [
+  new THREE.Vector3(0, -1, 0),
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(-1, 0, 0),
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3(0, 0, -1),
+];
+let proximityHintTick = 0;
+/** Filled each update; reused to avoid per-frame alloc churn. */
+const proximityHitsScratch = [];
+
+function ensureProximityHintPool() {
+  if (proximityHintPatches.length) return;
+  for (let i = 0; i < PROXIMITY_MAX_PATCHES; i += 1) {
+    const grid = new THREE.GridHelper(PROXIMITY_PATCH_SIZE_M, 4, 0x59f2ff, 0x59f2ff);
+    const mats = Array.isArray(grid.material) ? grid.material : [grid.material];
+    for (const mat of mats) {
+      mat.transparent = true;
+      mat.opacity = 0.55;
+      mat.depthWrite = false;
+    }
+    // GridHelper lies in XZ with +Y up; rotate so local +Z faces the surface normal.
+    const pivot = new THREE.Group();
+    pivot.name = `ProximityGrid${i}`;
+    grid.rotation.x = Math.PI * 0.5;
+    pivot.add(grid);
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(PROXIMITY_PATCH_SIZE_M, PROXIMITY_PATCH_SIZE_M),
+      new THREE.MeshBasicMaterial({
+        color: 0x59f2ff,
+        transparent: true,
+        opacity: 0.12,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    fill.position.z = 0.01;
+    pivot.add(fill);
+    pivot.visible = false;
+    proximityHintRoot.add(pivot);
+    proximityHintPatches.push({ root: pivot, grid, fill });
+  }
+}
+
+function setProximityPatchIntensity(entry, intensity) {
+  const lineA = 0.22 + intensity * 0.65;
+  const fillA = 0.06 + intensity * 0.22;
+  const mats = Array.isArray(entry.grid?.material) ? entry.grid.material : [entry.grid?.material];
+  for (const mat of mats) {
+    if (mat) mat.opacity = lineA;
+  }
+  if (entry.fill?.material) entry.fill.material.opacity = fillA;
+}
+
+function collectProximitySurfaceHits(planeLocal, hits) {
+  const floorDist = planeLocal.y - GROUND_CONTACT_Y;
+  if (floorDist >= 0 && floorDist < PROXIMITY_WARN_M) {
+    playSpace.localToWorld(proximityPlaneWorld.set(planeLocal.x, GROUND_CONTACT_Y, planeLocal.z));
+    hits.push({
+      pos: proximityPlaneWorld.clone(),
+      normal: new THREE.Vector3(0, 1, 0),
+      dist: floorDist,
+    });
+  }
+
+  const insideish =
+    planeLocal.x >= playVolumeMin.x - 0.05 && planeLocal.x <= playVolumeMax.x + 0.05
+    && planeLocal.y >= playVolumeMin.y - 0.05 && planeLocal.y <= playVolumeMax.y + 0.05
+    && planeLocal.z >= playVolumeMin.z - 0.05 && planeLocal.z <= playVolumeMax.z + 0.05;
+  if (insideish) {
+    const faces = [
+      { dist: planeLocal.x - playVolumeMin.x, local: new THREE.Vector3(playVolumeMin.x, planeLocal.y, planeLocal.z), normal: new THREE.Vector3(-1, 0, 0) },
+      { dist: playVolumeMax.x - planeLocal.x, local: new THREE.Vector3(playVolumeMax.x, planeLocal.y, planeLocal.z), normal: new THREE.Vector3(1, 0, 0) },
+      { dist: planeLocal.z - playVolumeMin.z, local: new THREE.Vector3(planeLocal.x, planeLocal.y, playVolumeMin.z), normal: new THREE.Vector3(0, 0, -1) },
+      { dist: playVolumeMax.z - planeLocal.z, local: new THREE.Vector3(planeLocal.x, planeLocal.y, playVolumeMax.z), normal: new THREE.Vector3(0, 0, 1) },
+      { dist: playVolumeMax.y - planeLocal.y, local: new THREE.Vector3(planeLocal.x, playVolumeMax.y, planeLocal.z), normal: new THREE.Vector3(0, -1, 0) },
+    ];
+    for (const face of faces) {
+      if (face.dist < 0 || face.dist >= PROXIMITY_WARN_M) continue;
+      playSpace.localToWorld(proximityPlaneWorld.copy(face.local));
+      proximityNormalScratch.copy(face.normal).transformDirection(playSpace.matrixWorld).normalize();
+      hits.push({
+        pos: proximityPlaneWorld.clone(),
+        normal: proximityNormalScratch.clone(),
+        dist: face.dist,
+      });
+    }
+  }
+
+  // Room-mesh probes when environment colliders are available.
+  if (typeof environmentMeshes === "undefined" || !environmentMeshes.size) return;
+  if (typeof collectBulletColliders === "function") collectBulletColliders();
+  if (typeof bulletColliders === "undefined" || !bulletColliders.length) return;
+  playSpace.localToWorld(proximityPlaneWorld.copy(planeLocal));
+  for (const dir of proximityProbeDirs) {
+    proximityNormalScratch.copy(dir).transformDirection(playSpace.matrixWorld).normalize();
+    proximityRaycaster.set(proximityPlaneWorld, proximityNormalScratch);
+    proximityRaycaster.far = PROXIMITY_PROBE_M;
+    const rayHits = proximityRaycaster.intersectObjects(bulletColliders, false);
+    if (!rayHits.length) continue;
+    const hit = rayHits[0];
+    if (hit.distance < 0.05 || hit.distance >= PROXIMITY_WARN_M) continue;
+    const n = proximityNormalScratch.copy(hit.face?.normal || dir).transformDirection(hit.object.matrixWorld).normalize();
+    if (n.dot(proximityRaycaster.ray.direction) > 0) n.negate();
+    hits.push({
+      pos: hit.point.clone(),
+      normal: n.clone(),
+      dist: hit.distance,
+    });
+  }
+}
+
+function updateProximitySurfaceHints() {
+  proximityHintTick += 1;
+  if ((proximityHintTick & 1) === 0) return;
+  ensureProximityHintPool();
+  if (!flight?.position) return;
+
+  proximityHitsScratch.length = 0;
+  collectProximitySurfaceHits(flight.position, proximityHitsScratch);
+  proximityHitsScratch.sort((a, b) => a.dist - b.dist);
+
+  const used = [];
+  for (const hit of proximityHitsScratch) {
+    if (used.length >= PROXIMITY_MAX_PATCHES) break;
+    let tooClose = false;
+    for (const prior of used) {
+      if (hit.pos.distanceToSquared(prior.pos) < (PROXIMITY_PATCH_SIZE_M * 0.45) ** 2) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (!tooClose) used.push(hit);
+  }
+
+  for (let i = 0; i < proximityHintPatches.length; i += 1) {
+    const entry = proximityHintPatches[i];
+    if (i >= used.length) {
+      entry.root.visible = false;
+      continue;
+    }
+    const hit = used[i];
+    const intensity = 1 - clamp(hit.dist / PROXIMITY_WARN_M, 0, 1);
+    entry.root.visible = true;
+    entry.root.position.copy(hit.pos).addScaledVector(hit.normal, 0.03 + intensity * 0.04);
+    entry.root.quaternion.setFromUnitVectors(proximityZAxis, hit.normal);
+    setProximityPatchIntensity(entry, intensity);
+  }
+}
+
 setupPlayVolume();
 
 class FlightModel {
@@ -3252,7 +3416,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.96`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.97`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
@@ -4307,6 +4471,7 @@ renderer.setAnimationLoop((time, frame) => {
   tickWorldRecenter();
   updateLocalNameTag();
   billboardNameTags(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
+  updateProximitySurfaceHints();
   updateEnvironmentMeshes(frame);
   calibratePlaySpaceHeight(frame);
   const speedValue = Math.round(flight.airspeed);
