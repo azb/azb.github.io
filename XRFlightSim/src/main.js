@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.104";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.104";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.104";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.104";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.105";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.105";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.105";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.105";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.104");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.105");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1560,7 +1560,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.104");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.105");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2422,6 +2422,10 @@ const PROXIMITY_PROBE_M = 2.8;
 const PROXIMITY_PATCH_SIZE_M = 3.2;
 const PROXIMITY_GRID_CELL_M = 0.8;
 const PROXIMITY_MAX_PATCHES = 3;
+/** Hide proximity tiles over the landing strip (meters, play-space XZ). */
+const RUNWAY_EXCLUDE_HALF_WIDTH_M = 7;
+const RUNWAY_EXCLUDE_HALF_LENGTH_M = 40;
+const proximityRunwayLocal = new THREE.Vector3();
 const proximityHintRoot = new THREE.Group();
 proximityHintRoot.name = "Proximity Surface Hints";
 scene.add(proximityHintRoot);
@@ -2595,17 +2599,23 @@ function collectProximitySurfaceHits(planeLocal, hits) {
   }
 }
 
+/** True when a world surface point sits over the landing-strip footprint. */
+function isProximityHitNearRunway(worldPos) {
+  playSpace.worldToLocal(proximityRunwayLocal.copy(worldPos));
+  const dx = proximityRunwayLocal.x - spawnPosition.x;
+  const dz = proximityRunwayLocal.z - spawnPosition.z;
+  // Spawn faces ?Z in play-space; strip runs along that axis.
+  return (
+    Math.abs(dx) <= RUNWAY_EXCLUDE_HALF_WIDTH_M
+    && Math.abs(dz) <= RUNWAY_EXCLUDE_HALF_LENGTH_M
+  );
+}
+
 function updateProximitySurfaceHints() {
   proximityHintTick += 1;
   if ((proximityHintTick & 1) === 0) return;
   ensureProximityHintPool();
   if (!flight?.position) return;
-
-  // Stay off on the runway until takeoff so the strip stays clear at spawn.
-  if (!flight.throttleCommitted) {
-    for (const entry of proximityHintPatches) entry.root.visible = false;
-    return;
-  }
 
   proximityHitsScratch.length = 0;
   collectProximitySurfaceHits(flight.position, proximityHitsScratch);
@@ -2614,6 +2624,7 @@ function updateProximitySurfaceHints() {
   const used = [];
   for (const hit of proximityHitsScratch) {
     if (used.length >= PROXIMITY_MAX_PATCHES) break;
+    if (isProximityHitNearRunway(hit.pos)) continue;
     let duplicateFace = false;
     for (const prior of used) {
       // Keep floor+wall at corners; only drop a second hit on the same face.
@@ -3483,7 +3494,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.104`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.105`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
