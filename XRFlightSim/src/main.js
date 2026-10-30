@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.108";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.108";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.108";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.108";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.109";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.109";
+import { FlightMultiplayerSession, firebaseErrorMessage } from "./net/session.js?v=0.5.109";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.109";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.108");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.109");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -666,8 +666,7 @@ settingsPanel.visible = false;
 playSpace.add(settingsPanel);
 
 const multiplayerPanel = createMultiplayerMenu({
-  onHost: () => hostMultiplayerRoom(),
-  onJoin: () => joinMultiplayerRoom(),
+  onJoinWorld: () => joinMultiplayerWorld(),
   onLeave: () => leaveMultiplayerRoom(),
   onBack: () => showUiMode("pause"),
 });
@@ -1560,7 +1559,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.108");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.109");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2198,7 +2197,7 @@ function multiplayerStatusText() {
   const links = net.linkCount();
   const peers = Math.max(0, net.roster.length - 1);
   const path = links > 0 ? "webrtc" : "relay";
-  return `MP ${net.roomId}${net.isHost ? " (host)" : ""} · ${peers} peer${peers === 1 ? "" : "s"} · ${path}`;
+  return `In world${net.isHost ? " (host)" : ""} · ${peers} peer${peers === 1 ? "" : "s"} · ${path}`;
 }
 
 function refreshMultiplayerUi() {
@@ -2207,63 +2206,25 @@ function refreshMultiplayerUi() {
   if (mpHudLabel) mpHudLabel.textContent = text;
   multiplayerPanel?.userData.setStatus?.(text);
   if (mpLeaveButton) mpLeaveButton.disabled = !net.active;
-  if (mpHostButton) mpHostButton.disabled = net.active;
   if (mpJoinButton) mpJoinButton.disabled = net.active;
-  if (mpCodeInput && net.roomId) mpCodeInput.value = net.roomId;
+  if (mpHostButton) mpHostButton.disabled = net.active;
 }
 
-async function hostMultiplayerRoom() {
-  try {
+async function joinMultiplayerWorld() {
+  if (net.active) {
     refreshMultiplayerUi();
-    const pending = "Hosting...";
-    if (mpStatusLabel) mpStatusLabel.textContent = pending;
-    multiplayerPanel?.userData.setStatus?.(pending);
-    ensureBalloonsSeeded();
-    const code = await net.createRoom();
-    if (mpCodeInput) mpCodeInput.value = code;
-    try {
-      const url = new URL(location.href);
-      url.searchParams.set("room", code);
-      history.replaceState(null, "", url);
-    } catch { /* ignore */ }
-    net.broadcastBalloonSync(getBalloonSyncPayload());
-    refreshMultiplayerUi();
-    const ok = `Hosted room ${code}`;
-    statusLabel.textContent = ok;
-    multiplayerPanel?.userData.setStatus?.(ok);
-  } catch (error) {
-    const msg = firebaseErrorMessage(error);
-    if (mpStatusLabel) mpStatusLabel.textContent = msg;
-    multiplayerPanel?.userData.setStatus?.(msg);
-    statusLabel.textContent = msg;
-  }
-}
-
-async function joinMultiplayerRoom(rawCode) {
-  const fromInput = mpCodeInput?.value;
-  const fromUrl = new URL(location.href).searchParams.get("room");
-  const code = normalizeRoomCode(rawCode || fromInput || fromUrl || "");
-  if (code.length < 4) {
-    const msg = "Type a 4-digit code in the box, then Join";
-    if (mpStatusLabel) mpStatusLabel.textContent = msg;
-    multiplayerPanel?.userData.setStatus?.(msg);
-    statusLabel.textContent = msg;
     return;
   }
   try {
-    const pending = `Joining ${code}...`;
+    const pending = "Joining world...";
     if (mpStatusLabel) mpStatusLabel.textContent = pending;
     multiplayerPanel?.userData.setStatus?.(pending);
     statusLabel.textContent = pending;
-    await net.joinRoom(code);
-    if (mpCodeInput) mpCodeInput.value = code;
-    try {
-      const url = new URL(location.href);
-      url.searchParams.set("room", code);
-      history.replaceState(null, "", url);
-    } catch { /* ignore */ }
+    ensureBalloonsSeeded();
+    await net.joinGlobalSession();
+    if (net.isHost) net.broadcastBalloonSync(getBalloonSyncPayload());
     refreshMultiplayerUi();
-    const ok = `Joined room ${code}`;
+    const ok = net.isHost ? "In world (host)" : "In world";
     statusLabel.textContent = ok;
     multiplayerPanel?.userData.setStatus?.(ok);
   } catch (error) {
@@ -2272,18 +2233,23 @@ async function joinMultiplayerRoom(rawCode) {
     multiplayerPanel?.userData.setStatus?.(msg);
     statusLabel.textContent = msg;
   }
+}
+
+/** @deprecated Room codes removed — joins the shared world. */
+async function hostMultiplayerRoom() {
+  return joinMultiplayerWorld();
+}
+
+/** @deprecated Room codes removed — joins the shared world. */
+async function joinMultiplayerRoom() {
+  return joinMultiplayerWorld();
 }
 
 async function leaveMultiplayerRoom() {
   await net.leave();
   clearRemotePlanes();
-  try {
-    const url = new URL(location.href);
-    url.searchParams.delete("room");
-    history.replaceState(null, "", url);
-  } catch { /* ignore */ }
   refreshMultiplayerUi();
-  statusLabel.textContent = "Left multiplayer room";
+  statusLabel.textContent = "Left multiplayer";
 }
 
 net.on({
@@ -2319,12 +2285,9 @@ net.on({
   },
 });
 
-mpHostButton?.addEventListener("click", () => hostMultiplayerRoom());
-mpJoinButton?.addEventListener("click", () => joinMultiplayerRoom());
+mpHostButton?.addEventListener("click", () => joinMultiplayerWorld());
+mpJoinButton?.addEventListener("click", () => joinMultiplayerWorld());
 mpLeaveButton?.addEventListener("click", () => leaveMultiplayerRoom());
-mpCodeInput?.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") joinMultiplayerRoom();
-});
 // Best-effort seat cleanup so hard-refresh does not leave ghost players.
 addEventListener("pagehide", () => {
   if (net.active) net.leave().catch(() => {});
@@ -2332,11 +2295,6 @@ addEventListener("pagehide", () => {
 addEventListener("beforeunload", () => {
   if (net.active) net.leave().catch(() => {});
 });
-const bootRoom = new URL(location.href).searchParams.get("room");
-if (bootRoom) {
-  if (mpCodeInput) mpCodeInput.value = normalizeRoomCode(bootRoom);
-  joinMultiplayerRoom(bootRoom).catch(() => {});
-}
 refreshMultiplayerUi();
 
 /** Matches flight-sim-scene FighterPlane; rebuilt again in useSpawn when the scene loads. */
@@ -3484,7 +3442,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.108`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.109`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;

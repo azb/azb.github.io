@@ -1,5 +1,6 @@
 import {
   APP_ID,
+  GLOBAL_ROOM_CODE,
   WS_RELAY_URL,
   loadFirebase,
   startFirebase,
@@ -124,25 +125,71 @@ export class FlightMultiplayerSession {
     await this._pruneStalePlayers(code, JOIN_STALE_MS);
     const playersSnap = await fs.getDocs(fs.collection(db, "rooms", code, "players"));
     const now = Date.now();
-    const liveOthers = playersSnap.docs.filter(
-      (d) => d.id !== this.uid && !isPlayerStale(d.data(), now, JOIN_STALE_MS),
-    );
+    let hostLive = false;
+    const liveOthers = playersSnap.docs.filter((d) => {
+      if (d.id === this.uid) return false;
+      if (isPlayerStale(d.data(), now, JOIN_STALE_MS)) return false;
+      if (d.id === data.host) hostLive = true;
+      return true;
+    });
     if (liveOthers.length >= MAX_PLAYERS) {
-      throw new Error("That room is full (max 4). Wait a few seconds and retry, or Host a new room.");
+      throw new Error("World is full (max 4). Wait a few seconds and retry.");
     }
     this.roomId = code;
-    this.isHost = data.host === this.uid;
-    this.hostUid = data.host;
-    await fs.setDoc(
-      ref,
-      {
-        updatedAt: fs.serverTimestamp(),
-        lastJoiner: this.uid,
-      },
-      { merge: true },
-    );
+    if (!hostLive) {
+      this.isHost = true;
+      this.hostUid = this.uid;
+      await fs.setDoc(
+        ref,
+        {
+          host: this.uid,
+          updatedAt: fs.serverTimestamp(),
+          lastJoiner: this.uid,
+          status: "playing",
+        },
+        { merge: true },
+      );
+    } else {
+      this.isHost = data.host === this.uid;
+      this.hostUid = data.host;
+      await fs.setDoc(
+        ref,
+        {
+          updatedAt: fs.serverTimestamp(),
+          lastJoiner: this.uid,
+        },
+        { merge: true },
+      );
+    }
     await this._enterRoom();
     return code;
+  }
+
+  /** One shared world for Specs + WebXR — create if empty, else join. */
+  async joinGlobalSession() {
+    const code = GLOBAL_ROOM_CODE;
+    await this.ensureAuth();
+    const { db, fs } = firebaseApi();
+    const ref = fs.doc(db, "rooms", code);
+    const snap = await fs.getDoc(ref);
+    if (!snap.exists() || snap.data()?.app !== APP_ID || isRoomStale(snap.data())) {
+      await this._pruneStalePlayers(code, 0);
+      this.roomId = code;
+      this.isHost = true;
+      this.hostUid = this.uid;
+      await fs.setDoc(ref, {
+        app: APP_ID,
+        host: this.uid,
+        status: "playing",
+        playerCount: 1,
+        updatedAt: fs.serverTimestamp(),
+        lastJoiner: this.uid,
+        global: true,
+      });
+      await this._enterRoom();
+      return code;
+    }
+    return this.joinRoom(code);
   }
 
   /** Delete abandoned player seats. staleMs=0 removes everyone except the caller. */
@@ -551,4 +598,4 @@ function isRoomStale(data) {
   return t > 0 && Date.now() - t > 10 * 60 * 1000;
 }
 
-export { firebaseErrorMessage, normalizeRoomCode };
+export { firebaseErrorMessage, normalizeRoomCode, GLOBAL_ROOM_CODE };

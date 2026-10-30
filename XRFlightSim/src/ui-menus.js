@@ -354,20 +354,20 @@ export function createPauseMenu({
   return root;
 }
 
-/** In-XR multiplayer lobby: host / join / leave + status (code via overlay / ?room=). */
-export function createMultiplayerMenu({ onHost, onJoin, onLeave, onBack }) {
+/** In-XR multiplayer lobby: one shared world (no room codes). */
+export function createMultiplayerMenu({ onJoinWorld, onLeave, onBack, onHost, onJoin }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Multiplayer", 2.6 * s, 2.7 * s);
-  const status = createUiButton("Solo · Host or Join", 2.2 * s, 0.3 * s);
-  status.position.set(0, 0.7 * s, 0.02 * s);
+  const root = createMenuPanel("Multiplayer", 2.6 * s, 2.0 * s);
+  const status = createUiButton("Solo · Join the shared world", 2.2 * s, 0.3 * s);
+  status.position.set(0, 0.55 * s, 0.02 * s);
   status.userData.uiButton.onClick = null;
   root.add(status);
 
+  const joinFn = onJoinWorld || onJoin || onHost;
   const buttons = [
-    { label: "Host Room", y: 0.25 * s, onClick: onHost },
-    { label: "Join", y: -0.15 * s, onClick: onJoin },
-    { label: "Leave Room", y: -0.55 * s, onClick: onLeave },
-    { label: "Back", y: -0.95 * s, onClick: onBack },
+    { label: "Join World", y: 0.1 * s, onClick: joinFn },
+    { label: "Leave", y: -0.35 * s, onClick: onLeave },
+    { label: "Back", y: -0.8 * s, onClick: onBack },
   ];
   for (const spec of buttons) {
     const button = createUiButton(spec.label, 2.2 * s, 0.34 * s);

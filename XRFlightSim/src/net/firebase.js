@@ -21,6 +21,8 @@ export const firebaseConfig = {
 };
 
 export const APP_ID = "xrflightsim";
+/** Single shared lobby for Specs + WebXR (no room codes). */
+export const GLOBAL_ROOM_CODE = "0001";
 
 /**
  * Cloudflare Worker WSS relay (pose / fire / balloons).
