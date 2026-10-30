@@ -499,12 +499,13 @@ export function createScoreboardMenu({ onPlayAgain, onMenu }) {
     root.add(row);
     rows.push(row);
   }
+  // Panel half-height is 1.625*s — keep both actions above the bottom edge.
   const again = createUiButton("Play Again", 1.9 * s, 0.34 * s);
-  again.position.set(0, -1.25 * s, rowZ);
+  again.position.set(0, -1.0 * s, rowZ);
   again.userData.uiButton.onClick = onPlayAgain;
   root.add(again);
   const menu = createUiButton("Menu", 1.4 * s, 0.32 * s);
-  menu.position.set(0, -1.65 * s, rowZ);
+  menu.position.set(0, -1.35 * s, rowZ);
   menu.userData.uiButton.onClick = onMenu;
   root.add(menu);
 
