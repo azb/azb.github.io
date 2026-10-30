@@ -302,13 +302,14 @@ function createMenuPanel(title, width, height, opts = {}) {
 }
 
 /** Startup mode picker after Controls OK. */
-export function createModeSelectMenu({ onFreeFly, onDogfight }) {
+export function createModeSelectMenu({ onFreeFly, onDogfight, onMultiplayer }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Choose Mode", 2.4 * s, 2.2 * s);
+  const root = createMenuPanel("Choose Mode", 2.4 * s, 2.7 * s);
   root.name = "Mode Select Panel";
   const buttonSpecs = [
-    { label: "Free Fly", y: 0.35 * s, onClick: onFreeFly },
-    { label: "Dogfight", y: -0.25 * s, onClick: onDogfight },
+    { label: "Free Fly", y: 0.55 * s, onClick: onFreeFly },
+    { label: "Dogfight", y: 0.05 * s, onClick: onDogfight },
+    { label: "Multiplayer", y: -0.45 * s, onClick: onMultiplayer },
   ];
   for (const spec of buttonSpecs) {
     const button = createUiButton(spec.label, 1.7 * s, 0.4 * s);
