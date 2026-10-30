@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
-import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.107";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.107";
-import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.107";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.107";
+import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.108";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.108";
+import { FlightMultiplayerSession, firebaseErrorMessage, normalizeRoomCode } from "./net/session.js?v=0.5.108";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.108";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -49,7 +49,7 @@ const otherEngineToListener = new THREE.Vector3();
 const otherEngineTargets = [];
 const balloonPopUrl = assetUrl("audio/BalloonPop.wav");
 const explosionUrl = assetUrl("audio/explosion.wav");
-const shootUrl = assetUrl("audio/shoot.wav?v=0.5.107");
+const shootUrl = assetUrl("audio/shoot.wav?v=0.5.108");
 let shootBuffer = null;
 let shootLoad = null;
 let explosionBuffer = null;
@@ -1560,7 +1560,7 @@ const BALLOON_HIT_RADIUS = 0.45;
 const BALLOON_RESPAWN_SEC = 5;
 /** Match Lens balloon visual size (~0.9 m tall in playSpace meters). */
 const BALLOON_TARGET_HEIGHT = 0.9;
-const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.107");
+const balloonModelUrl = assetUrl("balloon.fbx?v=0.5.108");
 const balloonMat = new THREE.MeshStandardMaterial({
   color: 0xff4d6d,
   roughness: 0.35,
@@ -2363,15 +2363,10 @@ let playVolumeMesh = null;
 
 function setupPlayVolume() {
   const half = PLAY_VOLUME_SIZE * 0.5;
-  // Offset along content forward (playSpace yaw), not fixed world -Z.
+  // Stay in playSpace local: -Z is content/runway forward. After Recenter View
+  // playSpace yaws, so a local offset keeps the cube aligned with the strip
+  // (world-forward + local spawn mixed frames and skewed the box).
   const forward = new THREE.Vector3(0, 0, -1);
-  if (playSpace) {
-    playSpace.getWorldQuaternion(flightQuatScratch);
-    forward.applyQuaternion(flightQuatScratch);
-    forward.y = 0;
-    if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
-    else forward.normalize();
-  }
   // Near face used to sit exactly on spawn — pull the cube back so takeoff works.
   playVolumeCenter.copy(spawnPosition).addScaledVector(forward, half - PLAY_VOLUME_BEHIND);
   // Keep the old full-cube ceiling; put the floor on the ground (? half height).
@@ -3489,7 +3484,7 @@ let desktopCameraRig = null;
 async function mountFlightScene() {
   modelLabel.textContent = "Fighter model: loading scene…";
   try {
-    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.107`);
+    const data = await loadFlightScene(`${FLIGHT_SCENE_URL}?v=0.5.108`);
     loadBalloonTemplate();
     setSceneMaterialLibrary(data.materials || []);
     let fighterFromScene = false;
