@@ -2005,6 +2005,13 @@ function billboardNameTags(viewCam) {
   placeNameTagAboveWorld(bestTag, bestRoot);
 }
 
+function clearPlayerBullets() {
+  for (const shot of bullets) {
+    playSpace.remove(shot);
+  }
+  bullets.length = 0;
+}
+
 function startMatch() {
   gameMode = "dogfight";
   matchActive = true;
@@ -2014,7 +2021,9 @@ function startMatch() {
   gamePanel?.userData.setScore?.(0);
   gamePanel?.userData.setMatchTime?.(matchTimeLeft);
   for (const entry of remotePlanes.values()) entry.score = 0;
-  ensureAiFleet()?.resetMatchScores?.();
+  resetPlayerFlight({ keepScore: false });
+  clearPlayerBullets();
+  ensureAiFleet()?.prepareForMatch?.();
 }
 
 function endMatch() {

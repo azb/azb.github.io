@@ -871,6 +871,16 @@ export function createAiFleet(opts) {
     resetMatchScores() {
       for (const bot of bots) bot.score = 0;
     },
+    /** Clear AI shots and put every bot back on the runway for a new dogfight. */
+    prepareForMatch() {
+      for (const shot of bullets) {
+        opts.playSpace.remove(shot);
+      }
+      bullets.length = 0;
+      for (const bot of bots) bot.score = 0;
+      ensureBots();
+      for (const bot of bots) respawnBot(bot);
+    },
     rebuild() {
       disposeBots();
     },
