@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#100e0c" />
+    <title>Crownfall</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%23e6c27a' d='M4 22 L8 10 L12 16 L16 6 L20 16 L24 10 L28 22 Z'/%3E%3Crect fill='%23e6c27a' x='4' y='22' width='24' height='3'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
+    <script type="module" crossorigin src="/crownfall/assets/index-DWWEXKmm.js"></script>
+    <link rel="stylesheet" crossorigin href="/crownfall/assets/index-qbCUmb07.css">
+  </head>
+  <body>
+    <div id="overlay">
+      <div id="hurt"></div>
+      <div id="fade"><p id="fade-text"></p></div>
+      <div id="crosshair" class="hidden"></div>
+
+      <header id="topbar" class="hidden">
+        <p id="turn">Gold's turn</p>
+        <p id="hint">Click one of your pieces.</p>
+      </header>
+
+      <section id="combat-hud" class="hidden">
+        <p id="hearts"></p>
+        <p id="objective"></p>
+        <div id="meter" class="hidden"><div id="meter-bar"></div></div>
+        <button id="btn-yield" type="button">Yield</button>
+      </section>
+
+      <p id="toast" class="hidden"></p>
+
+      <section id="title">
+        <p class="eyebrow">WebXR tabletop</p>
+        <h1>Crownfall</h1>
+        <p class="lede">A five-by-five court. Archers on the wings, swords beside the crown. Take the enemy monarch and the court is yours.</p>
+        <ul>
+          <li>Every piece steps one square, diagonally or straight, onto an empty tile.</li>
+          <li>Archers and swordsmen may strike an adjacent foe. The monarch only moves.</li>
+          <li>Win the clash and you take their square. Fall, and your piece is lost.</li>
+          <li>Strike the enemy monarch and the game ends.</li>
+        </ul>
+        <div class="clash">
+          <span>Sword on sword — cut the charge</span>
+          <span>Sword on archer — bat arrows back</span>
+          <span>Archer on sword — loose into the rush</span>
+          <span>Archer on archer — shoot their shafts down</span>
+        </div>
+        <div class="actions">
+          <button id="btn-ar" type="button">Enter AR</button>
+          <button id="btn-vr" type="button">Enter VR</button>
+          <button id="btn-play" type="button">Play here</button>
+        </div>
+        <p id="xr-note" class="note">Bookmark this page. Enter VR puts the court on a virtual table.</p>
+      </section>
+
+      <section id="gameover" class="hidden">
+        <div class="card">
+          <p class="eyebrow">Crownfall</p>
+          <h2 id="go-title">The monarch is captured</h2>
+          <p id="go-sub">Gold takes the court.</p>
+          <button id="btn-again" type="button">Play again</button>
+        </div>
+      </section>
+
+      <p id="place-hint" class="hidden">Point at your table, then tap to set the court.</p>
+
+      <div id="corner" class="hidden">
+        <button id="btn-sound" type="button">Sound on</button>
+        <button id="btn-ar-mini" type="button">Enter AR</button>
+        <button id="btn-vr-mini" type="button">Enter VR</button>
+        <button id="btn-move" type="button" class="hidden">Move board</button>
+      </div>
+    </div>
+  </body>
+</html>
