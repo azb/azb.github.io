@@ -389,6 +389,8 @@ let uiAwaitingHandAnchor = false;
 /** Pause-menu world yaw recenter (align playSpace to headset facing). */
 let worldRecenterActive = false;
 let worldRecenterEndsAt = 0;
+/** Ignore held A from the Recenter View confirm until released. */
+let worldRecenterConfirmHeld = false;
 const WORLD_RECENTER_SEC = 5;
 const recenterCamFwd = new THREE.Vector3();
 const recenterContentFwd = new THREE.Vector3();
@@ -467,27 +469,56 @@ function showUiMode(mode) {
   applyGameSettings();
 }
 
+function isRecenterConfirmDown() {
+  const xrSources = renderer.xr.getSession()?.inputSources ?? [];
+  const pad = findBrowserGamepad(xrSources);
+  if (pad?.buttons?.[0]?.pressed) return true;
+  for (const source of xrSources) {
+    if (source.hand || source.handedness !== "right") continue;
+    const button = source.gamepad?.buttons?.[4];
+    if (Boolean(button?.pressed) || (button?.value ?? 0) > 0.5) return true;
+  }
+  return false;
+}
+
 function beginWorldRecenter() {
   if (worldRecenterActive || !playSpace) return;
   worldRecenterActive = true;
   worldRecenterEndsAt = performance.now() / 1000 + WORLD_RECENTER_SEC;
+  // Seed held so the press/release that started Recenter View cannot skip instantly.
+  worldRecenterConfirmHeld = true;
   showUiMode("pause");
   pausePanel?.userData.setPauseRecentering?.(true, WORLD_RECENTER_SEC);
   placeMenusInFrontOfPlayer();
   // Snap world once at end of countdown ? UI keeps following the headset meanwhile.
 }
 
-function tickWorldRecenter() {
+function finishWorldRecenter() {
   if (!worldRecenterActive) return;
+  applyPlaySpaceRecenterToFacing();
+  worldRecenterActive = false;
+  worldRecenterConfirmHeld = false;
+  pausePanel?.userData.setPauseRecentering?.(false);
+  showUiMode("pause");
+}
+
+function tickWorldRecenter() {
+  if (!worldRecenterActive) {
+    worldRecenterConfirmHeld = false;
+    return;
+  }
+  const confirm = isRecenterConfirmDown();
+  if (confirm && !worldRecenterConfirmHeld) {
+    worldRecenterEndsAt = 0;
+  }
+  worldRecenterConfirmHeld = confirm;
+
   const left = Math.max(0, worldRecenterEndsAt - performance.now() / 1000);
   pausePanel?.userData.setPauseRecentering?.(true, left);
   // Keep the countdown panel in front of the headset while they turn to face.
   placeMenusInFrontOfPlayer();
   if (left > 0) return;
-  applyPlaySpaceRecenterToFacing();
-  worldRecenterActive = false;
-  pausePanel?.userData.setPauseRecentering?.(false);
-  showUiMode("pause");
+  finishWorldRecenter();
 }
 
 /** Signed yaw about +Y taking horizontal `from` -> `to` (Y-up RHS). */
