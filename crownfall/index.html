@@ -19,6 +19,9 @@
       #companion form { display: flex; gap: 8px; }
       #companion input { flex: 1; min-width: 0; font: inherit; color: inherit; background: #1a1612; border: 1px solid #6d5a38; border-radius: 9px; padding: 8px 10px; }
       #companion button { font: inherit; color: #1a1612; background: #e6c27a; border: 0; border-radius: 9px; padding: 8px 12px; cursor: pointer; }
+      #modes { margin-top: .35rem; }
+      #modes button.on { background: var(--gold); color: #24180c; border-color: transparent; font-weight: 640; }
+      #mode-note { margin: .35rem 0 .15rem; }
     </style>
   </head>
   <body>
@@ -57,6 +60,12 @@
           <span>Archer on sword — loose into the rush</span>
           <span>Archer on archer — shoot their shafts down</span>
         </div>
+        <div class="actions" id="modes">
+          <button id="btn-mode-game" type="button" class="on">Full game</button>
+          <button id="btn-mode-bow" type="button">Archery practice</button>
+          <button id="btn-mode-sword" type="button">Sword practice</button>
+        </div>
+        <p id="mode-note" class="note">The full court. Take the enemy monarch.</p>
         <div class="actions">
           <button id="btn-ar" type="button">Enter AR</button>
           <button id="btn-vr" type="button">Enter VR</button>
