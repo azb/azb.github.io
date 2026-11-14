@@ -11,6 +11,13 @@
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
     <script type="module" crossorigin src="/crownfall/assets/index-DWWEXKmm.js"></script>
     <link rel="stylesheet" crossorigin href="/crownfall/assets/index-qbCUmb07.css">
+    <style>
+      #companion { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(92vw, 560px); z-index: 6; display: grid; gap: 8px; color: #f3ead8; font: 15px/1.35 Outfit, sans-serif; }
+      #companion-status { margin: 0; padding: 10px 12px; border-radius: 12px; background: rgba(16,14,12,.82); border: 1px solid rgba(230,194,122,.35); white-space: pre-wrap; }
+      #companion form { display: flex; gap: 8px; }
+      #companion input { flex: 1; min-width: 0; font: inherit; color: inherit; background: #1a1612; border: 1px solid #6d5a38; border-radius: 9px; padding: 8px 10px; }
+      #companion button { font: inherit; color: #1a1612; background: #e6c27a; border: 0; border-radius: 9px; padding: 8px 12px; cursor: pointer; }
+    </style>
   </head>
   <body>
     <div id="overlay">
@@ -53,7 +60,7 @@
           <button id="btn-vr" type="button">Enter VR</button>
           <button id="btn-play" type="button">Play here</button>
         </div>
-        <p id="xr-note" class="note">Bookmark this page. Enter VR puts the court on a virtual table.</p>
+        <p id="xr-note" class="note">Bookmark this page. The companion stands beside the court. Press A on the right controller to talk.</p>
       </section>
 
       <section id="gameover" class="hidden">
@@ -73,6 +80,19 @@
         <button id="btn-vr-mini" type="button">Enter VR</button>
         <button id="btn-move" type="button" class="hidden">Move board</button>
       </div>
+      <div id="companion">
+        <p id="companion-status">Companion starting…</p>
+        <form id="companion-link">
+          <input id="companion-backend" placeholder="wss://laptop-address:8788" autocomplete="off" />
+          <button type="submit">Connect AI</button>
+        </form>
+        <form id="companion-say">
+          <input id="companion-text" placeholder="Type to the companion" autocomplete="off" />
+          <button type="submit">Say</button>
+          <button id="companion-talk" type="button">Talk</button>
+        </form>
+      </div>
     </div>
+    <script type="module" src="/crownfall/companion.js"></script>
   </body>
 </html>
