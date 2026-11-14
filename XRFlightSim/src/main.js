@@ -327,6 +327,7 @@ function applyGameSettings() {
     playVolumeMesh.visible = gameSettings.playVolumeVisible !== false;
   }
   ensureAiFleet()?.setBoundaryCollision?.(boundaryCollisionEnabled());
+  if (!boundaryCollisionEnabled()) hideProximitySurfaceHints();
   applyWingParticleSetting();
   if (engineGain && engineContext && typeof flight !== "undefined") {
     const time = engineContext.currentTime;
@@ -2606,10 +2607,20 @@ function isProximityHitNearRunway(worldPos) {
   return dx * dx + dz * dz <= RUNWAY_EXCLUDE_RADIUS_M * RUNWAY_EXCLUDE_RADIUS_M;
 }
 
+function hideProximitySurfaceHints() {
+  for (const entry of proximityHintPatches) {
+    entry.root.visible = false;
+  }
+}
+
 function updateProximitySurfaceHints() {
   proximityHintTick += 1;
   if ((proximityHintTick & 1) === 0) return;
   ensureProximityHintPool();
+  if (!boundaryCollisionEnabled()) {
+    hideProximitySurfaceHints();
+    return;
+  }
   if (!flight?.position) return;
 
   proximityHitsScratch.length = 0;
