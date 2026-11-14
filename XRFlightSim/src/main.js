@@ -3,9 +3,9 @@ import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/j
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js";
 import { bindControlSurfaces, createSceneObject, FLIGHT_SCENE_URL, loadFlightScene, sceneRole, setSceneMaterialLibrary } from "./scene-format.js?v=0.5.112";
-import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.112";
+import { createGamePanel, createModeSelectMenu, createMultiplayerMenu, createPauseMenu, createScoreboardMenu, createSettingsMenu, createUiButton, findUiButton, listClickableUiButtons, loadSettings, saveSettings, setUiButtonHovers } from "./ui-menus.js?v=0.5.113";
 import { FlightMultiplayerSession, firebaseErrorMessage } from "./net/session.js?v=0.5.112";
-import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.112";
+import { createAiFleet, PLANE_MAX_HEALTH } from "./ai-planes.js?v=0.5.113";
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -316,12 +316,17 @@ let bulletCollidersDirty = true;
 function markBulletCollidersDirty() {
   bulletCollidersDirty = true;
 }
+function boundaryCollisionEnabled() {
+  return gameSettings.boundaryCollision !== false;
+}
+
 function applyGameSettings() {
   markBulletCollidersDirty();
   saveSettings(gameSettings);
   if (playVolumeMesh) {
     playVolumeMesh.visible = gameSettings.playVolumeVisible !== false;
   }
+  ensureAiFleet()?.setBoundaryCollision?.(boundaryCollisionEnabled());
   applyWingParticleSetting();
   if (engineGain && engineContext && typeof flight !== "undefined") {
     const time = engineContext.currentTime;
@@ -2632,7 +2637,7 @@ class FlightModel {
   }
   step(input, seconds) {
     const dt = clamp(seconds, 0, .1);
-    this.outsidePlayVolume = !isInsidePlayVolume(this.position);
+    this.outsidePlayVolume = boundaryCollisionEnabled() && !isInsidePlayVolume(this.position);
 
     if (!this.outsidePlayVolume) {
       if (typeof input.throttleAbsolute === "number") {
@@ -2713,7 +2718,7 @@ class FlightModel {
     this.groundHitThisFrame = false;
     this.groundHitCooldown = Math.max(0, this.groundHitCooldown - dt);
     this.resolveGroundContact(dt);
-    this.outsidePlayVolume = !isInsidePlayVolume(this.position);
+    this.outsidePlayVolume = boundaryCollisionEnabled() && !isInsidePlayVolume(this.position);
   }
   resolveGroundContact(dt) {
     // Parked / taxiing: stay on the deck without bounce damage.
@@ -2721,6 +2726,7 @@ class FlightModel {
       if (this.position.y < GROUND_CONTACT_Y) this.position.y = GROUND_CONTACT_Y;
       return;
     }
+    if (!boundaryCollisionEnabled()) return;
     const fwd = this.forward(flightForwardScratch);
     const hitting = this.position.y <= GROUND_CONTACT_Y && (fwd.y < -0.02 || this.velocity.y < -0.05);
     if (!hitting) {
@@ -2969,6 +2975,7 @@ function ensureAiFleet() {
     bulletSpawnLocal,
     boundsMin: playVolumeMin,
     boundsMax: playVolumeMax,
+    boundaryCollision: boundaryCollisionEnabled(),
     takeoffInvulnSec: TAKEOFF_INVULN_SEC,
     takeoffThrottle: TAKEOFF_THROTTLE,
     runwayOrigin: () => spawnPosition.clone(),

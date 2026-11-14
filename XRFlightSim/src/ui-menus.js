@@ -21,6 +21,8 @@ export const defaultSettings = () => ({
   wingParticles: true,
   damageParticles: true,
   playVolumeVisible: true,
+  /** Play-volume walls / floor / ceiling + ground bounce. */
+  boundaryCollision: true,
 });
 
 export function nextPlayerName(current) {
@@ -530,13 +532,13 @@ export function createScoreboardMenu({ onPlayAgain, onMenu }) {
 
 export function createSettingsMenu(settings, { onBack, onChange }) {
   const s = UI_MENU_SCALE;
-  const root = createMenuPanel("Settings", 2.6 * s, 4.9 * s);
+  const root = createMenuPanel("Settings", 2.6 * s, 5.3 * s);
   root.userData.settingsButtons = {};
 
   const rows = [
     {
       key: "playerName",
-      y: 1.55 * s,
+      y: 1.75 * s,
       label: () => `Name: ${settings.playerName || "Player 1"}`,
       click: () => {
         settings.playerName = nextPlayerName(settings.playerName || "Player 1");
@@ -544,7 +546,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "passthrough",
-      y: 1.15 * s,
+      y: 1.35 * s,
       label: () => `Passthrough: ${settings.passthrough ? "On" : "Off"}`,
       click: () => {
         settings.passthrough = !settings.passthrough;
@@ -552,7 +554,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshVisual",
-      y: 0.75 * s,
+      y: 0.95 * s,
       label: () => `Mesh Visual: ${settings.meshVisual ? "On" : "Off"}`,
       click: () => {
         settings.meshVisual = !settings.meshVisual;
@@ -560,7 +562,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "meshCollision",
-      y: 0.35 * s,
+      y: 0.55 * s,
       label: () => `Mesh Collision: ${settings.meshCollision ? "On" : "Off"}`,
       click: () => {
         settings.meshCollision = !settings.meshCollision;
@@ -568,7 +570,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "masterVolume",
-      y: -0.05 * s,
+      y: 0.15 * s,
       label: () => `Master Volume: ${formatPercent(settings.masterVolume)}`,
       click: () => {
         settings.masterVolume = nextStep(VOLUME_STEPS, settings.masterVolume);
@@ -576,7 +578,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "engineVolume",
-      y: -0.45 * s,
+      y: -0.25 * s,
       label: () => `Engine Volume: ${formatPercent(settings.engineVolume)}`,
       click: () => {
         settings.engineVolume = nextStep(VOLUME_STEPS, settings.engineVolume);
@@ -584,7 +586,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "stickSensitivity",
-      y: -0.85 * s,
+      y: -0.65 * s,
       label: () => `Stick Sensitivity: ${settings.stickSensitivity.toFixed(2)}x`,
       click: () => {
         settings.stickSensitivity = nextStep(SENSITIVITY_STEPS, settings.stickSensitivity);
@@ -592,7 +594,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "wingParticles",
-      y: -1.25 * s,
+      y: -1.05 * s,
       label: () => `Wing Particles: ${settings.wingParticles ? "On" : "Off"}`,
       click: () => {
         settings.wingParticles = !settings.wingParticles;
@@ -600,7 +602,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "damageParticles",
-      y: -1.65 * s,
+      y: -1.45 * s,
       label: () => `Damage Particles: ${settings.damageParticles ? "On" : "Off"}`,
       click: () => {
         settings.damageParticles = !settings.damageParticles;
@@ -608,10 +610,18 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
     },
     {
       key: "playVolumeVisible",
-      y: -2.05 * s,
+      y: -1.85 * s,
       label: () => `Play Volume: ${settings.playVolumeVisible ? "On" : "Off"}`,
       click: () => {
         settings.playVolumeVisible = !settings.playVolumeVisible;
+      },
+    },
+    {
+      key: "boundaryCollision",
+      y: -2.25 * s,
+      label: () => `Boundary Collision: ${settings.boundaryCollision !== false ? "On" : "Off"}`,
+      click: () => {
+        settings.boundaryCollision = settings.boundaryCollision === false;
       },
     },
   ];
@@ -630,7 +640,7 @@ export function createSettingsMenu(settings, { onBack, onChange }) {
   }
 
   const back = createUiButton("Back", 1.4 * s, 0.32 * s);
-  back.position.set(0, -2.5 * s, 0.02 * s);
+  back.position.set(0, -2.7 * s, 0.02 * s);
   back.userData.uiButton.onClick = onBack;
   root.add(back);
 

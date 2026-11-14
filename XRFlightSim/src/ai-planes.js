@@ -192,9 +192,10 @@ export function createAiFleet(opts) {
   let boundsMin = opts.boundsMin ? opts.boundsMin.clone() : null;
   /** @type {THREE.Vector3 | null} */
   let boundsMax = opts.boundsMax ? opts.boundsMax.clone() : null;
+  let boundaryCollision = opts.boundaryCollision !== false;
 
   function clampToPlayVolume(pos) {
-    if (!boundsMin || !boundsMax) return pos;
+    if (!boundaryCollision || !boundsMin || !boundsMax) return pos;
     pos.x = clamp(pos.x, boundsMin.x, boundsMax.x);
     pos.y = clamp(pos.y, boundsMin.y, boundsMax.y);
     pos.z = clamp(pos.z, boundsMin.z, boundsMax.z);
@@ -496,6 +497,7 @@ export function createAiFleet(opts) {
   }
 
   function applyBoundaryAvoidance(bot, aim) {
+    if (!boundaryCollision) return aim;
     const p = bot.position;
     // Measure from the real runway deck — a raised hard floor caused pitch wobble.
     const headroom = p.y - GROUND_CONTACT_Y;
@@ -567,8 +569,11 @@ export function createAiFleet(opts) {
         }
       }
     }
-    aim.y = clamp(aim.y, GROUND_CONTACT_Y, MAX_FLY_ALT);
-    return clampToPlayVolume(aim);
+    if (boundaryCollision) {
+      aim.y = clamp(aim.y, GROUND_CONTACT_Y, MAX_FLY_ALT);
+      return clampToPlayVolume(aim);
+    }
+    return aim;
   }
 
   function steerBot(bot, targetPos, dt) {
@@ -699,7 +704,7 @@ export function createAiFleet(opts) {
         aim = frontalPoint(playerPos, bot, dt, _frontal);
       }
       // Absolute altitude only — don't shove bots up when the player climbs.
-      aim.y = clamp(aim.y, GROUND_CONTACT_Y, MAX_FLY_ALT);
+      if (boundaryCollision) aim.y = clamp(aim.y, GROUND_CONTACT_Y, MAX_FLY_ALT);
       clampToPlayVolume(aim);
       applyBoundaryAvoidance(bot, aim);
       steerBot(bot, aim, dt);
@@ -708,7 +713,7 @@ export function createAiFleet(opts) {
       bot.velocity.copy(_fwd).multiplyScalar(speed);
       bot.position.addScaledVector(bot.velocity, dt);
       bot.groundHitCooldown = Math.max(0, (bot.groundHitCooldown || 0) - dt);
-      if (bot.position.y <= GROUND_CONTACT_Y) {
+      if (boundaryCollision && bot.position.y <= GROUND_CONTACT_Y) {
         const diving = _fwd.y < -0.02 || bot.velocity.y < -0.05;
         bot.position.y = GROUND_CONTACT_Y;
         if (diving) {
@@ -725,7 +730,7 @@ export function createAiFleet(opts) {
             }
           }
         }
-      } else if (bot.position.y > MAX_FLY_ALT) {
+      } else if (boundaryCollision && bot.position.y > MAX_FLY_ALT) {
         bot.position.y = MAX_FLY_ALT;
       }
       if (bot.crashing) continue;
@@ -810,6 +815,9 @@ export function createAiFleet(opts) {
       for (const bot of bots) {
         if (bot.alive || bot.crashing) clampToPlayVolume(bot.position);
       }
+    },
+    setBoundaryCollision(enabled) {
+      boundaryCollision = enabled !== false;
     },
     update(dt, playerPos, {
       paused = false,
