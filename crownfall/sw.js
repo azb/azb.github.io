@@ -1,0 +1,9 @@
+// A refresh should load the page GitHub has now. Pages itself keeps files
+// for ten minutes, so this worker asks the network and skips that copy.
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  event.respondWith(fetch(event.request, { cache: 'reload' }));
+});
