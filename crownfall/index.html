@@ -9,24 +9,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="/crownfall/assets/index-DWWEXKmm.js?v=bowside1"></script>
-    <link rel="stylesheet" crossorigin href="/crownfall/assets/index-qbCUmb07.css">
-    <style>
-      #title { pointer-events: auto; }
-      #companion { position: static; width: auto; margin-top: 1rem; transform: none; z-index: 6; display: grid; gap: 8px; color: #f3ead8; font: 15px/1.35 Outfit, sans-serif; pointer-events: auto; }
-      #companion.dock { position: absolute; left: max(12px, env(safe-area-inset-left)); right: auto; bottom: max(12px, env(safe-area-inset-bottom)); width: min(420px, calc(100vw - 280px)); margin-top: 0; }
-      #companion-status { margin: 0; padding: 10px 12px; border-radius: 12px; background: rgba(16,14,12,.82); border: 1px solid rgba(230,194,122,.35); white-space: pre-wrap; }
-      #companion form { display: flex; gap: 8px; }
-      #companion input { flex: 1; min-width: 0; font: inherit; color: inherit; background: #1a1612; border: 1px solid #6d5a38; border-radius: 9px; padding: 8px 10px; }
-      #companion button { font: inherit; color: #1a1612; background: #e6c27a; border: 0; border-radius: 9px; padding: 8px 12px; cursor: pointer; }
-      #modes { margin-top: .35rem; }
-      #modes button.on { background: var(--gold); color: #24180c; border-color: transparent; font-weight: 640; }
-      #mode-note { margin: .35rem 0 .15rem; }
-      #modes, #duo { touch-action: manipulation; }
-      #btn-mode-duo { flex: 1 1 100%; }
-      #duo { margin-top: .2rem; }
-      #duo input { flex: 1; min-width: 4.5rem; font: inherit; letter-spacing: .18em; text-transform: uppercase; color: #f3ead8; background: #1a1612; border: 1px solid #6d5a38; border-radius: 9px; padding: 8px 10px; }
-    </style>
+    <script type="module" crossorigin src="./assets/index-DS_wAOv0.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BNKPb3jP.css">
   </head>
   <body>
     <div id="overlay">
@@ -35,9 +19,10 @@
       <div id="crosshair" class="hidden"></div>
 
       <header id="topbar" class="hidden">
-        <p id="turn" class="gold">YOUR TURN</p>
-        <p id="hint">Click one of your pieces.</p>
+        <p id="turn" aria-live="polite">Gold's turn</p>
+        <p id="hint" class="hidden">Click one of your pieces.</p>
       </header>
+      <p id="net-status" class="hidden"></p>
 
       <section id="combat-hud" class="hidden">
         <p id="hearts"></p>
@@ -64,41 +49,44 @@
           <span>Archer on sword — loose into the rush</span>
           <span>Archer on archer — shoot their shafts down</span>
         </div>
-        <div class="actions" id="modes">
-          <button id="btn-mode-game" type="button" class="on">Full game</button>
-          <button id="btn-mode-bow" type="button">Archery practice</button>
-          <button id="btn-mode-sword" type="button">Sword practice</button>
-          <button id="btn-mode-duo" type="button">Two players</button>
-        </div>
-        <p id="mode-note" class="note">The full court. Take the enemy monarch.</p>
-        <div class="actions hidden" id="duo">
-          <button id="btn-host" type="button">Host</button>
-          <input id="duo-code" maxlength="4" placeholder="CODE" autocomplete="off" />
-          <button id="btn-join" type="button">Join</button>
-        </div>
-        <p id="duo-status" class="note"></p>
         <div class="actions">
           <button id="btn-ar" type="button">Enter AR</button>
           <button id="btn-vr" type="button">Enter VR</button>
           <button id="btn-play" type="button">Play here</button>
+          <button id="btn-online" type="button">Play online</button>
         </div>
-        <p id="xr-note" class="note">The first time, plug the headset into the laptop with USB and leave the backend running, then open this page. She remembers the key after that. Press A on the right controller to talk. The left menu button pauses: resume, restart, or show the debug panel. Add ?log=0 to keep that panel hidden.</p>
-        <div id="companion">
-          <p id="companion-status">Companion starting…</p>
-          <form id="companion-key">
-            <input id="companion-key-input" type="password" placeholder="OpenAI key" autocomplete="off" />
-            <button type="submit">Use key</button>
-          </form>
-          <form id="companion-link">
-            <input id="companion-backend" placeholder="or a laptop address, wss://…" autocomplete="off" />
-            <button type="submit">Connect</button>
-          </form>
-          <pre id="companion-voice" hidden style="margin:0;max-height:9rem;overflow:auto;font:12px/1.35 ui-monospace,monospace;color:#d9cbb0;white-space:pre-wrap"></pre>
-          <form id="companion-say">
-            <input id="companion-text" placeholder="Type to the companion" autocomplete="off" />
-            <button type="submit">Say</button>
-            <button id="companion-talk" type="button">Talk</button>
-          </form>
+        <div class="sim-voice">
+          <p class="note"><strong>Sim</strong> plays Violet against you and teaches you as you go.</p>
+          <div class="online-row">
+            <input id="sim-key" type="password" autocomplete="off" placeholder="OpenAI key (sk-…) for her voice" aria-label="OpenAI key" />
+            <button id="sim-key-save" type="button">Save</button>
+            <button id="btn-sim" type="button">Talk to Sim</button>
+          </div>
+          <p id="sim-status" class="note" aria-live="polite"></p>
+        </div>
+        <p id="xr-note" class="note">On a phone, run <code>npm run dev:ar</code> and open the https address so the headset or browser can start AR.</p>
+      </section>
+
+      <section id="online" class="hidden">
+        <div class="card">
+          <p class="eyebrow">Play online</p>
+          <h2>Two players, two devices</h2>
+          <p class="note">Create a game and send the code or link to the other player. Whoever creates the game plays Gold; whoever joins plays Violet. Each of you moves only your own pieces.</p>
+          <div class="online-row">
+            <button id="btn-host" type="button" class="primary">Create game</button>
+          </div>
+          <div id="online-share" class="hidden">
+            <p class="code-label">Room code</p>
+            <p id="online-code" class="code"></p>
+            <button id="btn-copy-link" type="button">Copy invite link</button>
+          </div>
+          <p class="or">or join a game</p>
+          <div class="online-row">
+            <input id="join-code" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="8" placeholder="Code" aria-label="Room code" />
+            <button id="btn-join" type="button">Join</button>
+          </div>
+          <p id="online-msg" class="note" aria-live="polite"></p>
+          <button id="btn-online-back" type="button">Back</button>
         </div>
       </section>
 
@@ -114,48 +102,14 @@
       <p id="place-hint" class="hidden">Point at your table, then tap to set the court.</p>
 
       <div id="corner" class="hidden">
+        <button id="btn-opponent" type="button">Vs computer</button>
+        <button id="btn-resign" type="button" class="hidden">Resign</button>
+        <button id="btn-leave" type="button" class="hidden">Leave online</button>
         <button id="btn-sound" type="button">Sound on</button>
         <button id="btn-ar-mini" type="button">Enter AR</button>
         <button id="btn-vr-mini" type="button">Enter VR</button>
         <button id="btn-move" type="button" class="hidden">Move board</button>
       </div>
     </div>
-    <script>
-      const title = document.getElementById("title");
-      const companion = document.getElementById("companion");
-      const overlay = document.getElementById("overlay");
-      const placeCompanion = () => {
-        if (title.classList.contains("hidden")) {
-          companion.classList.add("dock");
-          overlay.appendChild(companion);
-        } else {
-          companion.classList.remove("dock");
-          title.appendChild(companion);
-        }
-      };
-      new MutationObserver(placeCompanion).observe(title, { attributes: true, attributeFilter: ["class"] });
-      placeCompanion();
-      const duoBtn = document.getElementById("btn-mode-duo");
-      const showDuo = () => {
-        const duo = document.getElementById("duo");
-        if (duo) {
-          duo.classList.remove("hidden");
-          duo.scrollIntoView({ block: "center" });
-        }
-        const note = document.getElementById("mode-note");
-        if (note) note.textContent = "Two players, opposite sides. A browser and a headset can share the match. Host takes gold.";
-        if (window.__cfDuo) window.__cfDuo.setMode("duo");
-      };
-      if (duoBtn) {
-        duoBtn.addEventListener("click", showDuo);
-        duoBtn.addEventListener("pointerup", showDuo);
-      }
-      window.addEventListener("error", (e) => {
-        const n = document.getElementById("duo-status");
-        if (n) n.textContent = "Page error: " + (e.message || "unknown");
-      });
-    </script>
-    <script src="/crownfall/peerjs.min.js"></script>
-    <script type="module" src="/crownfall/companion.js?v=pause1"></script>
   </body>
 </html>
