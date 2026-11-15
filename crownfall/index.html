@@ -9,12 +9,13 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="./assets/index-CkJxiRlb.js"></script>
+    <script type="module" crossorigin src="./assets/index-9nl3WHaw.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-BNKPb3jP.css">
   </head>
   <body>
     <script>
-      if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
+      // Optional: if the browser refuses the worker, the game still runs.
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
     </script>
     <div id="overlay">
       <div id="hurt"></div>
