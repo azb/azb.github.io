@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="./assets/index-D1tsjwfM.js"></script>
+    <script type="module" crossorigin src="./assets/index-4Nn86piK.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-BNKPb3jP.css">
   </head>
   <body>
@@ -40,36 +40,15 @@
       <section id="title">
         <p class="eyebrow">WebXR tabletop · <span id="version">v1</span></p>
         <h1>Coronet</h1>
-        <p class="lede">A five-by-five court. Archers on the wings, swords beside the crown. Take the enemy monarch and the court is yours.</p>
-        <ul>
-          <li>Every piece steps one square, diagonally or straight, onto an empty tile.</li>
-          <li>Archers and swordsmen may strike an adjacent foe. The monarch only moves.</li>
-          <li>Win the clash and you take their square. Fall, and your piece is lost.</li>
-          <li>Strike the enemy monarch and the game ends.</li>
-        </ul>
-        <div class="clash">
-          <span>Sword on sword — cut the charge</span>
-          <span>Sword on archer — bat arrows back</span>
-          <span>Archer on sword — loose into the rush</span>
-          <span>Archer on archer — shoot their shafts down</span>
-        </div>
+        <p class="lede">Take the enemy monarch. Sim plays against you.</p>
         <div class="actions">
           <button id="btn-ar" type="button">Enter AR</button>
           <button id="btn-vr" type="button">Enter VR</button>
           <button id="btn-play" type="button">Play here</button>
           <button id="btn-online" type="button">Play online</button>
+          <button id="btn-sim" type="button">Talk to Sim</button>
         </div>
-        <div class="sim-voice">
-          <p class="note"><strong>Sim</strong> plays Violet against you and teaches you as you go.</p>
-          <div class="online-row">
-            <button id="btn-sim" type="button">Talk to Sim</button>
-          </div>
-          <p id="sim-status" class="note" aria-live="polite"></p>
-          <p id="sim-build" class="note" style="opacity:.7;font-size:12px"></p>
-          <button id="btn-sim-log" type="button" style="font-size:12px;padding:4px 10px">Voice log</button>
-          <pre id="sim-log" hidden style="text-align:left;max-height:30vh;overflow:auto;font:11px/1.35 ui-monospace,monospace;white-space:pre-wrap;user-select:text"></pre>
-        </div>
-        <p id="xr-note" class="note">On a phone, run <code>npm run dev:ar</code> and open the https address so the headset or browser can start AR.</p>
+        <p id="sim-status" class="note" aria-live="polite"></p>
       </section>
 
       <section id="online" class="hidden">
