@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Simulacra — WebXR</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101418; color: #e8edf2; font: 15px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #panel { position: fixed; left: 16px; top: 16px; max-width: 440px; max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box; background: rgba(16, 20, 24, .82); border: 1px solid #2c3742; border-radius: 12px; padding: 14px 16px; }
+  #panel h1 { font-size: 17px; margin: 0 0 6px; }
+  #mode { color: #f4c06a; font-size: 13px; margin-bottom: 8px; }
+  #status { white-space: pre-wrap; font-size: 13px; color: #b8c4cf; min-height: 5.6em; }
+  button { font: inherit; padding: 10px 16px; border-radius: 9px; border: 1px solid #3d7fd9; background: #2a6fd0; color: #fff; cursor: pointer; margin: 8px 8px 0 0; }
+  button.secondary { background: transparent; border-color: #46525e; color: #d5dde5; }
+  button:disabled { opacity: .45; cursor: default; }
+  #say { display: flex; gap: 8px; margin-top: 10px; }
+  #text { flex: 1; font: inherit; padding: 9px 10px; border-radius: 9px; border: 1px solid #46525e; background: #171d23; color: inherit; min-width: 0; }
+  #note { font-size: 12px; color: #8996a3; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>Simulacra</h1>
+  <div id="mode">Starting…</div>
+  <div id="status"></div>
+  <button id="enter" disabled>Enter AR</button>
+  <button id="mic" class="secondary">Use microphone</button>
+  <div id="say"><input id="text" placeholder="Type instead of talking, then Enter" autocomplete="off"></div>
+  <div id="keyRow" hidden style="margin-top:12px;font-size:13px;color:#8996a3">OpenAI key
+    <div style="display:flex;gap:8px;margin-top:4px"><input id="key" type="password" placeholder="sk-…" autocomplete="off" style="flex:1;min-width:0;font:13px ui-monospace,monospace;padding:9px;border-radius:8px;border:1px solid #46525e;background:#171d23;color:inherit"><button id="keySave" style="margin:0;padding:8px 14px">Save</button></div>
+    <div id="keyState" style="margin-top:4px"></div>
+  </div>
+  <details style="margin-top:8px;font-size:13px;color:#8996a3"><summary>Use my own backend instead</summary>
+  <div id="backendRow" hidden style="margin-top:10px;font-size:13px;color:#8996a3">Backend address<br><input id="backend" style="width:100%;box-sizing:border-box;font:13px ui-monospace,monospace;padding:7px 9px;border-radius:8px;border:1px solid #46525e;background:#171d23;color:inherit" spellcheck="false" placeholder="ws://localhost:8787 (headset on USB) or wss://…"></div>
+  </details>
+  <div id="note"></div>
+  <button id="debugToggle" class="secondary" style="padding:6px 12px;font-size:13px">Debug</button>
+  <button id="debugCopy" class="secondary" style="padding:6px 12px;font-size:13px" hidden>Copy log</button>
+  <pre id="debug" hidden style="margin:8px 0 0;max-height:46vh;overflow:auto;font:11px/1.35 ui-monospace,monospace;color:#b8c4cf;white-space:pre-wrap;user-select:text"></pre>
+</div>
+<script type="module">
+  // ?emulate=1 installs a software headset (for desktop testing only) before the client starts.
+  if (new URLSearchParams(location.search).has('emulate')) await import('./emulator.js');
+  await import('./app.js');
+</script>
+</body>
+</html>
