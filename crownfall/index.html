@@ -82,7 +82,7 @@
           <button id="btn-vr" type="button">Enter VR</button>
           <button id="btn-play" type="button">Play here</button>
         </div>
-        <p id="xr-note" class="note">The first time, plug the headset into the laptop with USB and leave the backend running, then open this page. She remembers the key after that. Press A on the right controller to talk. Add ?log=0 to hide the voice panel.</p>
+        <p id="xr-note" class="note">The first time, plug the headset into the laptop with USB and leave the backend running, then open this page. She remembers the key after that. Press A on the right controller to talk. The left menu button pauses: resume, restart, or show the debug panel. Add ?log=0 to keep that panel hidden.</p>
         <div id="companion">
           <p id="companion-status">Companion starting…</p>
           <form id="companion-key">
@@ -93,7 +93,7 @@
             <input id="companion-backend" placeholder="or a laptop address, wss://…" autocomplete="off" />
             <button type="submit">Connect</button>
           </form>
-          <pre id="companion-voice" style="margin:0;max-height:9rem;overflow:auto;font:12px/1.35 ui-monospace,monospace;color:#d9cbb0;white-space:pre-wrap"></pre>
+          <pre id="companion-voice" hidden style="margin:0;max-height:9rem;overflow:auto;font:12px/1.35 ui-monospace,monospace;color:#d9cbb0;white-space:pre-wrap"></pre>
           <form id="companion-say">
             <input id="companion-text" placeholder="Type to the companion" autocomplete="off" />
             <button type="submit">Say</button>
@@ -156,6 +156,6 @@
       });
     </script>
     <script src="/crownfall/peerjs.min.js"></script>
-    <script type="module" src="/crownfall/companion.js?v=key1"></script>
+    <script type="module" src="/crownfall/companion.js?v=pause1"></script>
   </body>
 </html>
