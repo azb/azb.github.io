@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="./assets/index-sRj3UZN5.js"></script>
+    <script type="module" crossorigin src="./assets/index-CQ8jmiu0.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-BNKPb3jP.css">
   </head>
   <body>
@@ -63,6 +63,23 @@
             <button id="btn-sim" type="button">Talk to Sim</button>
           </div>
           <p id="sim-status" class="note" aria-live="polite"></p>
+          <details class="sim-pair">
+            <summary>Key is on another device? Send it here</summary>
+            <div class="online-row">
+              <button id="pair-receive" type="button">This is the headset: show a code</button>
+            </div>
+            <p id="pair-code" class="code" hidden></p>
+            <p class="or">or, on the computer that has the key</p>
+            <div class="online-row">
+              <input id="pair-code-in" type="text" autocomplete="off" autocapitalize="characters" maxlength="5" placeholder="Code" aria-label="Code shown on the headset" />
+              <input id="pair-key" type="password" autocomplete="off" placeholder="OpenAI key (sk-…)" aria-label="OpenAI key to send" />
+              <button id="pair-send" type="button">Send to headset</button>
+            </div>
+            <p id="pair-msg" class="note" aria-live="polite"></p>
+          </details>
+          <p id="sim-build" class="note" style="opacity:.7;font-size:12px"></p>
+          <button id="btn-sim-log" type="button" style="font-size:12px;padding:4px 10px">Voice log</button>
+          <pre id="sim-log" hidden style="text-align:left;max-height:30vh;overflow:auto;font:11px/1.35 ui-monospace,monospace;white-space:pre-wrap;user-select:text"></pre>
         </div>
         <p id="xr-note" class="note">On a phone, run <code>npm run dev:ar</code> and open the https address so the headset or browser can start AR.</p>
       </section>
