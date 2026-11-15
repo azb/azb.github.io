@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="/crownfall/assets/index-DWWEXKmm.js"></script>
+    <script type="module" crossorigin src="/crownfall/assets/index-DWWEXKmm.js?v=duo2"></script>
     <link rel="stylesheet" crossorigin href="/crownfall/assets/index-qbCUmb07.css">
     <style>
       #title { pointer-events: auto; }
@@ -22,6 +22,8 @@
       #modes { margin-top: .35rem; }
       #modes button.on { background: var(--gold); color: #24180c; border-color: transparent; font-weight: 640; }
       #mode-note { margin: .35rem 0 .15rem; }
+      #modes, #duo { touch-action: manipulation; }
+      #btn-mode-duo { flex: 1 1 100%; }
       #duo { margin-top: .2rem; }
       #duo input { flex: 1; min-width: 4.5rem; font: inherit; letter-spacing: .18em; text-transform: uppercase; color: #f3ead8; background: #1a1612; border: 1px solid #6d5a38; border-radius: 9px; padding: 8px 10px; }
     </style>
@@ -128,8 +130,27 @@
       };
       new MutationObserver(placeCompanion).observe(title, { attributes: true, attributeFilter: ["class"] });
       placeCompanion();
+      const duoBtn = document.getElementById("btn-mode-duo");
+      const showDuo = () => {
+        const duo = document.getElementById("duo");
+        if (duo) {
+          duo.classList.remove("hidden");
+          duo.scrollIntoView({ block: "center" });
+        }
+        const note = document.getElementById("mode-note");
+        if (note) note.textContent = "Two headsets, opposite sides. Host takes gold. The other joins the code.";
+        if (window.__cfDuo) window.__cfDuo.setMode("duo");
+      };
+      if (duoBtn) {
+        duoBtn.addEventListener("click", showDuo);
+        duoBtn.addEventListener("pointerup", showDuo);
+      }
+      window.addEventListener("error", (e) => {
+        const n = document.getElementById("duo-status");
+        if (n) n.textContent = "Page error: " + (e.message || "unknown");
+      });
     </script>
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="/crownfall/peerjs.min.js"></script>
     <script type="module" src="/crownfall/companion.js"></script>
   </body>
 </html>
