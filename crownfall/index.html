@@ -82,13 +82,18 @@
           <button id="btn-vr" type="button">Enter VR</button>
           <button id="btn-play" type="button">Play here</button>
         </div>
-        <p id="xr-note" class="note">Bookmark this page. The companion stands beside the court. Press A on the right controller to talk.</p>
+        <p id="xr-note" class="note">She stands beside the court in this same game. Paste an OpenAI key, then press A on the right controller to talk. Add ?log=0 to hide the headset voice panel.</p>
         <div id="companion">
           <p id="companion-status">Companion starting…</p>
-          <form id="companion-link">
-            <input id="companion-backend" placeholder="wss://laptop-address:8788" autocomplete="off" />
-            <button type="submit">Connect AI</button>
+          <form id="companion-key">
+            <input id="companion-key-input" type="password" placeholder="OpenAI key" autocomplete="off" />
+            <button type="submit">Use key</button>
           </form>
+          <form id="companion-link">
+            <input id="companion-backend" placeholder="or a laptop address, wss://…" autocomplete="off" />
+            <button type="submit">Connect</button>
+          </form>
+          <pre id="companion-voice" style="margin:0;max-height:9rem;overflow:auto;font:12px/1.35 ui-monospace,monospace;color:#d9cbb0;white-space:pre-wrap"></pre>
           <form id="companion-say">
             <input id="companion-text" placeholder="Type to the companion" autocomplete="off" />
             <button type="submit">Say</button>
@@ -151,6 +156,6 @@
       });
     </script>
     <script src="/crownfall/peerjs.min.js"></script>
-    <script type="module" src="/crownfall/companion.js"></script>
+    <script type="module" src="/crownfall/companion.js?v=together1"></script>
   </body>
 </html>
